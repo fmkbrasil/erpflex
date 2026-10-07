@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block title %}DANFE {{ header.number or inv.id }} · {{ app_name }}{% endblock %}
+{% block content %}
+{% if document_kind == 'entrada' %}
+  {% set issuer_name = header.supplier_name %}{% set issuer_trade = header.supplier_trade or header.supplier_name %}{% set issuer_cnpj = header.supplier_cnpj %}{% set issuer_ie = header.supplier_ie %}{% set issuer_address = header.supplier_address %}{% set issuer_district = header.supplier_district %}{% set issuer_city = header.supplier_city %}{% set issuer_state = header.supplier_state %}{% set issuer_zip = header.supplier_zip %}{% set issuer_phone = '' %}
+  {% set recipient_name = company.name %}{% set recipient_cnpj = company.cnpj %}{% set recipient_address = '' %}{% set recipient_district = '' %}{% set recipient_city = '' %}{% set recipient_state = '' %}{% set recipient_zip = '' %}{% set recipient_phone = '' %}{% set recipient_ie = '' %}
+  {% set danfe_entry_exit = 0 %}
+{% else %}
+  {% set issuer_name = company.name %}{% set issuer_trade = company.trade_name or company.name %}{% set issuer_cnpj = company.cnpj %}{% set issuer_ie = header.issuer_ie %}{% set issuer_address = header.issuer_address %}{% set issuer_district = header.issuer_district %}{% set issuer_city = header.issuer_city %}{% set issuer_state = header.issuer_state %}{% set issuer_zip = header.issuer_zip %}{% set issuer_phone = header.issuer_phone %}
+  {% set recipient_name = header.customer_name %}{% set recipient_cnpj = header.customer_cnpj %}{% set recipient_address = header.customer_address %}{% set recipient_district = header.customer_district %}{% set recipient_city = header.customer_city %}{% set recipient_state = header.customer_state %}{% set recipient_zip = header.customer_zip %}{% set recipient_phone = header.customer_phone %}{% set recipient_ie = header.customer_ie %}
+  {% set danfe_entry_exit = 1 %}
+{% endif %}
+{% include '_danfe_layout.html' %}
+<script>window.addEventListener('load',()=>window.print());</script>
+{% endblock %}

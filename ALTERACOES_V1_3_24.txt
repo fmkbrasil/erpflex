@@ -1,0 +1,28 @@
+V1.3.24 — NF-e x pedido, pagamentos e boleto
+
+- Corrige o mapeamento: `documento`/pedido não é mais usado como número de NF-e.
+- Número fiscal passa a usar somente campos específicos: nr_nfe/nfe/numero_nfe/numero_nf/numero_nota/SF2_NrNfe.
+- Repara automaticamente registros antigos do Faturamento a partir do JSON original.
+- Faturamento exibe apenas NF-e com número fiscal > 0.
+- Adiciona Pedido em coluna separada.
+- Diferencia NF-e ATIVA e CANCELADA usando status/flags fiscais do retorno.
+- Corrige total da NF usando valor_nf como campo prioritário.
+- Faturamento passa a exibir dados de pagamento/títulos vinculados por faturamento_id ou nr_nfe.
+- Contas a Receber passa a exibir NF-e em coluna própria, sem confundir com Pedido/Documento.
+- Vínculo Financeiro -> NF-e usa faturamento_id/nr_nfe e não o campo documento.
+- Nome de carteira tenta ser resolvido também via endpoint comprovado /api_v2/boleto/options.
+- Adiciona consulta, pré-visualização e impressão do boleto pelo endpoint comprovado /api_v2/boleto.
+- Adiciona reenvio de boleto por e-mail, com SMTP configurável em Integrações.
+- SMTP é persistido/criptografado no banco central; schema 7 adiciona somente a tabela email_configs.
+- Bridge Go V7.8 passa a devolver corpo completo de respostas não JSON para suportar boleto HTML.
+
+Ajustes finais desta entrega
+- Faturamento: filtro Todos | Ativas | Canceladas, preservado na paginação e na atualização de itens.
+- Faturamento: filtro de status usa a interpretação dos campos reais presentes no payload já sincronizado, sem inferir cancelamento por número/documento.
+- Financeiro: Título, NF-e e Pedido agora são apresentados como referências independentes.
+- Financeiro: `documento` permanece como referência comercial/pedido nesta conta e não é reaproveitado como número da NF-e.
+- Financeiro: adicionados filtros explícitos por Banco e Carteira em Contas a Receber.
+- Detalhe financeiro e bloco de pagamentos da NF-e: Título e Pedido aparecem em colunas separadas.
+- Boleto: cabeçalho diferencia Título, NF-e e Pedido.
+- Nenhuma alteração foi feita nas regras da Logística.
+- Não houve teste contra a API real do ERPFlex nesta execução; foram feitos testes estruturais e locais.

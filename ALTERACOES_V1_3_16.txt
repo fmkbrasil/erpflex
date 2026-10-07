@@ -1,0 +1,9 @@
+V1.3.16 — Progresso de Sincronização
+
+- Barra de progresso estimado na Central de Sincronização.
+- Progresso geral para lotes com vários módulos.
+- Módulo, fase, etapa e quantidade processada em tempo real.
+- Heartbeat persistente a cada 5 segundos enquanto o worker aguarda a API.
+- Aviso quando o worker deixa de enviar sinal ou quando uma mesma etapa demora mais de 2 minutos.
+- Percentual exato durante processamento de registros e estimado durante localização/paginação.
+- Nova tabela sync_progress (schema 5), sem apagar o histórico ou dados existentes.

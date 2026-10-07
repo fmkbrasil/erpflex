@@ -1,0 +1,14 @@
+V1.3.30 - WORKER DE SINCRONIZAÇÃO AUTOMÁTICA
+
+1. Criado app/worker.py para execução contínua em segundo plano.
+2. Worker reutiliza as rotinas existentes de sincronização ERPFlex; não simula clique e não duplica motor de integração.
+3. Sincronização automática usa modo incremental/recent e reaproveita sync_cursors + sync_page_index da V1.3.29.
+4. Criada agenda por módulo, com frequência independente em minutos.
+5. Criados controles na Central de Sincronização: ativar/pausar, frequência, janela de horário, limites e executar agora.
+6. Criado heartbeat persistente do worker com status, módulo atual, run atual e última atividade.
+7. Criado lease persistente de execução para impedir concorrência ERPFlex entre o serviço Web e o Worker.
+8. recover_interrupted_sync_runs passou a considerar heartbeat recente; reiniciar o Web não encerra run viva no Worker.
+9. Criados scripts START_WORKER.sh e START_WORKER_WINDOWS.bat.
+10. Criado railway.worker.json como exemplo de serviço Railway dedicado.
+11. Schema atualizado de 9 para 10 somente por migração aditiva.
+12. ERPFlex permanece somente leitura; nenhum endpoint novo foi inventado.

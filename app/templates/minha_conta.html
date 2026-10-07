@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Minha conta · {{ app_name }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Minha conta</h1><p>Dados de acesso ao núcleo central.</p></div></div>
+<section class="panel narrow-panel"><h2>{{ account.name or account.username }}</h2><p><b>Usuário:</b> {{account.username}}{% if account.email %}<br><b>E-mail:</b> {{account.email}}{% endif %}</p>
+{% if request.query_params.get('ok') %}<div class="alert success">Senha alterada.</div>{% endif %}
+{% if request.query_params.get('erro') %}<div class="alert error">Não foi possível alterar a senha. Confira a senha atual e use ao menos 6 caracteres.</div>{% endif %}
+<form method="post" action="/minha-conta/senha" class="form-grid"><label>Senha atual<input type="password" name="current_password" required></label><label>Nova senha<input type="password" name="new_password" minlength="6" required></label><label>Confirmar nova senha<input type="password" name="confirm_password" minlength="6" required></label><button class="btn primary" type="submit">Alterar senha</button></form></section>
+{% endblock %}

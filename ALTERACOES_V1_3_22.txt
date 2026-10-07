@@ -1,0 +1,25 @@
+V1.3.22 — Itens de Faturamento + Banco/Carteira
+
+1. Faturamento / NF-e de saída
+- Nova tabela sales_invoice_items (migração aditiva schema 5 -> 6).
+- Uso do endpoint específico /api_v2/faturamento/itens/{faturamento_id} para recuperar produtos da NF quando a listagem paginada não os traz.
+- Botão "Atualizar itens desta página" na tela de Faturamento.
+- Botão "Atualizar itens da NF" no detalhe/DANFE.
+- Novas sincronizações podem enriquecer automaticamente cada faturamento com seus itens.
+- Persistência dos itens normalizados; a tela deixa de depender somente do pedido relacionado.
+- Aliases adicionais: produto_id, item_id, EAN, desc_produto, preco_total_item, entre outros.
+
+2. Compras
+- Melhor leitura de desc_produto/descricao_produto/produto_desc e identificadores produto_id/id_produto.
+- Quando o detalhe de compra não traz a descrição, cruza produto_id/código/EAN com o cadastro central de Produtos.
+- Reparo de itens antigos com descrição vazia quando existe correspondência no cadastro de Produtos.
+
+3. Financeiro
+- Resolução do nome do banco pelo detalhe individual /api/banco/{id} quando a lista/cadastro local ainda não resolve o ID interno.
+- Detalhes de banco ficam armazenados em raw_records (bank_detail), evitando chamadas repetidas.
+- Procura nomes de carteira em estruturas de carteira retornadas no detalhe do banco.
+- Se a API fornecer apenas id_carteira e nenhum nome, mostra "Carteira {id}" sem inventar descrição.
+- O botão "Atualizar banco/carteira desta página" passa a enriquecer também o cadastro do banco antes de gravar o título.
+
+4. Persistência
+- Schema 6 é somente aditivo: cria sales_invoice_items e preserva todas as tabelas/dados anteriores.

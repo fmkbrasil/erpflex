@@ -1,0 +1,12 @@
+V1.3.15 - MOTOR ERPFLEX V7.8 NATIVO EM GO
+
+- Toda chamada ERPFlex passa, por padrão, por um executável Go derivado diretamente do motor HTTP do ERPFlex Analytics V7.8 fornecido pelo usuário.
+- Basic Auth, Accept application/json, net/http, HTTP/2, DialTimeout 15s, KeepAlive 30s, MaxIdleConns 30, MaxIdleConnsPerHost 12, IdleConnTimeout 90s, TLSHandshakeTimeout 15s e ResponseHeaderTimeout 120s seguem o V7.8.
+- O User-Agent não é forçado: net/http utiliza Go-http-client/1.1, como no V7.8.
+- Extração do maior array do JSON reproduz extractBestArray do V7.8.
+- Faturamento histórico volta ao algoritmo do V7.8: LastValid 15983, atualização da borda em até 30 páginas, busca binária do início/fim e leitura do intervalo.
+- O Python continua responsável por persistência, normalização, telas, Logística e base única.
+- Credenciais são enviadas ao bridge via stdin, não por argumentos de linha de comando.
+- Incluídos binários Windows x64 e Linux x64; Docker recompila o bridge durante o build.
+- ERPFLEX_ENGINE=go_v78 é o padrão. O modo Python permanece apenas como fallback de diagnóstico.
+- Nenhuma alteração de schema nesta versão; banco existente é preservado.

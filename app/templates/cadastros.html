@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% block title %}Cadastros · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><h1>Cadastros centrais</h1><p>Dados sincronizados do ERPFlex e compartilhados por todos os módulos. Clique no nome para visualizar o detalhe completo disponível.</p></div>
+  <div class="actions"><a class="btn" href="/sincronizacao">Sincronizar cadastros</a></div>
+</section>
+<div class="status-tabs cadastro-tabs">
+  <a href="/cadastros?tipo=produtos" class="{{ 'active' if tipo=='produtos' else '' }}">Produtos</a>
+  <a href="/cadastros?tipo=clientes" class="{{ 'active' if tipo=='clientes' else '' }}">Clientes</a>
+  <a href="/cadastros?tipo=fornecedores" class="{{ 'active' if tipo=='fornecedores' else '' }}">Fornecedores</a>
+  <a href="/cadastros?tipo=bancos" class="{{ 'active' if tipo=='bancos' else '' }}">Bancos</a>
+  <a href="/cadastros?tipo=parceiros" class="{{ 'active' if tipo=='parceiros' else '' }}">Todos os parceiros</a>
+</div>
+<section class="panel cadastro-toolbar">
+  <form class="filters cadastro-search" method="get">
+    <input type="hidden" name="tipo" value="{{ tipo }}">
+    <input type="hidden" name="per_page" value="{{ per_page }}">
+    <input name="q" value="{{ q }}" placeholder="Pesquisar por código, nome, documento, cidade...">
+    <button class="btn primary">Pesquisar</button>
+    {% if q %}<a class="btn" href="/cadastros?tipo={{ tipo }}">Limpar</a>{% endif %}
+  </form>
+  <div class="cadastro-tools">
+    <span class="cadastro-count"><b>{{ total }}</b> registro(s)</span>
+    <form method="get" id="columns-form" class="columns-form">
+      <input type="hidden" name="tipo" value="{{ tipo }}">
+      <input type="hidden" name="q" value="{{ q }}">
+      <input type="hidden" name="page" value="1">
+      <input type="hidden" name="save_view" value="1">
+      <input type="hidden" name="cols" id="cols-value" value="{{ selected_keys|join(',') }}">
+      <label>Por página
+        <select name="per_page" onchange="this.form.requestSubmit()">
+          {% for n in [25,50,100,250] %}<option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+        </select>
+      </label>
+      <details class="column-picker">
+        <summary class="btn">⚙ Colunas</summary>
+        <div class="column-picker-popover">
+          <b>Colunas exibidas</b>
+          {% for key,label in all_columns %}
+          <label><input type="checkbox" data-column value="{{ key }}" {% if key in selected_keys %}checked{% endif %}> {{ label }}</label>
+          {% endfor %}
+          <button class="btn primary small" type="submit">Aplicar e memorizar</button>
+        </div>
+      </details>
+    </form>
+  </div>
+</section>
+<section class="panel">
+  <div class="table-wrap"><table class="cadastro-table">
+    <thead><tr>{% for key,label in selected_columns %}<th>{{ label }}</th>{% endfor %}<th></th></tr></thead>
+    <tbody>
+      {% set link_key = 'description' if tipo=='produtos' else 'name' %}
+      {% for row in rows %}
+      <tr>
+        {% for key,label in selected_columns %}
+        <td>
+          {% if key==link_key %}<a class="record-link" href="/cadastros/{{ tipo }}/{{ row['_id'] }}">{{ row[key] }}</a>
+          {% else %}{{ row[key] }}{% endif %}
+        </td>
+        {% endfor %}
+        <td class="row-actions"><a class="btn small" href="/cadastros/{{ tipo }}/{{ row['_id'] }}">Detalhes</a></td>
+      </tr>
+      {% else %}<tr><td colspan="{{ selected_columns|length + 1 }}" class="empty">Nenhum registro encontrado.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  <div class="pagination-bar">
+    <div>Exibindo página <b>{{ page }}</b> de <b>{{ pages }}</b> · {{ total }} registro(s)</div>
+    <div class="actions">
+      {% if prev_url %}<a class="btn small" href="{{ prev_url }}">← Anterior</a>{% endif %}
+      {% if next_url %}<a class="btn small" href="{{ next_url }}">Próxima →</a>{% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const cf=document.getElementById('columns-form');if(cf){cf.addEventListener('submit',e=>{const checked=[...cf.querySelectorAll('[data-column]:checked')].map(x=>x.value);if(!checked.length){e.preventDefault();alert('Selecione pelo menos uma coluna.');return;}document.getElementById('cols-value').value=checked.join(',');});}
+</script>
+{% endblock %}

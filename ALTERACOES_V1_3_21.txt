@@ -1,0 +1,12 @@
+Plataforma Gestão Integrada V1.3.21 — Correção definitiva de itens em Faturamento e Compras
+
+- Corrige IDs do ERPFlex conforme o Analytics V7.8:
+  Pedidos: id/solicitacao_id/pedido_id.
+  Faturamento: faturamento_id/id.
+  Compras: id/compra_id/id_informacoes_fiscais.
+- Corrige o detalhe de compra para não confundir o maior array (itens) com o cabeçalho da compra.
+- Preserva e grava itens retornados por /api/compra/confirmado/{id}.
+- Extração de itens de compras agora percorre envelopes e listas aninhadas.
+- Faturamento cruza orcamento_id/pedido_id com Pedidos usando os identificadores corretos.
+- Compatibilidade com dados já gravados por versões anteriores: busca também os pedidos diretamente em raw_records, sem exigir apagar a base.
+- Nenhuma tabela existente é recriada; schema permanece 5.

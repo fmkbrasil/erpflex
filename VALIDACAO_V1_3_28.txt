@@ -1,0 +1,14 @@
+VALIDAÇÃO V1.3.28
+
+- Python compileall: OK
+- Templates Jinja: 39 templates analisados sem erro de sintaxe
+- Importação da aplicação: OK
+- FastAPI version: 1.3.28
+- A coluna Ações do Financeiro não contém mais botão NF-e: OK
+- Faturamento /imprimir usa danfe_impressao.html: OK
+- Compras /imprimir usa danfe_impressao.html: OK
+- Template compartilhado _danfe_layout.html preservado: OK
+- Indicador Entrada/Saída parametrizado (0 entrada / 1 saída): OK
+- Sem migração de banco nesta versão
+- Nenhum endpoint ERPFlex novo foi criado
+- API ERPFlex real não foi executada nesta validação

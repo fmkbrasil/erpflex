@@ -1,0 +1,9 @@
+V1.3.27 - Compras, remessa e cobrança automática
+- Compras oculta NF número 0 por padrão; filtro permite válidas, todas ou somente NF 0.
+- Contas a receber remove repetição de status Pago e botão NF-e na coluna Ações; NF-e permanece como coluna própria.
+- Nova coluna Remessa gerada (Sim/Não), lida apenas de campos existentes no payload sincronizado.
+- Novo parâmetro por cliente: Contrato de cobrança. Clientes marcados não entram em rotinas de boleto.
+- Nova tela Financeiro > Cobrança automática com dias antes do vencimento, vencidos, intervalo mínimo, assunto/mensagem e histórico.
+- Worker horário executa a cobrança quando ativa, usando SMTP já configurado e evitando reenvio antes do intervalo definido.
+- Envio automático anexa boleto e XML somente quando XML já existe localmente.
+- Schema 8, migração aditiva (somente novas tabelas).

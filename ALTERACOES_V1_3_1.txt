@@ -1,0 +1,12 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.1 — ORGANIZAÇÃO DO MÓDULO LOGÍSTICA
+
+- Menu principal simplificado: todas as funções do Roteirizador foram agrupadas em um único item "Logística".
+- Nova central /logistica/inicio organizada em três blocos:
+  1. Operação: Roteirizar, Roteiros, Painel de Entregas e Baixa de Entregas.
+  2. Gestão: Painel Gerencial, Relatórios Gerenciais, Ocorrências e Custos/KM.
+  3. Cadastros e regras: Entregas/Ajustes, Responsáveis, Regras de Entrega, Parâmetros e Importar/Contingência.
+- Menu secundário do módulo Logística exibido em todas as telas logísticas.
+- Itens continuam respeitando as permissões do usuário; funções sem permissão não são exibidas.
+- Nenhuma rota ou regra operacional existente foi removida.
+- URLs antigas continuam funcionando.
+- Interface responsiva para desktop e smartphone.

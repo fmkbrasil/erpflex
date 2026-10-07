@@ -1,0 +1,63 @@
+PLATAFORMA DE GESTÃO INTEGRADA V1.3.0 — ROTEIRIZADOR INTEGRADO
+
+OBJETIVO
+- Trazer o fluxo principal do Roteirizador para dentro da Plataforma Integrada.
+- Manter uma única NF-e de saída na base central, sem criar um segundo banco/tabela de notas para a logística.
+- Preservar V1.2 e os sistemas legados como referência/contingência durante a migração.
+
+PRINCIPAIS ALTERAÇÕES
+1. Nova tela Roteirizar com NFs PENDENTES/REPROGRAMADAS da base central.
+2. Classificação automática de regiões baseada nas regras consolidadas do Roteirizador V46.5.20.
+3. Regras especiais preservadas:
+   - Transportadora 2 = DESTINATARIO COLETA => COLETA;
+   - LEBANON CENTRO => Centro;
+   - LEBANON ÔNIBUS/ONIBUS => Centro + alerta VERIFICAR ENDEREÇO NA NOTA FISCAL.
+4. Regiões iniciais ampliadas: zonas de São Paulo, Centro, ABC Paulista, Guarulhos,
+   Osasco/Barueri, Alto Tietê, Interior SP, Litoral SP, COLETA, A Classificar e Outras Regiões.
+5. Ações em lote para região, responsável e tipo de caixa.
+6. Memorização de regra logística por cliente/CNPJ.
+7. Criação de roteiro a partir das NFs selecionadas.
+8. Edição da ordem das paradas enquanto o roteiro estiver PLANEJADO.
+9. Impressão do roteiro em formato amigável para A4/PDF pelo navegador.
+10. Links para abrir endereço no Google Maps e Waze.
+11. Painel de Entregas com status e visão por responsável.
+12. Baixa de Entregas mantendo somente o filtro de status.
+13. Detalhe da entrega com histórico de movimentações, ocorrências e roteiros.
+14. Painel Gerencial com regiões e responsáveis clicáveis para detalhar as NFs.
+15. Relatórios Gerenciais com filtros históricos, impressão/PDF e exportação Excel.
+16. Excel gerencial com abas: Resumo, Por Motorista, Por Região, Motorista x Região,
+    Terceirizados e NFs Detalhadas.
+17. Regra Frete/Faturamento preservada: o denominador considera somente o faturamento
+    dos responsáveis com custo de frete efetivamente informado/apurado.
+18. Importação XLSX/CSV mantida como contingência e gravada na mesma base central.
+19. Histórico de importações de contingência.
+20. Convergência Excel -> ERPFlex: quando a API encontrar a mesma NF, o registro central
+    é reaproveitado em vez de duplicado.
+21. COLETA criada como responsável padrão da plataforma.
+22. Permissões V1.3 para Roteirizar, Painéis, Relatórios e Importação.
+23. Perfil Operacional pode administrar responsáveis, regras e parâmetros logísticos.
+24. Informações de Previsão/Entrega não são exibidas como filtro ou bloco informativo nas
+    telas operacionais do Roteirizador. Período continua disponível apenas nos relatórios históricos.
+
+BANCO
+- Adicionada a tabela logistics_imports.
+- Atualização aditiva via SQLAlchemy create_all/seed; não apaga tabelas existentes.
+- SalesInvoice continua sendo a NF central.
+- Delivery, DeliveryAssignment, Route, RouteStop, RouteCost, DeliveryOccurrence e
+  DeliveryMovement guardam somente os dados próprios da logística.
+
+VALIDAÇÕES EXECUTADAS
+- py_compile dos arquivos Python.
+- parse de todos os templates Jinja.
+- smoke test das principais rotas autenticadas.
+- upgrade V1.2 -> V1.3 em banco existente, preservando NF anterior.
+- importação sintética XLSX com Zona Sul, COLETA e LEBANON ÔNIBUS.
+- criação de roteiro, início de rota, baixa, painéis, impressão e Excel.
+- Excel exportado reaberto com openpyxl.
+- teste de convergência NF importada por Excel com posterior registro ERPFlex.
+- teste da regra Frete/Faturamento sem usar faturamento de responsável sem custo.
+
+LIMITES DESTA VERSÃO
+- Ainda não foi migrada a otimização automática Google Routes do Roteirizador legado.
+- Portal Motorista/fotos mobile ficam para versão posterior.
+- As APIs ERPFlex e NF Stock não são testadas ao vivo sem credenciais reais no ambiente.

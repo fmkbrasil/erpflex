@@ -1,0 +1,19 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.5 — CORREÇÃO E MEMORIZAÇÃO DE REGIÃO
+
+1. TELA ROTEIRIZAR
+- A coluna Região agora possui ação individual "Informar" quando a NF está em A Classificar e "Corrigir" quando já possui região.
+- A ação abre um modal exclusivo para aquela NF, sem alterar a seleção em lote que o operador possa estar preparando.
+- O modal exibe os cards de todas as regiões ativas e pré-seleciona a região atual quando existir.
+- É possível corrigir uma classificação já existente antes de roteirizar.
+- A opção "Memorizar esta região" grava a regra por cliente/CNPJ para as próximas entregas.
+- A memorização de região preserva motorista e tipo de caixa já cadastrados na regra do cliente.
+- A ação em lote foi renomeada para "Informar/corrigir região" e continua disponível para uma, várias ou todas as NFs selecionadas.
+
+2. SEGURANÇA OPERACIONAL
+- A correção individual só aceita entregas PENDENTES ou REPROGRAMADAS ainda não vinculadas a roteiro ativo.
+- Toda alteração gera movimento CLASSIFICACAO_REGIAO no histórico da entrega.
+- A tela retorna ao mesmo filtro de região e pesquisa após gravar, permitindo continuar a rotina.
+
+3. COMPATIBILIDADE
+- Nenhuma tabela nova foi criada.
+- Banco da V1.3.4 é compatível com a V1.3.5.

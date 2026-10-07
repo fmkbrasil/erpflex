@@ -1,0 +1,22 @@
+Plataforma Gestão Integrada V1.3.20 — Carteira identificada + DANFE A4
+
+1. Financeiro / Contas a Receber
+- Adicionada consulta do endpoint comprovado no ERPFlex Analytics V7.8: GET /api/titulo_receber/{id}.
+- Botão para enriquecer banco/carteira dos títulos exibidos na página (até 100 por execução).
+- Botão individual no detalhe do título.
+- O retorno enriquecido é preservado em raw_records com módulo receber_detalhe.
+- Banco/carteira passam a usar primeiro o Título V1 quando disponível.
+- Quando houver apenas id_carteira, a tela exibe explicitamente Carteira <ID> em vez de “Sem carteira identificada”.
+- IDs de banco/carteira são exibidos como informação auxiliar quando disponíveis.
+
+2. Espelho DANFE
+- Layout totalmente reformulado seguindo o padrão visual do modelo fornecido pelo usuário.
+- A4 retrato, canhoto, identificação do emitente, bloco DANFE, chave, natureza/protocolo, destinatário/remetente, cálculo de imposto, transporte/volumes, produtos e dados adicionais.
+- Aplicado a NF-e de saída e NF-e de entrada/Compras.
+- Impressão usa o mesmo layout.
+- Mantido destaque “SEM VALOR FISCAL” porque o documento é um espelho interno, não substitui DANFE/XML oficial.
+
+3. Compatibilidade
+- Schema permanece 5.
+- Nenhuma tabela é apagada ou recriada.
+- Dados sincronizados e configurações existentes são preservados.

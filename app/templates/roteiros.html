@@ -1,0 +1,81 @@
+{% extends 'base.html' %}{% block title %}Roteiros · {{ app_name }}{% endblock %}{% block content %}
+<section class="hero"><div><h1>Roteiros</h1><p>Roteiros ativos organizados por motorista. Selecione uma ou várias NFs para fazer ajustes sem sair desta tela.</p></div><div class="actions"><a class="btn" href="/roteirizar">Roteirizar</a><a class="btn" href="/custos-roteiro">Custos / KM</a></div></section>
+{% if msg %}<div class="alert {{ 'error' if msg in ['selecione','selecione-motorista'] else 'success' }}">{% if msg=='selecione' %}Selecione uma ou mais NFs dos roteiros ativos.{% elif msg=='selecione-motorista' %}Selecione o novo motorista.{% elif msg.startswith('motorista-') %}Motorista alterado em {{ msg.split('-')[-1] }} NF(s). Você pode continuar realizando ajustes.{% else %}Operação concluída.{% endif %}</div>{% endif %}
+
+<section class="panel route-driver-filter">
+  <div class="panel-title"><div><h2>Motoristas com roteiro</h2><span class="hint">Clique em um card para visualizar somente os roteiros daquele motorista.</span></div>{% if responsible_id %}<a class="btn small" href="/roteiros">Exibir todos</a>{% endif %}</div>
+  <div class="driver-filter-grid">
+    {% for r in driver_cards %}<a class="driver-filter-card driver-tone-{{ loop.index0 % 8 }} {{ 'selected' if responsible_id==r.id else '' }}" href="/roteiros?responsible_id={{ r.id }}"><b>{{ r.name }}</b><strong>{{ card_counts.get(r.id,0) }}</strong><small>NF(s) em roteiro ativo · {{ r.kind }}</small></a>{% else %}<div class="empty-card">Nenhum roteiro ativo.</div>{% endfor %}
+  </div>
+</section>
+
+<form id="route-bulk-form" method="post" action="/roteiros/trocar-motorista-lote">
+  <input type="hidden" name="return_responsible_id" value="{{ responsible_id }}">
+</form>
+
+{% if route_groups %}
+<section class="panel route-bulk-toolbar">
+  <div><b><span id="route-selected-count">0</span> NF(s) selecionada(s)</b><small>Marque notas em qualquer lista abaixo e troque o motorista em lote.</small></div>
+  <div class="actions"><button type="button" class="btn" id="select-all-active">Selecionar todas exibidas</button><button type="button" class="btn primary" id="open-route-driver-modal" disabled>Trocar motorista</button></div>
+</section>
+{% endif %}
+
+{% for group in route_groups %}
+<section class="panel driver-route-group">
+  <div class="driver-route-head">
+    <div class="driver-route-identity driver-tone-{{ loop.index0 % 8 }}"><b>{{ group.responsible.name }}</b><small>{{ group.responsible.kind }}</small></div>
+    <div class="driver-route-stats"><span><b>{{ group.delivery_count }}</b> NFs</span><span><b>{{ group.total_volumes|int }}</b> volumes</span><span><b>R$ {{ '%.2f'|format(group.total_value) }}</b> valor</span></div>
+  </div>
+  {% for route_data in group.routes %}{% set route=route_data.route %}
+  <div class="route-list-block">
+    <div class="route-list-head"><div><b>Roteiro #{{ route.id }}</b><span>{{ route.route_date }} · <span class="badge {{ route.status|lower|replace(' ','_') }}">{{ route.status }}</span> · {{ route_data.rows|length }} entrega(s)</span></div><div class="actions"><a class="btn small" href="/roteiros/{{ route.id }}">Abrir / ordem</a><a class="btn small" target="_blank" href="/roteiros/{{ route.id }}/imprimir">Imprimir</a></div></div>
+    <div class="route-delivery-list">
+      {% for stop,d,inv,p in route_data.rows %}
+      <label class="route-delivery-row">
+        <span class="route-check"><input form="route-bulk-form" type="checkbox" name="delivery_ids" value="{{ d.id }}" class="route-list-check"></span>
+        <span class="route-order">{{ stop.stop_order }}</span>
+        <span class="route-main"><b>NF {{ inv.number or '—' }}</b><small>{{ cliente_exibicao(p.name if p else '',p.trade_name if p else '') }}</small></span>
+        <span class="route-region"><b>{{ d.region or 'A Classificar' }}</b><small>{{ inv.delivery_city or '' }}{% if inv.delivery_district %} · {{ inv.delivery_district }}{% endif %}</small></span>
+        <span class="route-volume"><b>{{ (d.volumes or inv.volumes or 0)|int }}</b><small>{{ d.box_type or '—' }}</small></span>
+        <span class="route-value">R$ {{ '%.2f'|format(inv.total or 0) }}</span>
+        <span class="route-status"><span class="badge {{ d.status|lower|replace(' ','_') }}">{{ d.status }}</span></span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% else %}<section class="panel"><div class="empty">Nenhum roteiro ativo{% if responsible_id %} para o motorista selecionado{% endif %}.</div></section>{% endfor %}
+
+<div class="routing-modal" id="route-driver-modal" hidden aria-hidden="true">
+  <div class="routing-modal-backdrop" data-close-route-driver></div>
+  <section class="routing-modal-card" role="dialog" aria-modal="true" aria-labelledby="route-driver-modal-title">
+    <div class="routing-modal-head"><div><span class="step-number">↔</span><div><h2 id="route-driver-modal-title">Trocar motorista</h2><p><b id="route-modal-count">0</b> NF(s) selecionada(s).</p></div></div><button type="button" class="modal-close" data-close-route-driver aria-label="Fechar">×</button></div>
+    <p class="modal-instruction">Selecione o novo motorista. As NFs serão movidas para o roteiro correspondente, preservando a data e o status operacional.</p>
+    <div class="driver-choice-grid modal-driver-grid">
+      {% for r in responsibles %}<label class="driver-choice driver-tone-{{ loop.index0 % 8 }}"><input form="route-bulk-form" type="radio" name="responsible_id" value="{{ r.id }}"><span><b>{{ r.name }}</b><small>{{ r.kind }}</small><em>Selecionar</em></span></label>{% endfor %}
+    </div>
+    <div class="route-modal-footer"><div></div><div class="modal-actions"><button class="btn" type="button" data-close-route-driver>Cancelar</button><button form="route-bulk-form" class="btn primary" id="confirm-route-driver">Gravar troca</button></div></div>
+  </section>
+</div>
+
+<details class="panel secondary-route-create"><summary>Gerar roteiro de entregas já atribuídas ao motorista</summary><p class="hint">Use apenas para entregas antigas que já têm motorista definido, mas ainda não foram incluídas em um roteiro.</p><form class="filters filters-wrap" method="post" action="/roteiros/criar"><select name="responsible_id" required><option value="">Selecione o responsável</option>{% for r in responsibles %}<option value="{{ r.id }}">{{ r.name }} · {{ pending_counts.get(r.id,0) }} pendentes</option>{% endfor %}</select><input type="date" name="route_date" value="{{ today }}" required><button class="btn">Gerar pendentes</button></form></details>
+
+{% if finalized_route_rows %}<details class="panel finalized-routes"><summary>Roteiros finalizados recentes</summary><div class="table-wrap"><table><thead><tr><th>Roteiro</th><th>Data</th><th>Motorista</th><th>Paradas</th><th></th></tr></thead><tbody>{% for route,r,count in finalized_route_rows %}<tr><td>#{{ route.id }}</td><td>{{ route.route_date }}</td><td>{{ r.name }}</td><td>{{ count }}</td><td><a class="btn small" href="/roteiros/{{ route.id }}">Abrir</a></td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+{% endblock %}
+{% block scripts %}<script>
+const routeChecks=[...document.querySelectorAll('.route-list-check')];
+const routeCount=document.getElementById('route-selected-count');
+const routeModalCount=document.getElementById('route-modal-count');
+const openRouteModal=document.getElementById('open-route-driver-modal');
+const routeModal=document.getElementById('route-driver-modal');
+function selectedRouteCount(){return routeChecks.filter(x=>x.checked).length;}
+function updateRouteSelection(){const n=selectedRouteCount();if(routeCount)routeCount.textContent=n;if(routeModalCount)routeModalCount.textContent=n;if(openRouteModal)openRouteModal.disabled=n===0;document.querySelectorAll('.route-delivery-row').forEach(row=>{const c=row.querySelector('.route-list-check');row.classList.toggle('selected',!!c?.checked);});}
+routeChecks.forEach(c=>c.addEventListener('change',updateRouteSelection));
+const selectAll=document.getElementById('select-all-active');if(selectAll)selectAll.addEventListener('click',()=>{const shouldSelect=!routeChecks.every(c=>c.checked);routeChecks.forEach(c=>c.checked=shouldSelect);updateRouteSelection();});
+function showRouteModal(){if(selectedRouteCount()===0){alert('Selecione uma ou mais NFs.');return;}routeModal.hidden=false;routeModal.setAttribute('aria-hidden','false');document.body.classList.add('modal-open');updateRouteSelection();}
+function hideRouteModal(){routeModal.hidden=true;routeModal.setAttribute('aria-hidden','true');document.body.classList.remove('modal-open');}
+if(openRouteModal)openRouteModal.addEventListener('click',showRouteModal);document.querySelectorAll('[data-close-route-driver]').forEach(el=>el.addEventListener('click',hideRouteModal));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!routeModal.hidden)hideRouteModal();});
+const confirm=document.getElementById('confirm-route-driver');if(confirm)confirm.addEventListener('click',e=>{if(selectedRouteCount()===0){e.preventDefault();hideRouteModal();alert('Selecione uma ou mais NFs.');return;}if(!document.querySelector('#route-bulk-form input[name="responsible_id"]:checked')){e.preventDefault();alert('Selecione o novo motorista.');}});
+updateRouteSelection();
+</script>{% endblock %}

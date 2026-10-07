@@ -1,0 +1,10 @@
+V1.3.17 — Faturamento regressivo pela última página válida
+
+- Faturamento passa a comprovar primeiro a última página válida atual.
+- Leitura padrão do período ocorre da última página válida para trás.
+- A varredura para automaticamente quando uma página inteira fica anterior à data inicial.
+- Busca binária do Analytics V7.8 mantida apenas como fallback para períodos antigos ou quando o limite da varredura for atingido.
+- Cursor só é atualizado com página HTTP 200 contendo registros reais.
+- Cursores inválidos retomam pela âncora P15983 do Analytics V7.8.
+- Barra de progresso separa Fase 1/2 (última página válida) e Fase 2/2 (leitura regressiva).
+- Nenhuma alteração destrutiva no banco; schema permanece 5.

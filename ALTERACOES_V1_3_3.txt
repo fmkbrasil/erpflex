@@ -1,0 +1,28 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.3 — ROTEIRIZAÇÃO POR ZONA
+
+1. TELA ROTEIRIZAR ORIENTADA POR ZONA
+- Removidos os cards de motorista da tela principal de Roteirizar.
+- Adicionados cards coloridos de zona/região com contagem das NFs disponíveis.
+- Clique no card filtra imediatamente a zona correspondente.
+- Pesquisa por NF/cliente/endereço pode ser combinada com a zona escolhida.
+
+2. MOTORISTA EM JANELA DE ROTEIRIZAÇÃO
+- O operador marca uma, várias ou todas as NFs exibidas.
+- O botão “Roteirizar selecionadas” abre uma janela/modal.
+- O modal exibe cards coloridos de motoristas/responsáveis.
+- Data do roteiro e opção de memorizar motorista por cliente/CNPJ ficam no modal.
+- Ao gravar, as NFs são efetivamente vinculadas ao roteiro e ao motorista selecionado.
+- Após salvar, o sistema retorna à mesma tela e mantém a zona/pesquisa, permitindo continuar a rotina.
+
+3. FLUXO OPERACIONAL
+Zona -> selecionar NFs -> abrir motorista -> gravar -> voltar à zona -> continuar.
+A entrega passa a ser considerada roteirizada somente após a gravação do roteiro.
+
+4. AJUSTES SECUNDÁRIOS
+- Região e tipo de caixa continuam disponíveis em “Ajustes opcionais”.
+- A escolha de motorista não fica misturada com esses ajustes.
+
+5. COMPATIBILIDADE
+- Banco de dados não foi alterado.
+- Regras de classificação, COLETA, baixa apenas roteirizada e troca posterior de motorista foram preservadas.
+- URLs existentes permanecem disponíveis.

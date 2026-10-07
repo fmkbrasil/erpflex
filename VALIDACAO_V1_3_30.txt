@@ -1,0 +1,17 @@
+VALIDAÇÃO V1.3.30
+
+- python -m compileall app: OK
+- templates Jinja: 39/39 OK
+- banco novo: schema 10 OK
+- migração simulada schema 9 -> 10: OK
+- preservação de registro pré-existente durante migração: OK
+- tabelas novas de automação/heartbeat/lease: OK
+- defaults de agenda por módulo: OK
+- exclusão mútua do lease: owner 2 bloqueado enquanto owner 1 ativo; liberado após release: OK
+- inicialização do worker em loop com automação pausada: OK
+- ZIP: validar após empacotamento
+
+A API ERPFlex real não foi chamada durante esta validação por ausência de credenciais reais no ambiente de teste.
+- GET /health: versão 1.3.30 / schema 10 OK
+- GET /sincronizacao: painel "Robô de sincronização" renderizado OK
+- POST configuração do worker: ativação, janela, limites, módulos e intervalos persistidos OK

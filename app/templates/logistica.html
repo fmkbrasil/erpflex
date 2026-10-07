@@ -1,0 +1,26 @@
+{% extends 'base.html' %}{% block title %}Logística · {{ app_name }}{% endblock %}{% block content %}
+<section class="hero"><div><h1>Logística</h1><p>Operação logística vinculada diretamente à NF-e central. Região, responsável, caixa e status pertencem à plataforma.</p></div><div class="actions"><a class="btn" href="/responsaveis">Responsáveis</a><a class="btn" href="/roteiros">Roteiros</a><a class="btn primary" href="/baixa-entregas">Baixa de entregas</a></div></section>
+<div class="cards">
+  {% for s,label in [('PENDENTE','Pendentes'),('EM ROTA','Em rota'),('ENTREGUE','Entregues'),('OCORRENCIA','Ocorrências')] %}<a class="metric" href="/logistica?status={{ s }}"><strong>{{ stats.get(s,0) }}</strong><span>{{ label }}</span></a>{% endfor %}
+</div>
+<section class="panel">
+<form class="filters filters-wrap" method="get">
+  <input name="q" value="{{ q }}" placeholder="NF, cliente, município ou bairro">
+  <select name="status"><option value="">Todos os status</option>{% for s in ['PENDENTE','EM ROTA','ENTREGUE','NAO ENTREGUE','OCORRENCIA','REPROGRAMADA'] %}<option value="{{ s }}" {{ 'selected' if status==s else '' }}>{{ s }}</option>{% endfor %}</select>
+  <select name="region"><option value="">Todas as regiões</option>{% for r in regions %}<option value="{{ r.name }}" {{ 'selected' if region==r.name else '' }}>{{ r.name }}</option>{% endfor %}</select>
+  <select name="responsible_id"><option value="0">Todos os responsáveis</option>{% for r in responsibles %}<option value="{{ r.id }}" {{ 'selected' if responsible_id==r.id else '' }}>{{ r.name }}</option>{% endfor %}</select>
+  <button class="btn primary">Filtrar</button><a class="btn" href="/logistica">Limpar</a>
+</form>
+</section>
+<section class="panel"><div class="table-wrap"><table><thead><tr><th>NF / Cliente</th><th>Endereço</th><th>Região</th><th>Responsável</th><th>Volumes</th><th>Caixa</th><th>Status</th><th>KM</th><th>Custo</th><th>Ajustar</th></tr></thead><tbody>
+{% for d,inv,p,a,rsp in rows %}<tr><td><b>{{ inv.number or '—' }}</b><small>{{ p.name if p else '—' }}{% if p and p.trade_name %} — {{ p.trade_name }}{% endif %}</small></td><td>{{ inv.delivery_address or '—' }}<small>{{ inv.delivery_district or '' }}{% if inv.delivery_city %} · {{ inv.delivery_city }}{% endif %}</small></td><td>{{ d.region or 'A Classificar' }}</td><td>{{ rsp.name if rsp else (d.responsible or 'Não vinculado') }}<small>{{ rsp.kind if rsp else (d.responsible_type or '') }}</small></td><td>{{ d.volumes or inv.volumes or 0 }}</td><td>{{ d.box_type or '—' }}</td><td><span class="badge {{ d.status|lower|replace(' ','_') }}">{{ d.status }}</span></td><td>{{ '%.1f'|format(d.km or 0) }}</td><td>R$ {{ '%.2f'|format(d.freight_cost or 0) }}</td><td>
+<details><summary>Editar</summary><form class="inline-form" method="post" action="/logistica/{{ d.id }}/editar">
+<label>Região<select name="region"><option value="">A Classificar</option>{% for rr in regions %}<option value="{{ rr.name }}" {{ 'selected' if d.region==rr.name else '' }}>{{ rr.name }}</option>{% endfor %}</select></label>
+<label>Responsável<select name="responsible_id"><option value="0">Não vinculado</option>{% for rr in responsibles %}<option value="{{ rr.id }}" {{ 'selected' if rsp and rsp.id==rr.id else '' }}>{{ rr.name }} · {{ rr.kind }}</option>{% endfor %}</select></label>
+<label>Caixa<select name="box_type"><option value="">—</option>{% for b in boxes %}<option value="{{ b.name }}" {{ 'selected' if d.box_type==b.name else '' }}>{{ b.name }}</option>{% endfor %}</select></label>
+<label>Volumes<input name="volumes" type="number" min="0" step="1" value="{{ d.volumes or inv.volumes or 0 }}"></label>
+<label>Observação<textarea name="notes">{{ d.notes or '' }}</textarea></label>
+<label class="check"><input type="checkbox" name="remember_rule" value="1"> Memorizar como regra deste cliente</label>
+<button class="btn primary">Salvar</button></form></details>
+</td></tr>{% else %}<tr><td colspan="10" class="empty">Nenhuma entrega encontrada.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}

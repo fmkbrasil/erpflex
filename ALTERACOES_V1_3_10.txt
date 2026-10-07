@@ -1,0 +1,10 @@
+V1.3.10 — SINCRONIZAÇÃO ESTÁVEL / MOTOR V7.8
+
+- Corrige travamento aparente em Faturamento durante lote.
+- Faturamento por período agora replica o algoritmo do Analytics V7.8: âncora LastValid/15983, avanço de borda limitado a 30 páginas e duas buscas binárias limitadas a 30 chamadas.
+- Remove a sondagem exponencial ampla da V1.3.9 no fluxo histórico de faturamento.
+- Uma chamada HTTP lenta não é repetida automaticamente; timeout de leitura limitado a 120 s.
+- Progresso da API é gravado em current_step e atualizado ao vivo na tabela de sincronização.
+- O lote continua sequencial para não sobrecarregar ERPFlex; módulos posteriores ficam PENDENTE até o atual concluir.
+- Ao reiniciar o aplicativo, execuções antigas PENDENTE/EM_EXECUCAO são marcadas INTERROMPIDO, evitando histórico enganoso.
+- Sem alteração de schema e sem recriação de banco.

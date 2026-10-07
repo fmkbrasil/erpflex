@@ -1,0 +1,12 @@
+VALIDAÇÃO V1.3.26
+
+- py_compile: OK para todos os arquivos Python.
+- Templates Jinja: 37 templates analisados sem erro de sintaxe.
+- Inicialização em SQLite novo: OK, schema 7, app reportando versão 1.3.26.
+- Sem alteração destrutiva de schema nesta versão.
+- Teste estrutural de vínculo: título a receber sem NF no payload vinculou à NF de saída por pedido exato e único.
+- Teste estrutural de vínculo: título a pagar sem NF no payload vinculou à NF de entrada por pedido exato e único.
+- Teste de status: título com saldo positivo não é classificado como Pago mesmo se paid_date/status textual antigo indicarem baixa.
+- Teste de pagamento parcial: status Parcial validado em Contas a Pagar e no resumo de Compras.
+- API real ERPFlex não foi executada com credenciais reais nesta validação.
+- Nenhum endpoint ERPFlex novo foi criado.

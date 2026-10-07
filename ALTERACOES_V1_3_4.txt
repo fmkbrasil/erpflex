@@ -1,0 +1,37 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.4 — ROTEIROS POR MOTORISTA E CLASSIFICAÇÃO DE REGIÃO
+
+1. TELA ROTEIRIZAR
+- Cards de região exibem somente regiões que possuem NFs disponíveis para roteirizar.
+- Removido o card genérico "Todos"; quando há filtro ativo existe o botão "Ver todas".
+- Nova ação "Classificar região" para uma, várias ou todas as NFs selecionadas.
+- Classificação abre em modal com cards das regiões cadastradas.
+- Opção de memorizar a região por cliente/CNPJ para aplicar nas próximas entregas.
+- A memorização de região preserva motorista e tipo de caixa já existentes na regra do cliente.
+- Motorista continua sendo escolhido somente no modal de roteirização.
+
+2. CONSOLIDAÇÃO DE ROTEIRO
+- Roteirizações sucessivas para o mesmo motorista e a mesma data passam a ser anexadas ao mesmo roteiro PLANEJADO.
+- Isso evita criar vários roteiros fragmentados ao trabalhar zona por zona.
+
+3. TELA ROTEIROS
+- Cards coloridos dos motoristas que possuem roteiros ativos.
+- Clique no card filtra os roteiros daquele motorista.
+- Roteiros são exibidos em listas agrupadas por motorista, com NF, cliente, região, volumes, caixa, valor e status.
+- Seleção de uma, várias ou todas as NFs exibidas.
+- Ação "Trocar motorista" abre modal com cards dos motoristas.
+- Após gravar, a tela de Roteiros é reaberta mantendo o filtro do motorista, permitindo continuar os ajustes.
+- A troca em lote funciona inclusive quando as NFs selecionadas estão em roteiros diferentes; data e status operacional são preservados.
+- Roteiros finalizados recentes permanecem acessíveis em área recolhida.
+
+4. IMPRESSÃO DO ROTEIRO
+- Layout redesenhado para A4 paisagem.
+- Cabeçalho com empresa, motorista, data, roteiro e status.
+- Resumo com NFs, volumes e valor transportado.
+- Manifesto de entregas com colunas dimensionadas para impressão.
+- Campo de observações e assinaturas de motorista/responsável e expedição.
+- Cabeçalho da tabela repete em novas páginas.
+
+5. COMPATIBILIDADE
+- Nenhuma tabela nova foi criada.
+- Banco da V1.3.3 é compatível com a V1.3.4.
+- Rotas e URLs anteriores foram preservadas.

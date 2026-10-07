@@ -1,0 +1,33 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.26
+
+1. CONTAS A RECEBER
+- Corrigido falso status "Pago": saldo positivo não é mais classificado como pago somente por data/status textual.
+- Status do boleto aparece uma única vez na grade.
+- Cores distintas: Disponível, Pronto para gerar, Pago e Indisponível.
+- NF-e vinculada por ID do faturamento/número fiscal e, como fallback seguro, por pedido exato quando houver uma única NF correspondente.
+- Quando o vínculo seguro encontra a NF, o número da NF-e passa a ser exibido mesmo se o título não trouxer o campo fiscal diretamente.
+
+2. CONTAS A PAGAR
+- Status do pagamento normalizado: Em aberto, Parcial, Vencido, Pago e Cancelado.
+- Filtro por status do pagamento.
+- Vínculo com NF-e de entrada usando número fiscal e fallback por pedido exato e único.
+- Ações NF-e/DANFE aparecem quando houver vínculo seguro com Compras.
+
+3. DESPESAS
+- Visualização simplificada para dados essenciais, status do lançamento e Detalhes.
+- Sem regras de boleto/carteira aplicadas a despesas.
+
+4. FATURAMENTO
+- Nova coluna Status cobrança com badge colorido.
+- Resumo financeiro permanece separado para quantidade de títulos, saldo, vencimento, banco e carteira.
+- Vínculo financeiro ampliado pelo pedido exato e único quando o retorno do título não trouxer a NF diretamente.
+
+5. COMPRAS
+- Nova coluna Status pagamento com badge colorido.
+- Exibe quantidade de títulos e saldo vinculado à NF de entrada.
+
+SEGURANÇA DOS VÍNCULOS
+- Não foi criado endpoint ERPFlex novo.
+- Não é feito vínculo por número parecido.
+- Fallback por pedido só é aceito quando o valor é exato (desconsiderando zeros à esquerda) e existe uma única NF local correspondente.
+- NF, Pedido e Título permanecem campos separados.

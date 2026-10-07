@@ -1,0 +1,60 @@
+{% extends 'base.html' %}{% block title %}Faturamento · {{ app_name }}{% endblock %}{% block content %}
+<section class="hero"><div><h1>Faturamento / NF-e de saída</h1><p>Consulte as notas, clientes e produtos sincronizados do ERPFlex.</p></div><div class="hero-value">{{ total_rows }}<small>{{ period_label }}</small></div></section>
+<form id="document-filter" class="panel document-filter" method="get">
+  <input type="hidden" name="period" id="period-value" value="{{ period }}">
+  <input type="hidden" name="cols" id="cols-value" value="{{ selected_cols|join(',') }}">
+  <input type="hidden" name="save_view" id="save-view" value="0">
+  <div class="document-filter-top">
+    <label class="document-search"><span>Pesquisar</span><input name="q" value="{{ q }}" placeholder="NF, chave, cliente ou produto"></label>
+    <div class="quick-periods" aria-label="Período">
+      <button type="button" data-period="today" class="{{ 'active' if period=='today' else '' }}">Hoje</button>
+      <button type="button" data-period="week" class="{{ 'active' if period=='week' else '' }}">Semana</button>
+      <button type="button" data-period="month" class="{{ 'active' if period=='month' else '' }}">Mês</button>
+      <button type="button" data-period="custom" class="{{ 'active' if period=='custom' else '' }}">Personalizado</button>
+      <button type="button" data-period="all" class="{{ 'active' if period=='all' else '' }}">Todos</button>
+    </div>
+  </div>
+  <div class="document-filter-bottom"><label><span>Situação NF-e</span><select name="nf_status"><option value="all" {{'selected' if nf_status=='all' else ''}}>Todas</option><option value="active" {{'selected' if nf_status=='active' else ''}}>Ativas</option><option value="cancelled" {{'selected' if nf_status=='cancelled' else ''}}>Canceladas</option></select></label>
+    <label><span>De</span><input type="date" name="date_from" value="{{ date_from }}"></label>
+    <label><span>Até</span><input type="date" name="date_to" value="{{ date_to }}"></label>
+    <label><span>Por página</span><select name="per_page">{% for n in [25,50,100,250] %}<option value="{{n}}" {{ 'selected' if per_page==n else '' }}>{{n}}</option>{% endfor %}</select></label>
+    <details class="column-picker"><summary class="btn">Colunas</summary><div class="column-picker-popover">
+      {% for key,label in column_defs %}<label><input type="checkbox" data-doc-col value="{{key}}" {{ 'checked' if key in selected_cols else '' }}> {{label}}</label>{% endfor %}
+      <div class="actions"><button type="button" class="btn small" id="apply-columns">Aplicar</button><button type="button" class="btn small primary" id="save-columns">Salvar visualização</button></div>
+    </div></details>
+    <button class="btn primary">Filtrar</button>
+  </div>
+</form>
+{% if items_updated or items_failed %}<section class="alert {{'success' if items_updated else 'error'}}"><b>Atualização de itens:</b> {{items_updated}} NF(s) atualizada(s){% if items_failed %} · {{items_failed}} sem itens/retorno{% endif %}.</section>{% endif %}
+<section class="panel document-list-panel"><div class="panel-title"><div><h2>Notas fiscais</h2><small>Exibe somente NF-e com número fiscal maior que zero. Pedido/documento é mantido em campo separado; notas canceladas são destacadas.</small></div><form method="post" action="/faturamento/atualizar-itens"><input type="hidden" name="q" value="{{q}}"><input type="hidden" name="period" value="{{period}}"><input type="hidden" name="date_from" value="{{date_from}}"><input type="hidden" name="date_to" value="{{date_to}}"><input type="hidden" name="nf_status" value="{{nf_status}}"><input type="hidden" name="per_page" value="{{per_page}}"><input type="hidden" name="page" value="{{page}}"><input type="hidden" name="cols" value="{{selected_cols|join(',')}}">{% for inv,p in rows %}<input type="hidden" name="invoice_id" value="{{inv.id}}">{% endfor %}<button class="btn">Atualizar itens via pedidos</button></form></div>
+<div class="table-wrap"><table class="document-table"><thead><tr>
+{% for col,label in column_defs %}{% if col in selected_cols %}<th>{{label}}</th>{% endif %}{% endfor %}<th>Ações</th>
+</tr></thead><tbody>{% for inv,p in rows %}{% set d=invoice_display.get(inv.id,{}) %}<tr class="{{'document-cancelled' if d.get('status',{}).get('cancelled') else ''}}">
+{% for col,label in column_defs %}{% if col in selected_cols %}
+  {% if col=='number' %}<td><a class="record-link" href="/faturamento/{{inv.id}}">{{ inv.number or '—' }}</a><small>{{ inv.series and ('Série '+inv.series) or '' }}</small></td>
+  {% elif col=='order_number' %}<td>{{ d.get('order_number') or '—' }}</td>
+  {% elif col=='customer' %}<td><b>{{ p.name if p else '—' }}</b>{% if p and p.trade_name %}<small>{{p.trade_name}}</small>{% endif %}</td>
+  {% elif col=='products' %}<td class="products-cell"><span>{{ item_info.get(inv.id,{}).get('summary','Itens não disponíveis') }}</span>{% if item_info.get(inv.id,{}).get('source')=='pedido' %}<small>Itens do pedido relacionado</small>{% elif item_info.get(inv.id,{}).get('source')=='faturamento_api' %}<small>Itens do faturamento ERPFlex</small>{% endif %}</td>
+  {% elif col=='items' %}<td><span class="count-pill">{{ item_info.get(inv.id,{}).get('count',0) }}</span></td>
+  {% elif col=='issue_date' %}<td>{{ inv.issue_date or '—' }}</td>
+  {% elif col=='status_nf' %}<td><span class="badge {{'erro' if d.get('status',{}).get('cancelled') else 'ok'}}">{{ d.get('status',{}).get('state','ATIVA') }}</span>{% if d.get('status',{}).get('raw') and d.get('status',{}).get('raw') != d.get('status',{}).get('state') %}<small>{{d.get('status',{}).get('raw')}}</small>{% endif %}</td>
+  {% elif col=='payment_status' %}{% set ps=d.get('payment',{}) %}<td><span class="badge pagamento-{{ps.get('code','sem_titulo')|lower}}">{{ps.get('status','Sem título')}}</span></td>
+  {% elif col=='payment' %}{% set ps=d.get('payment',{}) %}<td>{% if ps.get('count') %}<b>{{ps.get('count')}} título(s)</b><small>Saldo R$ {{'%.2f'|format(ps.get('balance',0))}}{% if ps.get('next_due') %} · próx. {{ps.get('next_due')}}{% endif %}</small>{% if ps.get('banks') or ps.get('wallets') %}<small>{{ps.get('banks',[])|join(', ') or 'Banco não informado'}}{% if ps.get('wallets') %} · {{ps.get('wallets',[])|join(', ')}}{% endif %}</small>{% endif %}{% else %}<span class="muted">Sem títulos vinculados</span>{% endif %}</td>
+  {% elif col=='forecast_date' %}<td>{{ inv.forecast_date or '—' }}</td>
+  {% elif col=='total' %}<td class="num"><b>R$ {{ '%.2f'|format(inv.total or 0) }}</b></td>
+  {% elif col=='carrier' %}<td>{{ inv.carrier or '—' }}</td>
+  {% elif col=='city' %}<td>{{ inv.delivery_city or '—' }}</td>
+  {% elif col=='volumes' %}<td>{{ inv.volumes or 0 }}</td>
+  {% elif col=='access_key' %}<td class="key">{{ inv.access_key or '—' }}</td>
+  {% endif %}
+{% endif %}{% endfor %}
+<td><div class="row-actions"><a class="btn small" href="/faturamento/{{inv.id}}">Detalhes</a><a class="btn small" href="/faturamento/{{inv.id}}/imprimir" target="_blank">DANFE</a></div></td>
+</tr>{% else %}<tr><td colspan="{{ selected_cols|length + 1 }}" class="empty">Nenhuma NF no período/filtro selecionado.</td></tr>{% endfor %}</tbody></table></div>
+<div class="pagination-bar"><span>{{ total_rows }} registro(s) · página {{page}} de {{pages}}</span><div class="actions">{% if prev_url %}<a class="btn" href="{{prev_url}}">← Anterior</a>{% endif %}{% if next_url %}<a class="btn" href="{{next_url}}">Próxima →</a>{% endif %}</div></div></section>
+<script>
+(()=>{const f=document.getElementById('document-filter'),p=document.getElementById('period-value'),c=document.getElementById('cols-value'),s=document.getElementById('save-view');
+const syncCols=()=>{const v=[...f.querySelectorAll('[data-doc-col]:checked')].map(x=>x.value); if(v.length)c.value=v.join(',');};
+f.querySelectorAll('[data-period]').forEach(b=>b.addEventListener('click',()=>{p.value=b.dataset.period;if(b.dataset.period==='custom'){const d=f.querySelector('[name=date_from]');if(d)d.focus();return;}f.submit()}));
+document.getElementById('apply-columns').addEventListener('click',()=>{syncCols();f.submit()});document.getElementById('save-columns').addEventListener('click',()=>{syncCols();s.value='1';f.submit()});})();
+</script>
+{% endblock %}

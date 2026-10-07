@@ -1,0 +1,10 @@
+V1.3.12 - Faturamento direto pelo cursor
+
+- Remove a redescoberta/validação ampla da última página antes da sincronização por período.
+- Quando há cursor persistido, começa diretamente na última página conhecida.
+- Faz apenas uma sondagem rápida de P+1 (12 s); se estiver lenta, ignora e continua.
+- Varredura regressiva página a página até ultrapassar a data inicial.
+- Timeout operacional de 45 s por página de faturamento para evitar aparente travamento indefinido.
+- Progresso mostra página atual, contador e datas encontradas.
+- Se o cursor estiver atrás do período ou inválido, mostra erro diagnóstico em vez de concluir silenciosamente com 0 registros.
+- Sem alteração de schema/banco; preserva dados da V1.3.11.

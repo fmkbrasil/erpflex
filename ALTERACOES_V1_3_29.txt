@@ -1,0 +1,32 @@
+V1.3.29 — SINCRONIZAÇÃO INCREMENTAL COM ÍNDICE DE PÁGINAS + FORÇAR SINCRONIZAÇÃO
+
+1. Índice persistente de páginas/offsets ERPFlex
+- Nova tabela aditiva sync_page_index (schema 9).
+- Armazena por empresa/módulo: tipo do cursor, página/offset/posição, menor/maior data observada,
+  primeiro/último ID, quantidade de registros, hash do conteúdo e data da última validação.
+- Não armazena uma segunda cópia dos documentos; RawRecord/tabelas centrais continuam sendo a fonte local.
+- O índice é alimentado automaticamente enquanto Pedidos, Faturamento, Contas a Receber,
+  Contas a Pagar e Compras percorrem a API.
+
+2. Sincronização incremental
+- Mantém os SyncCursor existentes como checkpoint principal.
+- Pedidos e Financeiro reutilizam o índice local para reduzir a etapa de localização binária de períodos já conhecidos.
+- Faturamento e Compras continuam revalidando a borda recente a partir do cursor principal, evitando perder documentos novos.
+- O índice aparece na Central de Sincronização com quantidade de páginas/blocos e cobertura de datas por módulo.
+
+3. Forçar sincronização
+- Nova ação /sincronizacao/erpflex-forcar e painel próprio na Central de Sincronização.
+- Permite selecionar Pedidos, Faturamento, Contas a Receber, Contas a Pagar, Compras e Despesas.
+- Usuário informa Data inicial, Data final e limite de páginas/blocos.
+- A rotina reconsulta deliberadamente o período mesmo que já exista na base.
+- Quando o índice local conhece o intervalo, Faturamento e Compras saltam diretamente para a faixa de páginas/offsets conhecida.
+- Quando o período ainda não está indexado, usa o motor de localização já validado no Analytics V7.8 e passa a indexar as páginas consultadas.
+- A sincronização forçada NÃO sobrescreve o cursor incremental principal.
+- Persistência continua por upsert/reconciliação: reprocessar não deve criar cópias independentes de NF/título.
+
+4. Compatibilidade e segurança
+- Migração somente aditiva: schema 8 -> 9.
+- Nenhuma tabela existente é apagada ou recriada.
+- ERPFlex permanece somente leitura.
+- Nenhum endpoint ERPFlex novo foi inventado.
+- Logística, cobrança automática, DANFE e demais módulos da V1.3.28 foram preservados.

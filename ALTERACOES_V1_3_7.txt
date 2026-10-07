@@ -1,0 +1,32 @@
+V1.3.7 — Sincronização modular e cadastros consultáveis
+
+1. Central de Sincronização ERPFlex
+- seleção múltipla de módulos;
+- botão Sincronizar selecionados;
+- botão Sincronizar tudo disponível;
+- cadastros mestres separados de movimentações;
+- período para Pedidos, Faturamento, Contas a Receber, Contas a Pagar, Compras e Despesas;
+- Produtos sincronizados por paginação completa até o fim ou limite configurado;
+- Bancos sincronizados pelo endpoint já validado;
+- Clientes conhecidos podem ser enriquecidos pelo endpoint individual já validado;
+- Fornecedores continuam sendo formados a partir de Compras/Despesas, sem inventar endpoint de cadastro em lote;
+- histórico separado por módulo com encontrados, processados, novos, atualizados e erros;
+- lote executado sequencialmente para evitar concorrência entre módulos.
+
+2. Cadastros
+- abas Produtos, Clientes, Fornecedores, Bancos e Todos os parceiros;
+- clique no nome/descrição para abrir a ficha detalhada;
+- exibição do payload integral recebido da API quando disponível;
+- pesquisa;
+- paginação com 25, 50, 100 ou 250 registros por página;
+- escolha das colunas exibidas;
+- preferência de colunas e quantidade por página gravada por usuário/empresa.
+
+3. Persistência
+- schema atualizado para versão 3;
+- nova tabela user_view_preferences;
+- atualização mantém a política de backup/migração segura da V1.3.6.
+
+Observação sobre período:
+- Despesas possuem consulta diária por período já validada.
+- Os demais movimentos são filtrados pelo período dentro dos blocos/páginas consultados; para períodos antigos ou bases muito extensas, aumentar o limite de blocos/páginas.

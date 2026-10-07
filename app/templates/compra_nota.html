@@ -1,0 +1,9 @@
+{% extends 'base.html' %}{% block title %}Compra {{ header.number or inv.id }} · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero no-print"><div><h1>NF-e de entrada</h1><p>Espelho DANFE em formato A4, montado com os dados sincronizados da compra.</p></div><div class="actions"><a class="btn" href="/compras">Voltar</a><a class="btn primary" href="/compras/{{inv.id}}/imprimir" target="_blank">Imprimir DANFE</a></div></section>
+{% set issuer_name = header.supplier_name %}{% set issuer_trade = header.supplier_trade or header.supplier_name %}{% set issuer_cnpj = header.supplier_cnpj %}{% set issuer_ie = header.supplier_ie %}{% set issuer_address = header.supplier_address %}{% set issuer_district = header.supplier_district %}{% set issuer_city = header.supplier_city %}{% set issuer_state = header.supplier_state %}{% set issuer_zip = header.supplier_zip %}{% set issuer_phone = '' %}
+{% set recipient_name = company.name %}{% set recipient_cnpj = company.cnpj %}{% set recipient_address = '' %}{% set recipient_district = '' %}{% set recipient_city = '' %}{% set recipient_state = '' %}{% set recipient_zip = '' %}{% set recipient_phone = '' %}{% set recipient_ie = '' %}
+{% include '_danfe_layout.html' %}
+{% if payload and not print_mode %}<section class="panel no-print"><details><summary><b>Dados completos recebidos do ERPFlex</b></summary><pre class="json-view">{{payload|tojson(indent=2)}}</pre></details></section>{% endif %}
+{% if print_mode %}<script>window.addEventListener('load',()=>window.print());</script>{% endif %}
+{% endblock %}

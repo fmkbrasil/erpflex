@@ -1,0 +1,15 @@
+VALIDAÇÃO V1.3.29
+
+- py_compile/compileall: OK.
+- 39 templates Jinja: OK.
+- Inicialização em banco SQLite novo: OK, schema 9.
+- Simulação de upgrade schema 8 -> 9: OK; sync_page_index criada de forma aditiva.
+- FastAPI version: 1.3.29.
+- Rota /sincronizacao/erpflex-forcar: presente.
+- Teste estrutural do índice: gravação, atualização, resumo e localização por período: OK.
+- Testes simulados de navegação sem API real:
+  * Faturamento forçado usando page_hint: OK.
+  * Compras forçadas usando page_hint: OK.
+  * Pedidos por período usando índice local: OK.
+  * Contas a Receber por período usando índice local: OK.
+- API ERPFlex real: NÃO executada nesta validação; não foram utilizadas credenciais reais.

@@ -1,0 +1,19 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.25
+
+FINANCEIRO / CONTAS A RECEBER
+- Criado status operacional do boleto na listagem: Disponível, Pronto para gerar, Pago e Indisponível.
+- Criado filtro por status do boleto.
+- Títulos pagos/saldo zerado são identificados antes de tentar gerar boleto, evitando chamadas desnecessárias que retornam "boleto não existe ou já foi pago".
+- Criada seleção por checkbox e seleção de todos os títulos da página.
+- Criada ação em lote "Gerar / imprimir boletos selecionados" em uma única tela de impressão.
+- Criada ação em lote "Enviar boleto + XML em lote" sem necessidade de abrir o detalhe de cada título.
+- O envio em lote resolve o e-mail do cliente usando os dados já disponíveis/integração atual e processa cada título selecionado.
+- XML é anexado somente quando já está disponível nos dados locais/retornos sincronizados da NF-e de saída. Nenhum endpoint novo de XML foi inventado.
+- Títulos pagos são ignorados no envio/geração em lote.
+- Mantidos NF-e, Pedido, Título e Boleto como referências independentes.
+- Rotina individual de envio também anexa XML quando disponível localmente.
+
+INTEGRAÇÃO
+- Não foram criados novos endpoints ERPFlex.
+- A geração/consulta de boleto continua usando somente a rotina já comprovada na base anterior.
+- NF Stock permanece independente.

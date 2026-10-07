@@ -1,0 +1,22 @@
+V1.3.11 — Faturamento regressivo + Compras completas
+
+FATURAMENTO
+- Corrigida a extração dos registros para seguir o extractBestArray do ERPFlex Analytics V7.8.
+- O período recente agora é varrido da última página válida para trás.
+- A sincronização para ao ultrapassar a data inicial, reduzindo buscas binárias desnecessárias.
+- Se o limite de páginas for atingido antes da data inicial, a execução falha com mensagem clara em vez de concluir silenciosamente com base incompleta.
+- Progresso mostra página, intervalo de datas encontrado e quantidade de registros do período.
+
+COMPRAS
+- Sincronização por período varre os blocos mais recentes para trás.
+- Com “Enriquecer detalhes” habilitado, o detalhe /api/compra/confirmado/{id} é consultado para cada compra encontrada no período, não apenas para compras sem chave.
+- Cabeçalho completo recebido da API fica preservado em raw_records.
+- Itens do detalhe são gravados em purchase_items com código, GTIN, descrição, NCM, CFOP, unidade, quantidade, valores e tributos quando fornecidos.
+- Nova tela Resumo da Compra/NF-e em formato de nota.
+- Botões Resumo e Imprimir diretamente na listagem de Compras.
+- Impressão A4 do espelho da compra, sem apresentar o documento como DANFE fiscal oficial.
+- Dados completos do JSON ERPFlex continuam disponíveis para conferência na tela de resumo.
+
+PERSISTÊNCIA
+- Nenhuma tabela existente foi recriada e o schema permanece 4.
+- A versão utiliza a mesma base central das versões anteriores.

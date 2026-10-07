@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }} · Cadastros{% endblock %}
+{% block content %}
+<section class="hero"><div><h1>{{ title }}</h1><p>Detalhe cadastral e conteúdo integral recebido da integração, quando disponível.</p></div><div class="actions"><a class="btn" href="/cadastros?tipo={{ tipo }}">← Voltar ao cadastro</a></div></section>
+<section class="panel">
+  <div class="panel-title"><h2>Resumo cadastral</h2></div>
+  <div class="detail-grid">
+    {% for label,value in summary %}<div class="detail-field"><small>{{ label }}</small><b>{{ value or '—' }}</b></div>{% endfor %}
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-title"><div><h2>Dados completos da origem</h2><p class="hint">Os campos abaixo são preservados como recebidos da API, sem inventar propriedades ausentes.</p></div><span>{{ payloads|length }} registro(s) de origem</span></div>
+  {% for p in payloads %}
+  <details class="raw-detail" {% if loop.first %}open{% endif %}>
+    <summary><b>{{ p.module }}</b> · ID {{ p.external_id }} <span>{{ p.updated_at }}</span></summary>
+    <div class="raw-field-grid">
+      {% for key,value in p.data.items() %}
+        {% if value is not mapping and value is not sequence or value is string %}<div class="raw-field"><small>{{ key }}</small><span>{{ value if value not in [None,''] else '—' }}</span></div>{% endif %}
+      {% endfor %}
+    </div>
+    <details class="raw-json"><summary>Ver JSON completo</summary><pre>{{ p.pretty }}</pre></details>
+  </details>
+  {% else %}<div class="empty">Não há payload bruto vinculado a este cadastro. O resumo acima contém os campos já consolidados na base central.</div>{% endfor %}
+</section>
+{% endblock %}

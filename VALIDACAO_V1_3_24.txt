@@ -1,0 +1,17 @@
+VALIDAÇÃO V1.3.24
+
+Executado nesta entrega:
+- py_compile em todos os módulos Python de app/: OK
+- compilação dos 36 templates Jinja: OK
+- inicialização com banco SQLite novo: OK (schema 7)
+- simulação de upgrade schema 6 -> 7: OK
+- preservação de dados existentes na simulação de upgrade: OK
+- criação aditiva da tabela email_configs no upgrade: OK
+- testes de parser NF x Pedido: OK
+- teste de status ATIVA/CANCELADA: OK
+- teste de separação Título x Pedido: OK
+- build do bridge Go: OK
+- integridade do ZIP: validada após empacotamento
+
+Observação:
+Não foram usadas credenciais reais do ERPFlex nesta execução. Portanto, endpoints e respostas externas não foram testados ao vivo. A entrega preserva os endpoints já presentes na base recebida e não adiciona novo endpoint ERPFlex.

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Logística · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero logistics-hero">
+  <div>
+    <h1>Logística</h1>
+    <p>Central da operação de roteirização, entregas, custos e configurações logísticas.</p>
+  </div>
+</section>
+
+<div class="logistics-home-grid">
+  <section class="panel logistics-section">
+    <div class="logistics-section-head"><span class="logistics-icon">↗</span><div><h2>Operação</h2><p>Fluxo diário da expedição até a baixa da entrega.</p></div></div>
+    <div class="logistics-link-grid">
+      {% if can_perm('roteirizar.view') %}<a class="logistics-link" href="/roteirizar"><b>Roteirizar</b><span>Classificar NFs, definir responsável, região e caixa.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('roteiros.view') %}<a class="logistics-link" href="/roteiros"><b>Roteiros</b><span>Criar, ordenar, imprimir e acompanhar os roteiros.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('painel_entregas.view') %}<a class="logistics-link" href="/painel-entregas"><b>Painel de Entregas</b><span>Acompanhar andamento e situação das entregas.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('baixa.manage') %}<a class="logistics-link" href="/baixa-entregas"><b>Baixa de Entregas</b><span>Registrar entregue, não entregue, ocorrência ou reprogramação.</span><em>Abrir ›</em></a>{% endif %}
+    </div>
+  </section>
+
+  <section class="panel logistics-section">
+    <div class="logistics-section-head"><span class="logistics-icon">▦</span><div><h2>Gestão</h2><p>Indicadores, custos e análise da operação.</p></div></div>
+    <div class="logistics-link-grid">
+      {% if can_perm('painel_gerencial.view') %}<a class="logistics-link" href="/painel-gerencial"><b>Painel Gerencial</b><span>Indicadores por região, responsável, volumes e faturamento.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('relatorios.view') %}<a class="logistics-link" href="/relatorios-gerenciais"><b>Relatórios Gerenciais</b><span>Análises históricas com impressão e exportação Excel.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('ocorrencias.view') %}<a class="logistics-link" href="/ocorrencias"><b>Ocorrências</b><span>Acompanhar problemas de entrega e respectivas resoluções.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('roteiros.view') %}<a class="logistics-link" href="/custos-roteiro"><b>Custos / KM</b><span>Frete, quilometragem e custo dos roteiros.</span><em>Abrir ›</em></a>{% endif %}
+    </div>
+  </section>
+
+  <section class="panel logistics-section logistics-section-wide">
+    <div class="logistics-section-head"><span class="logistics-icon">⚙</span><div><h2>Cadastros e regras</h2><p>Configurações que sustentam a operação logística.</p></div></div>
+    <div class="logistics-link-grid logistics-link-grid-wide">
+      {% if can_perm('logistica.view') %}<a class="logistics-link" href="/logistica"><b>Entregas / Ajustes</b><span>Consultar e ajustar os dados logísticos de uma entrega.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('responsaveis.view') %}<a class="logistics-link" href="/responsaveis"><b>Responsáveis</b><span>Motoristas internos, terceiros, transportadoras e coleta.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('logistica.view') %}<a class="logistics-link" href="/regras-entrega"><b>Regras de Entrega</b><span>Memorizar região, responsável e caixa por cliente/CNPJ.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('logistica.view') %}<a class="logistics-link" href="/parametros-logistica"><b>Parâmetros</b><span>Regiões e tipos de caixa utilizados na roteirização.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('importar.manage') %}<a class="logistics-link" href="/importar-logistica"><b>Importar / Contingência</b><span>Importação manual XLSX/CSV quando necessária.</span><em>Abrir ›</em></a>{% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

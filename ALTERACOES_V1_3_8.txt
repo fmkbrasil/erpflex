@@ -1,0 +1,8 @@
+V1.3.8 — Correção de Faturamento/Financeiro e diagnóstico de sincronização
+
+- Corrige a descoberta do final dos endpoints de Contas a Receber e Contas a Pagar: não consulta mais o prefixo /pagina/ sem posição.
+- Adota descoberta exponencial/binária compatível com a lógica validada no ERPFlex Analytics V7.8.
+- Torna a descoberta da página mais recente de Faturamento tolerante a APIs cujo histórico não começa em P1, usando seed de compatibilidade e expansão/binária.
+- Falhas de módulo passam a registrar total_errors >= 1.
+- Histórico de sincronização passa a exibir Detalhes/Erro com a mensagem técnica de cada execução.
+- Preserva banco, credenciais, schema e dados existentes da V1.3.7.

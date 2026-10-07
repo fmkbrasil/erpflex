@@ -1,0 +1,19 @@
+VALIDAÇÃO V1.3.27
+
+- Python: compileall OK.
+- Templates Jinja: 38 templates carregados sem erro.
+- Banco novo: inicialização OK no schema 8.
+- Upgrade: schema 7 -> 8 validado preservando base e adicionando somente:
+  collection_automation_configs
+  collection_customer_rules
+  collection_send_logs
+- Rotas validadas via TestClient:
+  /compras
+  /financeiro?kind=RECEBER
+  /financeiro/cobranca/configuracao
+- Filtro de Compras: padrão NF > 0; modos Todas e Somente NF 0 implementados.
+- Remessa: status Sim/Não derivado apenas de campos existentes no payload sincronizado; nenhum endpoint novo foi criado.
+- Clientes com contrato de cobrança: excluídos da ação de boleto e da cobrança automática.
+- Cobrança automática: worker horário, parâmetros de dias antes do vencimento, vencidos, intervalo mínimo e histórico de envio.
+- SMTP: utiliza a configuração já existente. Nenhuma credencial real foi usada nos testes e nenhum e-mail real foi enviado.
+- ERPFlex: somente leitura; nenhum endpoint novo/inventado foi incluído.

@@ -1,0 +1,14 @@
+V1.3.19 — Itens de documentos e Financeiro mais claro
+
+- Faturamento: nova coluna Produtos e coluna Itens, visíveis por padrão.
+- Faturamento: detalhe/DANFE tenta usar itens do próprio faturamento e, se ausentes, itens do pedido relacionado.
+- Compras: nova coluna Produtos e contagem de itens diretamente na listagem.
+- Compras: detalhe usa também os itens existentes no JSON integral quando a tabela local ainda não foi preenchida.
+- Financeiro: melhora o mapeamento de cliente/fornecedor usando cliente_desc/fornecedor_desc e equivalentes do ERPFlex.
+- Financeiro: melhora banco/carteira usando descrições ou IDs recebidos e cadastro de bancos sincronizado.
+- Financeiro: emissão também é recuperada do JSON original quando necessário.
+- Financeiro: novo resumo visual com valor dos títulos, saldo em aberto e quantidade de documentos.
+- Financeiro: padrão de colunas renovado para Cliente/Fornecedor, Emissão, Vencimento, Banco, Carteira, Valor, Saldo e Status.
+- Layout das três consultas reorganizado para facilitar leitura.
+- Preferências de colunas passam para versão v2 para que as novas colunas apareçam mesmo para quem tinha uma visualização antiga salva.
+- Sem mudança de schema: mantém schema 5 e preserva a base existente.

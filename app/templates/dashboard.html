@@ -1,0 +1,32 @@
+{% extends 'base.html' %}{% block title %}Início · {{ app_name }}{% endblock %}{% block content %}
+<section class="hero"><div><h1>Plataforma de Gestão Integrada</h1><p>ERPFlex, NF Stock e Roteirização utilizando a mesma base operacional central.</p></div><div class="hero-actions"><a class="btn primary" href="/roteirizar">Abrir Roteirizador</a><a class="btn" href="/sincronizacao">Sincronizar dados</a></div></section>
+<div class="cards metrics">
+  <a class="metric" href="/faturamento"><strong>{{ counts.sales_invoices }}</strong><span>NF-e de saída</span></a>
+  <a class="metric" href="/roteirizar"><strong>{{ counts.deliveries }}</strong><span>Entregas na base central</span></a>
+  <a class="metric" href="/compras"><strong>{{ counts.purchase_invoices }}</strong><span>NF-e de entrada</span></a>
+  <a class="metric" href="/financeiro?kind=RECEBER"><strong>{{ counts.receivable }}</strong><span>Títulos a receber</span></a>
+  <a class="metric" href="/financeiro?kind=PAGAR"><strong>{{ counts.payable }}</strong><span>Contas a pagar/despesas</span></a>
+  <a class="metric" href="/cadastros"><strong>{{ counts.products }}</strong><span>Produtos</span></a>
+  <a class="metric" href="/cadastros?tipo=parceiros"><strong>{{ counts.partners }}</strong><span>Clientes/fornecedores</span></a>
+  <div class="metric"><strong>{{ counts.orders }}</strong><span>Pedidos de venda</span></div>
+</div>
+<div class="grid-2">
+<section class="panel"><div class="panel-title"><h2>Roteirizador integrado</h2><a href="/painel-gerencial">Painel gerencial</a></div>
+  <div class="quick-actions"><a class="btn" href="/roteirizar">Roteirizar NFs</a><a class="btn" href="/roteiros">Roteiros</a><a class="btn" href="/painel-entregas">Painel de entregas</a><a class="btn" href="/baixa-entregas">Baixa</a><a class="btn" href="/relatorios-gerenciais">Relatórios</a></div>
+  <p class="muted">A NF é única na base central. Região, responsável, caixa, rota, status, KM, custo e ocorrências são vinculados à mesma NF, sem duplicação.</p>
+</section>
+<section class="panel"><div class="panel-title"><h2>Últimas sincronizações</h2><a href="/diagnostico">Diagnóstico</a></div>
+  {% if runs %}<div class="compact-list">{% for r in runs %}<div><span><b>{{ r.source }}</b> · {{ r.module }}</span><span class="badge {{ r.status|lower }}">{{ r.status }}</span></div>{% endfor %}</div>{% else %}<p class="muted">Nenhuma sincronização realizada.</p>{% endif %}
+</section></div>
+<div class="grid-2">
+<section class="panel"><div class="panel-title"><h2>Conciliação Compras × NF Stock</h2><a href="/compras">Ver notas</a></div>
+  <div class="status-grid">
+    <div><b>{{ recon.get('CONCILIADO',0) }}</b><span>Conciliadas</span></div>
+    <div><b>{{ recon.get('DIVERGENTE_VALOR',0) }}</b><span>Divergência de valor</span></div>
+    <div><b>{{ recon.get('SOMENTE_ERPFLEX',0) }}</b><span>Somente ERPFlex</span></div>
+    <div><b>{{ recon.get('SOMENTE_NFSTOCK',0) }}</b><span>Somente NF Stock</span></div>
+  </div>
+</section>
+<section class="panel"><h2>Base única</h2><p>ERPFlex permanece como origem dos dados comerciais/fiscais; NF Stock permanece como origem das NF-e de entrada/XML; a plataforma mantém os dados próprios da operação logística e o histórico de decisões.</p><p class="muted">A importação Excel do Roteirizador continua disponível como contingência, alimentando a mesma estrutura central.</p></section>
+</div>
+{% endblock %}

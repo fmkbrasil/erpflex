@@ -1,0 +1,16 @@
+V1.3.6 — PERSISTÊNCIA E INTEGRAÇÕES SEGURAS
+
+1. Nova tela /integracoes para gravar ERPFlex e NF Stock por empresa.
+2. Senha ERPFlex e token NF Stock são criptografados antes de persistir no banco.
+3. A sincronização usa primeiro a configuração salva no banco; .env permanece como fallback.
+4. Teste de conexão usa as credenciais salvas e registra o último resultado.
+5. python-dotenv passa a carregar .env local corretamente.
+6. SQLite local passa a usar, por padrão, diretório persistente fora da pasta da versão; no primeiro boot pode copiar automaticamente a base mais recente de uma versão irmã antiga.
+7. Se DATA_DIR estiver definido, ele continua tendo prioridade.
+8. DATABASE_URL continua sendo a opção recomendada para PostgreSQL no Railway.
+9. Criado controle de schema (schema_state), versão 2.
+10. Antes de mudança de schema, SQLite existente recebe backup automático.
+11. Botão de backup manual disponível na tela Integrações para SQLite.
+12. Migração preserva os dados existentes: create_all só cria estruturas ausentes; não recria tabelas existentes.
+13. Diagnóstico mostra tipo do banco, versão do schema e acesso à configuração das integrações.
+14. SECRET_KEY/INTEGRATION_SECRET_KEY deve permanecer estável entre versões para descriptografar segredos já gravados.

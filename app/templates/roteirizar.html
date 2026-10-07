@@ -1,0 +1,133 @@
+{% extends 'base.html' %}{% block title %}Roteirizar · {{ app_name }}{% endblock %}{% block content %}
+<section class="hero"><div><h1>Roteirizar</h1><p>Escolha a região, marque as NFs e defina o motorista somente depois da seleção.</p></div><div class="actions"><a class="btn" href="/importar-logistica">Importar Excel</a><a class="btn" href="/roteiros">Roteiros</a></div></section>
+{% if msg %}<div class="alert {{ 'error' if msg in ['selecione','selecione-motorista','selecione-regiao','sem-entregas','entrega-indisponivel','entrega-ja-roteirizada'] else 'success' }}">{% if msg=='selecione' %}Selecione ao menos uma NF.{% elif msg=='selecione-motorista' %}Escolha um motorista/responsável para gravar a roteirização.{% elif msg=='selecione-regiao' %}Escolha a região para classificar as NFs selecionadas.{% elif msg.startswith('roteirizadas-') %}{{ msg.split('-')[-1] }} NF(s) roteirizada(s). Continue com as notas restantes.{% elif msg.startswith('regiao-') %}{% set p=msg.split('-') %}{{ p[1] }} NF(s) classificadas. {% if p|length > 2 and p[2]|int > 0 %}Região memorizada para {{ p[2] }} cliente(s).{% endif %}{% elif msg.startswith('alteradas-') %}{{ msg.split('-')[-1] }} entrega(s) atualizada(s).{% elif msg.startswith('reclassificadas-') %}{{ msg.split('-')[-1] }} entrega(s) reclassificada(s).{% elif msg=='entrega-indisponivel' %}Esta entrega não está mais disponível para classificação.{% elif msg=='entrega-ja-roteirizada' %}Esta entrega já foi roteirizada e não pode ser alterada nesta tela.{% elif msg=='sem-entregas' %}Nenhuma entrega válida ficou disponível para o roteiro.{% else %}Operação concluída.{% endif %}</div>{% endif %}
+<div class="cards"><div class="metric"><strong>{{ rows|length }}</strong><span>NFs exibidas</span></div><div class="metric"><strong>{{ total_volumes|int }}</strong><span>Volumes</span></div><div class="metric"><strong>R$ {{ '%.2f'|format(total_value) }}</strong><span>Valor</span></div><div class="metric"><strong>{{ alerts }}</strong><span>Alertas</span></div></div>
+
+<section class="panel operator-filter-panel">
+  <div class="panel-title"><div><h2>1. Escolha a região</h2><span class="hint">São exibidos somente os cards das regiões que possuem NF disponível para roteirizar.</span></div><div class="actions">{% if region %}<a class="btn small" href="/roteirizar{% if q %}?q={{ q|urlencode }}{% endif %}">Ver todas</a>{% endif %}<form method="post" action="/roteirizar/reclassificar"><input type="hidden" name="return_region" value="{{ region }}"><input type="hidden" name="return_q" value="{{ q }}"><button class="btn">Reclassificar pendentes</button></form></div></div>
+  <form class="filters filters-wrap routing-search" method="get"><input type="hidden" name="region" value="{{ region }}"><input name="q" value="{{ q }}" placeholder="NF, cliente, endereço, município ou bairro"><button class="btn primary">Pesquisar</button><a class="btn" href="/roteirizar{% if region %}?region={{ region|urlencode }}{% endif %}">Limpar pesquisa</a></form>
+  <div class="zone-filter-grid">
+    {% for r in region_cards %}
+      <a class="zone-filter-card zone-tone-{{ loop.index0 % 12 }} {{ 'selected' if region==r.name else '' }}" href="/roteirizar?region={{ r.name|urlencode }}{% if q %}&q={{ q|urlencode }}{% endif %}"><b>{{ r.name }}</b><strong>{{ r.count }}</strong><small>{% if r.name=='A Classificar' %}Necessita classificação{% elif r.name=='COLETA' %}Retirada / coleta{% else %}NF(s) para roteirizar{% endif %}</small></a>
+    {% else %}<div class="empty-card">Nenhuma NF disponível para roteirização.</div>{% endfor %}
+  </div>
+</section>
+
+<form method="post" id="routing-form">
+<input type="hidden" name="return_region" value="{{ region }}">
+<input type="hidden" name="return_q" value="{{ q }}">
+<section class="panel routing-selection-panel">
+  <div class="panel-title routing-selection-title">
+    <div><h2>2. Selecione as notas{% if region %} · {{ region }}{% endif %}</h2><span class="hint"><b id="selected-count">0</b> NF(s) selecionada(s). Você pode informar/corrigir a região ou seguir para a escolha do motorista.</span></div>
+    <div class="actions"><button class="btn small" type="button" id="select-visible">Selecionar todas exibidas</button><button class="btn" type="button" id="open-region-modal" disabled>Informar/corrigir região</button><button class="btn primary" type="button" id="open-driver-modal" disabled>Roteirizar selecionadas</button></div>
+  </div>
+  <div class="table-wrap"><table class="routing-table operator-table"><thead><tr><th><input type="checkbox" id="check-all"></th><th>NF / Cliente</th><th>Endereço</th><th>Região</th><th>Motorista atual</th><th>Volumes</th><th>Caixa</th><th>Valor</th><th>Transportadora</th><th></th></tr></thead><tbody>
+  {% for d,inv,p,a,rsp in rows %}{% set addr=endereco_busca(inv.delivery_address,inv.delivery_district,inv.delivery_city,inv.delivery_state,inv.delivery_zip) %}{% set alert=alerta_endereco(inv.carrier,inv.carrier2) %}
+  <tr class="{% if alert %}row-alert{% endif %}"><td><input type="checkbox" name="delivery_ids" value="{{ d.id }}" class="row-check"></td><td><b>NF {{ inv.number or '—' }}</b><small>{{ cliente_exibicao(p.name if p else '',p.trade_name if p else '') }}</small></td><td>{{ inv.delivery_address or '—' }}<small>{{ inv.delivery_district or '' }}{% if inv.delivery_city %} · {{ inv.delivery_city }}{% endif %}{% if inv.delivery_zip %} · CEP {{ inv.delivery_zip }}{% endif %}</small>{% if addr %}<div class="mini-actions"><a href="{{ maps_url(addr) }}" target="_blank" rel="noopener">Maps</a><a href="{{ waze_url(addr) }}" target="_blank" rel="noopener">Waze</a></div>{% endif %}</td><td><div class="region-cell"><span class="badge">{{ d.region or 'A Classificar' }}</span><button type="button" class="region-inline-btn" data-quick-region data-delivery-id="{{ d.id }}" data-current-region="{{ d.region or 'A Classificar' }}" data-nf="{{ inv.number or '—' }}" data-client="{{ cliente_exibicao(p.name if p else '',p.trade_name if p else '') }}">{{ 'Informar' if not d.region or d.region=='A Classificar' else 'Corrigir' }}</button></div></td><td>{% if rsp %}<b>{{ rsp.name }}</b><small>{{ rsp.kind }}</small>{% else %}<span class="badge pending-driver">Sem motorista</span>{% endif %}</td><td><b>{{ (d.volumes or inv.volumes or 0)|int }}</b></td><td>{{ d.box_type or 'Papelão' }}</td><td>R$ {{ '%.2f'|format(inv.total or 0) }}</td><td>{{ inv.carrier or '—' }}<small>{{ inv.carrier2 or '' }}</small>{% if alert %}<span class="warning-text">⚠ {{ alert }}</span>{% endif %}</td><td><a class="btn small" href="/entregas/{{ d.id }}">Detalhes</a></td></tr>
+  {% else %}<tr><td colspan="10" class="empty">Nenhuma NF pendente disponível{% if region %} em {{ region }}{% endif %}.</td></tr>{% endfor %}</tbody></table></div>
+
+  <details class="operator-adjustments">
+    <summary>Outros ajustes opcionais</summary>
+    <div class="operator-secondary-actions">
+      <label>Tipo de caixa<select name="box_type"><option value="">Manter atual</option>{% for b in boxes %}<option value="{{ b.name }}">{{ b.name }}</option>{% endfor %}</select></label>
+      <button class="btn" formaction="/roteirizar/lote">Aplicar caixa às selecionadas</button>
+    </div>
+  </details>
+</section>
+
+<div class="routing-modal" id="region-modal" hidden aria-hidden="true">
+  <div class="routing-modal-backdrop" data-close-region></div>
+  <section class="routing-modal-card" role="dialog" aria-modal="true" aria-labelledby="region-modal-title">
+    <div class="routing-modal-head"><div><span class="step-number">R</span><div><h2 id="region-modal-title">Informar ou corrigir região</h2><p><b id="region-selected-count">0</b> NF(s) selecionada(s).</p></div></div><button type="button" class="modal-close" data-close-region aria-label="Fechar">×</button></div>
+    <p class="modal-instruction">Selecione a região correta. A alteração vale para as NFs selecionadas. Se desejar, memorize a escolha para que as próximas entregas dos mesmos clientes/CNPJs sejam classificadas automaticamente.</p>
+    <div class="region-choice-grid">
+      {% for r in regions %}<label class="region-choice zone-tone-{{ loop.index0 % 12 }}"><input type="radio" name="region" value="{{ r.name }}"><span><b>{{ r.name }}</b><small>Classificar nesta região</small></span></label>{% endfor %}
+    </div>
+    <div class="routing-modal-footer region-footer">
+      <label class="check compact-check"><input type="checkbox" name="remember_region" value="1"><span>Memorizar esta região para as próximas entregas destes clientes/CNPJs</span></label>
+      <div class="modal-actions"><button class="btn" type="button" data-close-region>Cancelar</button><button class="btn primary" id="save-region-btn" formaction="/roteirizar/classificar-regiao">Gravar classificação</button></div>
+    </div>
+  </section>
+</div>
+
+<div class="routing-modal" id="driver-modal" hidden aria-hidden="true">
+  <div class="routing-modal-backdrop" data-close-driver></div>
+  <section class="routing-modal-card" role="dialog" aria-modal="true" aria-labelledby="driver-modal-title">
+    <div class="routing-modal-head"><div><span class="step-number">3</span><div><h2 id="driver-modal-title">Escolha o motorista</h2><p><b id="modal-selected-count">0</b> NF(s) serão gravadas no roteiro.</p></div></div><button type="button" class="modal-close" data-close-driver aria-label="Fechar">×</button></div>
+    <p class="modal-instruction">Toque/clique no card do motorista ou responsável que fará as entregas selecionadas.</p>
+    <div class="driver-choice-grid modal-driver-grid">
+      {% for r in responsibles %}<label class="driver-choice driver-tone-{{ loop.index0 % 8 }}"><input type="radio" name="responsible_id" value="{{ r.id }}"><span><b>{{ r.name }}</b><small>{{ r.kind }}</small><em>Selecionar</em></span></label>{% endfor %}
+    </div>
+    <div class="routing-modal-footer">
+      <label class="modal-date">Data do roteiro<input name="route_date" type="date" value="{{ today }}" required></label>
+      <label class="check compact-check"><input type="checkbox" name="remember_rule" value="1"><span>Memorizar motorista para estes clientes/CNPJs</span></label>
+      <div class="modal-actions"><button class="btn" type="button" data-close-driver>Cancelar</button><button class="btn primary" id="save-route-btn" formaction="/roteirizar/criar-roteiro">Gravar roteirização</button></div>
+    </div>
+  </section>
+</div>
+</form>
+
+<form method="post" action="/roteirizar/classificar-regiao-uma" id="quick-region-form">
+  <input type="hidden" name="delivery_id" id="quick-region-delivery-id" value="">
+  <input type="hidden" name="return_region" value="{{ region }}">
+  <input type="hidden" name="return_q" value="{{ q }}">
+  <div class="routing-modal" id="quick-region-modal" hidden aria-hidden="true">
+    <div class="routing-modal-backdrop" data-close-quick-region></div>
+    <section class="routing-modal-card" role="dialog" aria-modal="true" aria-labelledby="quick-region-title">
+      <div class="routing-modal-head"><div><span class="step-number">R</span><div><h2 id="quick-region-title">Informar região</h2><p id="quick-region-context">NF selecionada</p></div></div><button type="button" class="modal-close" data-close-quick-region aria-label="Fechar">×</button></div>
+      <p class="modal-instruction">Escolha a região correta para esta nota. Você pode corrigir uma classificação existente e memorizar a região para as próximas entregas do mesmo cliente/CNPJ.</p>
+      <div class="region-choice-grid quick-region-grid">
+        {% for r in regions %}<label class="region-choice zone-tone-{{ loop.index0 % 12 }}"><input type="radio" name="region" value="{{ r.name }}"><span><b>{{ r.name }}</b><small>Usar nesta entrega</small></span></label>{% endfor %}
+      </div>
+      <div class="routing-modal-footer region-footer">
+        <label class="check compact-check"><input type="checkbox" name="remember_region" value="1"><span>Memorizar esta região para as próximas entregas deste cliente/CNPJ</span></label>
+        <div class="modal-actions"><button class="btn" type="button" data-close-quick-region>Cancelar</button><button class="btn primary" type="submit" id="quick-region-save">Gravar região</button></div>
+      </div>
+    </section>
+  </div>
+</form>
+{% endblock %}{% block scripts %}<script>
+const checks=[...document.querySelectorAll('.row-check')];
+const all=document.getElementById('check-all');
+const count=document.getElementById('selected-count');
+const modalCount=document.getElementById('modal-selected-count');
+const regionCount=document.getElementById('region-selected-count');
+const openDriver=document.getElementById('open-driver-modal');
+const openRegion=document.getElementById('open-region-modal');
+const driverModal=document.getElementById('driver-modal');
+const regionModal=document.getElementById('region-modal');
+const saveRoute=document.getElementById('save-route-btn');
+const saveRegion=document.getElementById('save-region-btn');
+function selectedCount(){return checks.filter(x=>x.checked).length;}
+function updateCount(){const n=selectedCount();[count,modalCount,regionCount].forEach(el=>{if(el)el.textContent=n});if(all)all.checked=n>0&&n===checks.length;if(openDriver)openDriver.disabled=n===0;if(openRegion)openRegion.disabled=n===0;}
+if(all)all.addEventListener('change',()=>{checks.forEach(x=>x.checked=all.checked);updateCount();});
+checks.forEach(x=>x.addEventListener('change',updateCount));
+const selectVisible=document.getElementById('select-visible');if(selectVisible)selectVisible.addEventListener('click',()=>{checks.forEach(x=>x.checked=true);updateCount();});
+function showModal(modal,firstSelector){if(selectedCount()===0){alert('Selecione ao menos uma NF.');return;}modal.hidden=false;modal.setAttribute('aria-hidden','false');document.body.classList.add('modal-open');updateCount();const first=modal.querySelector(firstSelector);if(first)first.focus();}
+function hideModal(modal){modal.hidden=true;modal.setAttribute('aria-hidden','true');if(driverModal.hidden&&regionModal.hidden)document.body.classList.remove('modal-open');}
+if(openDriver)openDriver.addEventListener('click',()=>showModal(driverModal,'input[name="responsible_id"]'));
+if(openRegion)openRegion.addEventListener('click',()=>showModal(regionModal,'input[name="region"]'));
+document.querySelectorAll('[data-close-driver]').forEach(el=>el.addEventListener('click',()=>hideModal(driverModal)));
+document.querySelectorAll('[data-close-region]').forEach(el=>el.addEventListener('click',()=>hideModal(regionModal)));
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!driverModal.hidden)hideModal(driverModal);if(!regionModal.hidden)hideModal(regionModal);}});
+if(saveRoute)saveRoute.addEventListener('click',e=>{if(selectedCount()===0){e.preventDefault();hideModal(driverModal);alert('Selecione ao menos uma NF.');return;}const driver=document.querySelector('input[name="responsible_id"]:checked');if(!driver){e.preventDefault();alert('Selecione o motorista/responsável antes de gravar.');}});
+if(saveRegion)saveRegion.addEventListener('click',e=>{if(selectedCount()===0){e.preventDefault();hideModal(regionModal);alert('Selecione ao menos uma NF.');return;}const zone=regionModal.querySelector('input[name="region"]:checked');if(!zone){e.preventDefault();alert('Selecione a região antes de gravar.');}});
+
+const quickRegionModal=document.getElementById('quick-region-modal');
+const quickRegionForm=document.getElementById('quick-region-form');
+const quickRegionId=document.getElementById('quick-region-delivery-id');
+const quickRegionContext=document.getElementById('quick-region-context');
+document.querySelectorAll('[data-quick-region]').forEach(btn=>btn.addEventListener('click',()=>{
+  if(!quickRegionModal)return;
+  quickRegionId.value=btn.dataset.deliveryId||'';
+  quickRegionContext.textContent=`NF ${btn.dataset.nf||'—'} · ${btn.dataset.client||''}`;
+  quickRegionModal.querySelectorAll('input[name="region"]').forEach(r=>{r.checked=(r.value===(btn.dataset.currentRegion||''));});
+  const remember=quickRegionModal.querySelector('input[name="remember_region"]');if(remember)remember.checked=false;
+  quickRegionModal.hidden=false;quickRegionModal.setAttribute('aria-hidden','false');document.body.classList.add('modal-open');
+  const checked=quickRegionModal.querySelector('input[name="region"]:checked');if(checked)checked.focus();
+}));
+document.querySelectorAll('[data-close-quick-region]').forEach(el=>el.addEventListener('click',()=>{quickRegionModal.hidden=true;quickRegionModal.setAttribute('aria-hidden','true');if(driverModal.hidden&&regionModal.hidden)document.body.classList.remove('modal-open');}));
+if(quickRegionForm)quickRegionForm.addEventListener('submit',e=>{const zone=quickRegionModal.querySelector('input[name="region"]:checked');if(!zone){e.preventDefault();alert('Selecione a região antes de gravar.');}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&quickRegionModal&&!quickRegionModal.hidden){quickRegionModal.hidden=true;quickRegionModal.setAttribute('aria-hidden','true');if(driverModal.hidden&&regionModal.hidden)document.body.classList.remove('modal-open');}});
+updateCount();
+</script>{% endblock %}

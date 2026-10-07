@@ -1,0 +1,16 @@
+V1.3.28
+
+1. Financeiro
+- Removido botão NF-e da coluna Ações.
+- Mantido botão DANFE quando houver vínculo fiscal.
+
+2. DANFE
+- Criado template único app/templates/danfe_impressao.html.
+- Faturamento /imprimir e Compras /imprimir usam exatamente o mesmo template.
+- Contas a Receber usa o vínculo com Faturamento e portanto imprime pelo mesmo template principal.
+- Entrada usa indicador 0; saída usa indicador 1.
+
+3. Compatibilidade
+- Sem migração de banco.
+- Sem alteração de endpoints ERPFlex.
+- Logística preservada.

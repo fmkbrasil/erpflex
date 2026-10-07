@@ -1,0 +1,41 @@
+V1.2.0 — NÚCLEO MULTIMÓDULO / ACESSO CENTRAL
+
+1. Segurança e autenticação
+- Usuários passaram a existir na base central (`app_users`).
+- O APP_USER / APP_PASSWORD do .env é usado para criar o primeiro administrador quando não existe usuário.
+- A senha é armazenada como PBKDF2-SHA256 com salt; senha em texto puro não é gravada no banco.
+- Usuário pode alterar a própria senha em Minha Conta.
+- Administrador pode redefinir senha de outro usuário.
+
+2. Perfis e permissões
+- Perfis persistidos (`access_profiles`).
+- Permissões granulares (`profile_permissions`).
+- Perfis padrão: Administrador, Diretoria e Operacional.
+- Menus e endpoints respeitam permissões.
+
+3. Empresa / filial
+- Empresas continuam sendo a partição principal da base.
+- Nova entidade `branches` para filiais/unidades.
+- Usuário recebe acesso por empresa e por filial.
+- Contexto selecionável no cabeçalho.
+- Nova empresa recebe automaticamente Matriz, regiões padrão e tipos de caixa padrão.
+
+4. Administração
+- Tela única para empresas, filiais, perfis, usuários e acessos.
+- Auditoria das ações administrativas (`audit_logs`).
+
+5. API interna
+- GET /api/v1/context
+- GET /api/v1/faturamento
+- GET /api/v1/compras
+- GET /api/v1/entregas
+- API respeita autenticação, empresa corrente e permissão `api.read`.
+
+6. Compatibilidade
+- Nenhuma tabela de negócio da V1.1 é apagada ou recriada.
+- Novas tabelas são adicionadas com `create_all`.
+- Upgrade de um banco V1.1 foi validado em SQLite sem perda dos cadastros/regiões/caixas existentes.
+
+7. Próximo passo recomendado
+- Definir origem real da filial/unidade em ERPFlex/NF Stock e então adicionar `branch_id` às entidades transacionais por migração segura.
+- Depois disso, migrar Portal Motorista e interfaces específicas usando a API interna.

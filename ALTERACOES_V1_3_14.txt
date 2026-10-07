@@ -1,0 +1,10 @@
+V1.3.14 - Faturamento com âncora comprovada do Analytics V7.8
+
+- Cursor salvo que não responde é descartado após uma única validação rápida.
+- Em vez de recuar por dez páginas lentas/inexistentes, o motor salta diretamente para P15983, âncora comprovada no ERPFlex Analytics V7.8 enviado pelo usuário.
+- P15983 é validada com timeout compatível com o transporte do V7.8 (120 s).
+- A borda atual é descoberta avançando sequencialmente a partir de uma página comprovadamente válida; a primeira página sem resposta encerra a descoberta, sem continuar testando várias páginas ruins.
+- Varredura do período ocorre da última página comprovada para trás.
+- Páginas do intervalo confirmado nunca são puladas silenciosamente.
+- User-Agent da integração ERPFlex alinhado ao cliente Go do V7.8 para reduzir diferenças de comportamento do servidor.
+- Nenhuma alteração de schema/banco; dados existentes são preservados.

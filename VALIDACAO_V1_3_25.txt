@@ -1,0 +1,18 @@
+VALIDAÇÃO V1.3.25
+
+- py_compile: OK para todos os arquivos Python.
+- Templates Jinja: 37 templates analisados sem erro de sintaxe.
+- Inicialização em SQLite novo: OK, schema 7, app reportando versão 1.3.25.
+- Não houve alteração destrutiva de schema nesta versão.
+- ZIP verificado com unzip -t.
+- API real ERPFlex não foi executada com credenciais reais nesta validação.
+- Nenhum endpoint ERPFlex novo foi criado.
+
+CENÁRIOS IMPLEMENTADOS
+- Status operacional de boleto: Disponível / Pronto para gerar / Pago / Indisponível.
+- Filtro por status do boleto.
+- Título pago não tenta gerar/imprimir boleto.
+- Seleção múltipla na grade de Contas a Receber.
+- Geração/impressão de boletos selecionados em uma única tela.
+- Envio em lote de boleto e XML disponível, sem abrir detalhe individual.
+- XML só é anexado quando já existe em retorno/dado local da NF-e de saída.

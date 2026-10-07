@@ -1,0 +1,11 @@
+V1.3.18 — CONSULTAS DE DOCUMENTOS, FILTROS E ESPELHO DANFE
+
+- Filtros rápidos de período em Faturamento, Compras e Financeiro: Hoje, Semana, Mês, Personalizado e Todos.
+- Financeiro permite escolher se o período usa Emissão ou Vencimento.
+- Paginação configurável: 25, 50, 100 ou 250 registros por página.
+- Colunas personalizáveis por módulo e persistidas por usuário/empresa via user_view_preferences.
+- Faturamento: NF clicável, detalhe completo a partir do JSON bruto sincronizado e espelho DANFE imprimível.
+- Compras: filtros/paginação/colunas e espelho DANFE de entrada mantido e aprimorado.
+- Financeiro: documento clicável; quando houver NF relacionada pelo número, oferece Visualizar NF-e e Imprimir DANFE.
+- Impressão usa o mesmo layout do espelho exibido na tela, com identificação de consulta interna/sem validade fiscal.
+- Nenhuma mudança de schema: permanece schema 5 e preserva a mesma base de dados.

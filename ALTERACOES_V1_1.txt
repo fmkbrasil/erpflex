@@ -1,0 +1,48 @@
+PLATAFORMA GESTÃO INTEGRADA V1.1.0
+
+1. LOGÍSTICA CENTRAL
+A NF-e de saída continua existindo uma única vez em sales_invoices.
+Os dados operacionais ficam em deliveries e nas novas tabelas logísticas.
+
+2. RESPONSÁVEIS
+Cadastro de Motorista Interno, Motorista Externo, Transportadora e COLETA.
+Permite custo padrão por valor fechado, percentual, por KM ou não informado.
+
+3. REGIÕES E CAIXAS
+Catálogos compartilhados e administráveis.
+Regiões iniciais: Outras Regiões, COLETA, A Classificar, Zona Oeste, Centro,
+Zona Sul, Osasco / Barueri, Zona Norte, Zona Leste e Interior SP.
+Caixas iniciais: Papelão e Caixa Vermelha.
+
+4. REGRAS DE ENTREGA
+Regra por CNPJ/cliente para memorizar região, responsável e caixa.
+Também reserva prioridade, janela de entrega e tempo de parada.
+Na sincronização ERPFlex a regra só preenche campos logísticos vazios;
+não sobrescreve uma decisão operacional já realizada.
+
+5. ROTEIROS
+Geração de roteiro por responsável usando entregas PENDENTE/REPROGRAMADA.
+Cada parada possui ordem própria. Iniciar roteiro altera entregas aplicáveis para EM ROTA.
+
+6. BAIXA
+Tela com somente filtro de status.
+Permite Entregue, Não entregue, Ocorrência, Reprogramada, Em rota e Pendente.
+Toda mudança gera histórico em delivery_movements.
+
+7. OCORRÊNCIAS
+Registro ligado à entrega, NF e responsável, com estado aberta/resolvida.
+
+8. CUSTOS / KM
+Custo por roteiro, forma de cobrança, percentual, KM inicial/final/realizado e observações.
+O valor e KM derivados por entrega são apenas auxiliares para painéis operacionais.
+
+9. BANCO
+Novas tabelas são criadas com SQLAlchemy create_all, sem apagar ou recriar as tabelas da V1.0.0.
+
+10. VALIDAÇÃO
+- py_compile: OK
+- 18 templates Jinja: OK
+- inicialização em banco novo: OK
+- rotas principais: HTTP 200
+- cadastro/vínculo/roteiro/baixa/ocorrência/custos: OK em teste sintético
+- aplicação automática de regra na sincronização: OK em teste sintético

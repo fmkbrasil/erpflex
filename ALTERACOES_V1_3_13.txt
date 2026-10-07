@@ -1,0 +1,8 @@
+V1.3.13 - Autocorreção do cursor de Faturamento
+
+- Cursor de Faturamento só é persistido após HTTP 200 com registros.
+- Timeout na página do cursor não encerra imediatamente a sincronização.
+- Recuo automático de até 10 páginas para localizar a última página realmente válida.
+- Páginas com timeout/vazias são registradas no detalhe da execução.
+- Ao recuperar o cursor, a nova página válida substitui o cursor antigo automaticamente.
+- Mantida a varredura regressiva por período e os dados existentes.

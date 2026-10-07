@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block title %}Integrações · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero"><div><h1>Integrações</h1><p>Credenciais e parâmetros ficam vinculados à empresa atual e são usados pela sincronização.</p></div><div class="actions"><a class="btn" href="/sincronizacao">Ir para Sincronização</a></div></section>
+{% if saved %}<div class="alert success">Configuração de {{ 'ERPFlex' if saved=='erpflex' else ('NF Stock' if saved=='nfstock' else 'SMTP') }} salva com sucesso.</div>{% endif %}
+{% if tested=='backup-ok' %}<div class="alert success">Backup SQLite criado com sucesso.</div>{% elif tested=='backup-nao-aplicavel' %}<div class="alert">Backup manual pelo aplicativo é aplicável somente ao SQLite local. Em PostgreSQL, use o mecanismo de backup/snapshot do serviço.</div>{% endif %}
+{% if db_status.persistence_warning %}<div class="alert error"><b>Persistência:</b> {{ db_status.persistence_warning }}</div>{% endif %}
+{% if encryption_default %}<div class="alert error"><b>Atenção:</b> a aplicação está usando a chave de desenvolvimento padrão. Defina uma <code>INTEGRATION_SECRET_KEY</code> ou <code>SECRET_KEY</code> estável antes de gravar credenciais reais neste ambiente remoto.</div>{% endif %}
+
+<div class="grid-2">
+<section class="panel integration-panel">
+  <div class="panel-title"><h2>ERPFlex</h2><span class="badge {{ 'ok' if integrations.erpflex.configured else 'erro' }}">{{ 'Pronto para uso' if integrations.erpflex.configured else 'Configuração incompleta' }}</span></div>
+  <form method="post" action="/integracoes/erpflex" class="form-grid">
+    <label class="span-2">URL base<input name="base_url" value="{{ integrations.erpflex.base_url }}" required></label>
+    <label>Usuário<input name="username" value="{{ integrations.erpflex.username }}" autocomplete="off" required></label>
+    <label>Senha<input type="password" name="password" autocomplete="new-password" placeholder="{{ 'Senha já gravada — deixe vazio para manter' if integrations.erpflex.secret_stored else 'Informe a senha da API' }}"></label>
+    <label class="check span-2"><input type="checkbox" name="active" value="1" {% if integrations.erpflex.active %}checked{% endif %}><span>Integração ativa<small>Quando desativada, a sincronização ERPFlex fica indisponível.</small></span></label>
+    <div class="actions span-2"><button class="btn primary" type="submit">Salvar ERPFlex</button><button class="btn" type="button" onclick="testConn('erpflex')">Testar conexão salva</button></div>
+  </form>
+  <div class="integration-meta">Origem atual: <b>{{ 'Banco central' if integrations.erpflex.source=='database' else 'Variáveis de ambiente' }}</b>{% if integrations.erpflex.last_test_at %} · último teste {{ integrations.erpflex.last_test_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
+</section>
+
+<section class="panel integration-panel">
+  <div class="panel-title"><h2>NF Stock</h2><span class="badge {{ 'ok' if integrations.nfstock.configured else 'erro' }}">{{ 'Pronto para uso' if integrations.nfstock.configured else 'Configuração incompleta' }}</span></div>
+  <form method="post" action="/integracoes/nfstock" class="form-grid">
+    <label class="span-2">URL base<input name="base_url" value="{{ integrations.nfstock.base_url }}" required></label>
+    <label>CRM<input name="crm" value="{{ integrations.nfstock.crm }}" inputmode="numeric" required></label>
+    <label>CNPJ da empresa<input name="cnpj" value="{{ integrations.nfstock.cnpj }}" inputmode="numeric" required></label>
+    <label>Token<input type="password" name="token" autocomplete="new-password" placeholder="{{ 'Token já gravado — deixe vazio para manter' if integrations.nfstock.secret_stored else 'Informe o Bearer token' }}"></label>
+    <label>Tamanho da página<input type="number" name="page_size" min="1" max="100" value="{{ integrations.nfstock.page_size or 25 }}"></label>
+    <label class="check span-2"><input type="checkbox" name="active" value="1" {% if integrations.nfstock.active %}checked{% endif %}><span>Integração ativa<small>Somente leitura; usada para NF-e de entrada/XML.</small></span></label>
+    <div class="actions span-2"><button class="btn primary" type="submit">Salvar NF Stock</button><button class="btn" type="button" onclick="testConn('nfstock')">Testar conexão salva</button></div>
+  </form>
+  <div class="integration-meta">Origem atual: <b>{{ 'Banco central' if integrations.nfstock.source=='database' else 'Variáveis de ambiente' }}</b>{% if integrations.nfstock.last_test_at %} · último teste {{ integrations.nfstock.last_test_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
+</section>
+
+<section class="panel integration-panel">
+  <div class="panel-title"><h2>SMTP / envio de boletos</h2><span class="badge {{ 'ok' if integrations.smtp.configured else 'erro' }}">{{ 'Pronto para uso' if integrations.smtp.configured else 'Configuração incompleta' }}</span></div>
+  <form method="post" action="/integracoes/smtp" class="form-grid">
+    <label>Servidor SMTP<input name="host" value="{{ integrations.smtp.host }}" placeholder="smtp.exemplo.com" required></label>
+    <label>Porta<input type="number" name="port" min="1" max="65535" value="{{ integrations.smtp.port or 587 }}"></label>
+    <label>Usuário<input name="username" value="{{ integrations.smtp.username }}" autocomplete="off"></label>
+    <label>Senha<input type="password" name="password" autocomplete="new-password" placeholder="{{ 'Senha já gravada — deixe vazio para manter' if integrations.smtp.secret_stored else 'Informe a senha SMTP' }}"></label>
+    <label>E-mail remetente<input type="email" name="from_email" value="{{ integrations.smtp.from_email }}" required></label>
+    <label>Nome remetente<input name="from_name" value="{{ integrations.smtp.from_name }}" placeholder="Financeiro"></label>
+    <label>Segurança<select name="security"><option value="starttls" {{'selected' if integrations.smtp.security=='starttls' else ''}}>STARTTLS</option><option value="ssl" {{'selected' if integrations.smtp.security=='ssl' else ''}}>SSL/TLS</option><option value="none" {{'selected' if integrations.smtp.security=='none' else ''}}>Sem TLS</option></select></label>
+    <label class="check"><input type="checkbox" name="active" value="1" {% if integrations.smtp.active %}checked{% endif %}><span>Integração ativa<small>Usada para reenviar boleto ao cliente.</small></span></label>
+    <div class="actions span-2"><button class="btn primary" type="submit">Salvar SMTP</button><button class="btn" type="button" onclick="testConn('smtp')">Testar conexão</button></div>
+  </form>
+  <div class="integration-meta">Origem atual: <b>{{ 'Banco central' if integrations.smtp.source=='database' else 'Variáveis de ambiente' }}</b></div>
+</section>
+</div>
+
+<div id="test-result"></div>
+<section class="panel">
+  <div class="panel-title"><h2>Persistência do banco</h2><span class="badge {{ 'ok' if db_status.schema_version==db_status.target_schema_version else 'erro' }}">Schema {{ db_status.schema_version }}/{{ db_status.target_schema_version }}</span></div>
+  <div class="status-grid">
+    <div><span>Banco</span><b>{{ db_status.kind }}</b></div>
+    <div><span>Diretório de dados</span><b class="small-value">{{ db_status.data_dir }}</b></div>
+    <div><span>Backups SQLite</span><b>{{ db_status.backup_count }}</b></div>
+    <div><span>Último backup</span><b class="small-value">{{ db_status.last_backup or '—' }}</b></div>
+  </div>
+  <p class="hint">Trocar o ZIP não deve recriar a base. No Windows local, quando <code>DATA_DIR</code> estiver vazio, o SQLite fica em um diretório persistente fora da pasta da versão. Em produção, prefira PostgreSQL via <code>DATABASE_URL</code>.</p>
+  <details><summary>Detalhes técnicos</summary><p><b>Conexão:</b> <code>{{ db_status.url }}</code></p><p><b>Chave das credenciais:</b> fingerprint <code>{{ encryption_fingerprint }}</code> · origem: <code>{{ encryption_source }}</code>.</p><p class="hint">No Windows/local a chave é mantida no diretório persistente de dados. Em Railway/PostgreSQL, defina uma <code>INTEGRATION_SECRET_KEY</code> estável (ou preserve a <code>SECRET_KEY</code>) entre deploys.</p></details>
+  {% if db_status.kind=='SQLite' and can_perm('admin.manage') %}<form method="post" action="/sistema/backup"><button class="btn" type="submit">Criar backup agora</button></form>{% elif db_status.kind!='SQLite' %}<p class="hint">PostgreSQL detectado. O aplicativo não executa <code>pg_dump</code>; use backup/snapshot do provedor antes de mudanças estruturais relevantes.</p>{% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script>
+async function testConn(src){
+  const box=document.getElementById('test-result');box.innerHTML='<div class="alert">Testando conexão salva...</div>';
+  try{const r=await fetch('/sincronizacao/testar/'+src,{method:'POST'});const j=await r.json();box.innerHTML='<div class="alert '+(j.ok?'success':'error')+'">'+(j.ok?'Conexão OK':'Falha')+' · '+(j.error||JSON.stringify(j))+'</div>';}
+  catch(e){box.innerHTML='<div class="alert error">'+e+'</div>';}
+}
+</script>{% endblock %}

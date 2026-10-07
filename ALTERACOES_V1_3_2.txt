@@ -1,0 +1,31 @@
+PLATAFORMA GESTÃO INTEGRADA V1.3.2 — AJUSTES OPERACIONAIS DO ROTEIRIZADOR
+
+1. BAIXA SOMENTE DE ENTREGA ROTEIRIZADA
+- /baixa-entregas mostra somente NFs em roteiro ativo (PLANEJADO/EM ROTA).
+- endpoint individual também valida a existência de roteiro ativo.
+- baixa de NF não roteirizada é bloqueada.
+
+2. BAIXA E REPROGRAMAÇÃO EM LOTE
+- seleção individual, múltipla e selecionar todas.
+- ação em lote ENTREGUE.
+- ação em lote REPROGRAMAR.
+- reprogramação retira a entrega do roteiro ativo e preserva histórico por DeliveryMovement.
+
+3. ROTEIRIZAR MAIS SIMPLES
+- cards coloridos por motorista/responsável.
+- cards como filtro rápido.
+- cards como escolha do motorista das NFs selecionadas.
+- contador de NFs selecionadas.
+- fluxo visual em 3 etapas.
+
+4. TROCA DE MOTORISTA APÓS ROTEIRIZAÇÃO
+- no detalhe do roteiro, selecionar uma, várias ou todas as NFs.
+- cards coloridos para escolher o novo motorista.
+- entrega é movida para roteiro do novo motorista na mesma data.
+- registro de movimento TROCA_MOTORISTA.
+- roteiro de origem é renumerado; roteiro planejado vazio é removido.
+
+5. COMPATIBILIDADE
+- sem alteração de schema do banco.
+- mantém URLs e módulos anteriores.
+- mantém NF única na base central.

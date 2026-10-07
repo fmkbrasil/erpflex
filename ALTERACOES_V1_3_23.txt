@@ -1,0 +1,17 @@
+V1.3.23 — Vínculos de itens e dados financeiros
+
+1. Faturamento
+- Corrigido erro 500 ao atualizar itens.
+- Retirado endpoint de itens não comprovado.
+- Recuperação de itens via pedido relacionado e endpoint oficial /api/venda/solicitacao/{id}.
+- Cache local do detalhe do pedido.
+
+2. Financeiro
+- Reconhecimento dos campos SA6_* retornados pelo cadastro de bancos.
+- Atualização do catálogo /api/bancos/ antes do enriquecimento da página.
+- Nome do banco resolvido pelo ID interno quando disponível.
+- Nome da carteira somente quando fornecido pela API; caso contrário o ID é mantido explicitamente.
+
+3. Compatibilidade
+- Schema 6 preservado.
+- Sem recriação de base.

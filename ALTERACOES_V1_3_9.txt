@@ -1,0 +1,10 @@
+V1.3.9 — Motor ERPFlex baseado no Analytics V7.8
+
+- Integração revisada usando o ERPFlex Analytics V7.8 fornecido pelo usuário como referência funcional.
+- HTTP persistente/keep-alive e timeout de leitura ampliado.
+- Faturamento: paginação e busca de período pelo algoritmo validado do V7.8.
+- Contas a Receber/Pagar: paginação por posição numérica; HTTP de borda é tratado como fim da base durante descoberta.
+- Pedidos: localização histórica por offset conforme V7.8.
+- Novo sync_cursors para manter LastValid/FirstInvalid/NextOffset entre execuções.
+- Schema 4, com migração aditiva e backup SQLite antes do upgrade.
+- Dados e funções do Roteirizador preservados.
