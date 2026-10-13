@@ -1,0 +1,53 @@
+<section class="danfe-sheet">
+  <div class="danfe-watermark">SEM VALOR FISCAL</div>
+  <div class="danfe-receipt">
+    <div><b>RECEBEMOS DE {{ issuer_name|upper }} OS PRODUTOS/SERVIÇOS CONSTANTES DA NOTA FISCAL INDICADA AO LADO</b><span>Documento de consulta interna gerado pela Plataforma Gestão Integrada.</span></div>
+    <div><small>NF-e</small><strong>Nº {{ header.number or '—' }}</strong><span>SÉRIE {{ header.series or '—' }}</span></div>
+  </div>
+  <div class="danfe-cutline"><span>✂</span></div>
+
+  <div class="danfe-main-head">
+    <div class="danfe-issuer">
+      <strong>{{ issuer_trade or issuer_name or 'EMITENTE NÃO IDENTIFICADO' }}</strong>
+      {% if issuer_name and issuer_trade and issuer_name != issuer_trade %}<span>{{ issuer_name }}</span>{% endif %}
+      <span>{{ issuer_address or 'Endereço não informado pela integração' }}</span>
+      <span>{% if issuer_district %}{{ issuer_district }} · {% endif %}{{ issuer_city or '' }}{% if issuer_state %} / {{ issuer_state }}{% endif %}{% if issuer_zip %} · CEP {{ issuer_zip }}{% endif %}</span>
+      {% if issuer_phone %}<span>Fone {{ issuer_phone }}</span>{% endif %}
+    </div>
+    <div class="danfe-title-box">
+      <b>DANFE</b><span>DOCUMENTO AUXILIAR<br>DA NOTA FISCAL ELETRÔNICA</span>
+      <div class="danfe-entry-exit"><b>{{ danfe_entry_exit|default(1) }}</b><span>0 - ENTRADA<br>1 - SAÍDA</span></div>
+      <strong>Nº {{ header.number or '—' }}</strong><span>SÉRIE {{ header.series or '—' }}</span><span>FOLHA 1/1</span>
+    </div>
+    <div class="danfe-access">
+      <div class="danfe-barcode" aria-hidden="true"></div>
+      <b>CHAVE DE ACESSO</b><span class="key">{{ header.key or 'Não informada pela integração' }}</span>
+      <small>Consulta interna. Este espelho não substitui o DANFE/XML fiscal oficial.</small>
+    </div>
+  </div>
+
+  <div class="danfe-row danfe-row-2"><div><label>NATUREZA DA OPERAÇÃO</label><b>{{ header.nature or '—' }}</b></div><div><label>PROTOCOLO DE AUTORIZAÇÃO DE USO</label><b>{{ header.protocol or '—' }}{% if header.authorization_date %} · {{ header.authorization_date }}{% endif %}</b></div></div>
+  <div class="danfe-row danfe-row-3"><div><label>INSCRIÇÃO ESTADUAL</label><b>{{ issuer_ie or '—' }}</b></div><div><label>INSCRIÇÃO ESTADUAL DO SUBST. TRIBUT.</label><b>—</b></div><div><label>CNPJ/CPF</label><b>{{ issuer_cnpj or '—' }}</b></div></div>
+
+  <h3 class="danfe-section-title">DESTINATÁRIO / REMETENTE</h3>
+  <div class="danfe-row danfe-recipient-row"><div class="span-2"><label>NOME / RAZÃO SOCIAL</label><b>{{ recipient_name or '—' }}</b></div><div><label>CNPJ/CPF</label><b>{{ recipient_cnpj or '—' }}</b></div><div><label>DATA DA EMISSÃO</label><b>{{ header.issue_date or '—' }}</b></div></div>
+  <div class="danfe-row danfe-recipient-row"><div class="span-2"><label>ENDEREÇO</label><b>{{ recipient_address or '—' }}</b></div><div><label>BAIRRO / DISTRITO</label><b>{{ recipient_district or '—' }}</b></div><div><label>CEP</label><b>{{ recipient_zip or '—' }}</b></div></div>
+  <div class="danfe-row danfe-recipient-row"><div><label>MUNICÍPIO</label><b>{{ recipient_city or '—' }}</b></div><div><label>FONE / FAX</label><b>{{ recipient_phone or '—' }}</b></div><div><label>UF</label><b>{{ recipient_state or '—' }}</b></div><div><label>INSCRIÇÃO ESTADUAL</label><b>{{ recipient_ie or '—' }}</b></div></div>
+
+  <h3 class="danfe-section-title">CÁLCULO DO IMPOSTO</h3>
+  <div class="danfe-row danfe-tax-row"><div><label>BASE DE CÁLCULO ICMS</label><b>R$ {{ '%.2f'|format(header.base_icms or 0) }}</b></div><div><label>VALOR DO ICMS</label><b>R$ {{ '%.2f'|format(header.icms or 0) }}</b></div><div><label>BASE CÁLCULO ICMS ST</label><b>R$ 0,00</b></div><div><label>VALOR DO ICMS ST</label><b>R$ {{ '%.2f'|format(header.icms_st or 0) }}</b></div><div><label>VALOR TOTAL DOS PRODUTOS</label><b>R$ {{ '%.2f'|format(header.products_total or 0) }}</b></div></div>
+  <div class="danfe-row danfe-tax-row"><div><label>VALOR DO FRETE</label><b>R$ {{ '%.2f'|format(header.freight or 0) }}</b></div><div><label>VALOR DO SEGURO</label><b>R$ 0,00</b></div><div><label>DESCONTO</label><b>R$ {{ '%.2f'|format(header.discount or 0) }}</b></div><div><label>OUTRAS DESPESAS</label><b>R$ 0,00</b></div><div><label>VALOR DO IPI</label><b>R$ {{ '%.2f'|format(header.ipi or 0) }}</b></div><div><label>VALOR TOTAL DA NOTA</label><b>R$ {{ '%.2f'|format(header.total or 0) }}</b></div></div>
+
+  <h3 class="danfe-section-title">TRANSPORTADOR / VOLUMES TRANSPORTADOS</h3>
+  <div class="danfe-row danfe-transport-row"><div class="span-2"><label>RAZÃO SOCIAL</label><b>{{ header.carrier or '—' }}</b></div><div><label>FRETE POR CONTA</label><b>{{ header.freight_mode or '—' }}</b></div><div><label>QUANTIDADE</label><b>{{ header.volumes or 0 }}</b></div><div><label>PESO BRUTO</label><b>{{ '%.3f'|format(header.gross_weight or 0) }}</b></div><div><label>PESO LÍQUIDO</label><b>{{ '%.3f'|format(header.net_weight or 0) }}</b></div></div>
+
+  <h3 class="danfe-section-title">DADOS DOS PRODUTOS / SERVIÇOS</h3>
+  {% if header.items_source == 'pedido' %}<div class="source-hint no-print">Itens recuperados do pedido relacionado porque não estavam no cabeçalho do faturamento.</div>{% endif %}
+  <div class="danfe-items-wrap"><table class="danfe-items"><thead><tr><th>CÓD. PROD.</th><th>DESCRIÇÃO DOS PRODUTOS / SERVIÇOS</th><th>NCM/SH</th><th>CST</th><th>CFOP</th><th>UN</th><th>QTD.</th><th>V. UNIT.</th><th>V. TOTAL</th><th>BC ICMS</th><th>V. ICMS</th><th>V. IPI</th><th>ALIQ. ICMS</th><th>ALIQ. IPI</th></tr></thead><tbody>
+  {% for it in items %}<tr><td>{{ it.product_code or it.code or '—' }}</td><td>{{ it.description or '—' }}{% if it.ean %}<small>GTIN {{it.ean}}</small>{% endif %}</td><td>{{ it.ncm or '—' }}</td><td>—</td><td>{{ it.cfop or '—' }}</td><td>{{ it.unit or '—' }}</td><td class="num">{{ '%.3f'|format(it.qty or 0) }}</td><td class="num">{{ '%.4f'|format(it.unit_price or 0) }}</td><td class="num">{{ '%.2f'|format(it.total or 0) }}</td><td class="num">—</td><td class="num">{{ '%.2f'|format(it.icms or 0) }}</td><td class="num">{{ '%.2f'|format(it.ipi or 0) }}</td><td class="num">—</td><td class="num">—</td></tr>{% else %}<tr><td colspan="14" class="empty">Itens não disponíveis no retorno sincronizado deste documento.</td></tr>{% endfor %}
+  </tbody></table></div>
+
+  <h3 class="danfe-section-title">DADOS ADICIONAIS</h3>
+  <div class="danfe-additional"><div><label>INFORMAÇÕES COMPLEMENTARES</label><p>{{ header.additional_info or 'Sem informações complementares disponíveis na integração.' }}</p></div><div><label>RESERVADO AO FISCO</label><p></p></div></div>
+  <div class="danfe-footer"><b>ESPELHO DANFE · CONSULTA INTERNA · SEM VALIDADE FISCAL</b><span>Gerado pela Plataforma Gestão Integrada · Origem ERPFlex</span></div>
+</section>
