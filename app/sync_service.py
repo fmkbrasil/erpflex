@@ -15,13 +15,80 @@ from .db import (
 )
 from .utils import (
     access_key_from, deep_find, digits, external_id, fnum, normalize_date, payload_hash,
-    pick, safe_json, text
+    pick, safe_json, text, key_norm
 )
 from .xml_parser import parse_nfe
 from .logistics import classificar_regiao, regiao_especial, alerta_endereco
 from .integration_settings import get_erpflex_settings, get_nfstock_settings
 
 _sync_lock = threading.Lock()
+
+
+def _seller_info(record: dict | None) -> tuple[str, str]:
+    """Extrai ID e nome do vendedor apenas de campos efetivamente retornados.
+
+    O ERPFlex pode variar a nomenclatura entre listagem/detalhe do pedido.
+    Não consulta endpoint adicional: somente normaliza o JSON já recebido.
+    """
+    payload = record or {}
+    seller_id = text(deep_find(payload, (
+        "id_vendedor", "vendedor_id", "idVendedor", "idvendedor",
+        "id_representante", "representante_id", "idRepresentante",
+        "seller_id", "salesperson_id",
+    ))).strip()
+    seller_name = text(deep_find(payload, (
+        "vendedor_nome", "nome_vendedor", "vendedor_desc", "descricao_vendedor",
+        "nomeVendedor", "representante_nome", "nome_representante",
+        "representante_desc", "descricao_representante", "seller_name",
+        "salesperson_name",
+    ))).strip()
+
+    # Alguns retornos agrupam o vendedor/representante em um objeto.
+    nested = deep_find(payload, ("vendedor", "representante", "seller", "salesperson"))
+    if isinstance(nested, dict):
+        if not seller_id:
+            seller_id = text(deep_find(nested, ("id", "codigo", "code", "vendedor_id", "id_vendedor"))).strip()
+        if not seller_name:
+            seller_name = text(deep_find(nested, ("nome", "name", "descricao", "description", "razao_social"))).strip()
+    elif nested not in (None, ""):
+        raw = text(nested).strip()
+        # Valor textual é nome; valor somente numérico é tratado como identificador.
+        if raw:
+            if raw.replace(".", "", 1).isdigit():
+                seller_id = seller_id or raw
+            else:
+                seller_name = seller_name or raw
+
+    # Fallback diagnóstico/tolerante: captura variações de chave que contenham
+    # literalmente vendedor/representante sem presumir outros conceitos da API.
+    def scan(node):
+        nonlocal seller_id, seller_name
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lk = str(key).lower()
+                if "vendedor" in lk or "representante" in lk:
+                    if isinstance(value, dict):
+                        if not seller_id:
+                            seller_id = text(deep_find(value, ("id", "codigo", "code"))).strip()
+                        if not seller_name:
+                            seller_name = text(deep_find(value, ("nome", "name", "descricao", "description"))).strip()
+                    elif value not in (None, "", [], {}):
+                        raw = text(value).strip()
+                        if raw:
+                            if any(token in lk for token in ("id", "codigo", "code")) or raw.replace(".", "", 1).isdigit():
+                                seller_id = seller_id or raw
+                            else:
+                                seller_name = seller_name or raw
+                if not (seller_id and seller_name):
+                    scan(value)
+        elif isinstance(node, list):
+            for value in node:
+                if seller_id and seller_name:
+                    break
+                scan(value)
+    if not (seller_id and seller_name):
+        scan(payload)
+    return seller_id[:120], seller_name[:180]
 
 
 def _acquire_execution_lease(company_id: int, source: str, owner: str, ttl_hours: int = 12) -> bool:
@@ -402,6 +469,254 @@ def _known_customer_ids(company_id: int, limit: int = 1000) -> list[str]:
     return sorted(ids)[:limit]
 
 
+
+def _case_value(mapping: dict, names: tuple[str, ...]):
+    if not isinstance(mapping, dict):
+        return None
+    lower = {str(k).lower(): v for k, v in mapping.items()}
+    normalized = {key_norm(k): v for k, v in mapping.items() if key_norm(k)}
+    for name in names:
+        value = lower.get(str(name).lower())
+        if value in (None, "", [], {}):
+            value = normalized.get(key_norm(name))
+        if value not in (None, "", [], {}):
+            return value
+    return None
+
+
+def _find_named_node(value: Any, names: tuple[str, ...]):
+    """Localiza um bloco sem confundir campos genéricos de outros endereços."""
+    if isinstance(value, dict):
+        direct = _case_value(value, names)
+        if direct not in (None, "", [], {}):
+            return direct
+        for child in value.values():
+            found = _find_named_node(child, names)
+            if found not in (None, "", [], {}):
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_named_node(child, names)
+            if found not in (None, "", [], {}):
+                return found
+    return None
+
+
+def _scalar_from(value: Any, names: tuple[str, ...] = ()) -> str:
+    if isinstance(value, (str, int, float)):
+        return text(value)
+    if isinstance(value, dict):
+        if names:
+            direct = _case_value(value, names)
+            if direct not in (None, "", [], {}):
+                return _scalar_from(direct, names)
+        for fallback in ("descricao", "desc", "nome", "name", "label", "valor", "value", "codigo"):
+            direct = _case_value(value, (fallback,))
+            if direct not in (None, "", [], {}):
+                out = _scalar_from(direct)
+                if out:
+                    return out
+    if isinstance(value, list):
+        for item in value:
+            out = _scalar_from(item, names)
+            if out:
+                return out
+    return ""
+
+
+def _find_typed_address(value: Any, kind: str):
+    markers = {
+        "main": ("principal", "padrao", "padrão", "fiscal", "matriz"),
+        "delivery": ("entrega", "delivery"),
+        "billing": ("cobranca", "cobrança", "billing"),
+    }[kind]
+    if isinstance(value, dict):
+        type_value = _scalar_from(_case_value(value, ("tipo", "tipo_endereco", "finalidade", "descricao_tipo", "nome_tipo"))).lower()
+        if type_value and any(m in type_value for m in markers):
+            if any(_case_value(value, (k,)) not in (None, "", [], {}) for k in ("endereco", "logradouro", "rua", "cep", "bairro", "cidade", "municipio")):
+                return value
+        for child in value.values():
+            found = _find_typed_address(child, kind)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _find_typed_address(child, kind)
+            if found is not None:
+                return found
+    return None
+
+
+def _address_from_record(record: dict, kind: str) -> dict[str, str]:
+    if kind == "delivery":
+        sections = ("endereco_entrega", "enderecoEntrega", "delivery_address", "dados_entrega", "entrega")
+        prefixes = ("entrega", "delivery")
+    elif kind == "billing":
+        sections = ("endereco_cobranca", "enderecoCobranca", "billing_address", "dados_cobranca", "cobranca")
+        prefixes = ("cobranca", "billing")
+    else:
+        sections = ("endereco_principal", "enderecoPrincipal", "main_address", "dados_endereco", "endereco_cliente")
+        prefixes = ("principal", "main")
+
+    direct_named_node = _case_value(record, sections)
+    node = direct_named_node if direct_named_node not in (None, "", [], {}) else _find_named_node(record, sections)
+    if node in (None, "", [], {}):
+        node = _find_typed_address(record, kind)
+    result = {"address": "", "number": "", "complement": "", "district": "", "city": "", "state": "", "zip": ""}
+    if isinstance(node, (str, int, float)):
+        result["address"] = text(node)
+    elif isinstance(node, dict):
+        result["address"] = _scalar_from(_case_value(node, ("endereco", "logradouro", "rua", "address", "street")))
+        result["number"] = _scalar_from(_case_value(node, ("numero", "nro", "numero_endereco", "number")))
+        result["complement"] = _scalar_from(_case_value(node, ("complemento", "complement", "complemento_endereco")))
+        result["district"] = _scalar_from(_case_value(node, ("bairro", "district")))
+        result["city"] = _scalar_from(_case_value(node, ("municipio", "cidade", "city")))
+        result["state"] = _scalar_from(_case_value(node, ("uf", "estado", "state")))
+        result["zip"] = _scalar_from(_case_value(node, ("cep", "zip", "zip_code")))
+
+    # Campos planos específicos têm prioridade sobre qualquer busca genérica em nós aninhados.
+    suffixes = {
+        "address": ("endereco", "logradouro"), "number": ("numero", "nro"),
+        "complement": ("complemento",), "district": ("bairro",),
+        "city": ("municipio", "cidade"), "state": ("uf", "estado"), "zip": ("cep",),
+    }
+    for field, bases in suffixes.items():
+        if result[field]:
+            continue
+        candidates = []
+        if kind == "main":
+            candidates += list(bases)
+            for base in bases:
+                candidates += [f"{base}_principal", f"principal_{base}", f"{base}_cliente"]
+        else:
+            for base in bases:
+                for prefix in prefixes:
+                    candidates += [f"{base}_{prefix}", f"{prefix}_{base}"]
+        value = _case_value(record, tuple(candidates))
+        if value not in (None, "", [], {}):
+            result[field] = _scalar_from(value)
+        elif kind != "main":
+            # Se o próprio endereço de entrega/cobrança veio como campo plano no
+            # mesmo nível, os demais componentes podem vir sem o sufixo do tipo
+            # (Numero, Complemento, Bairro, Municipio, Estado, CEP). Só aceitamos
+            # esse fallback quando o endereço nomeado existe no mesmo objeto,
+            # evitando confundir, por exemplo, número do documento com endereço.
+            if direct_named_node not in (None, "", [], {}):
+                plain = _case_value(record, tuple(bases))
+                if plain not in (None, "", [], {}):
+                    result[field] = _scalar_from(plain)
+                    continue
+            # Para entrega/cobrança os nomes prefixados são específicos o suficiente
+            # para uma busca profunda em estruturas aninhadas.
+            value = deep_find(record, tuple(candidates))
+            result[field] = _scalar_from(value)
+    return result
+
+
+def _address_line(address: str = "", number: str = "", complement: str = "") -> str:
+    parts = [text(address), text(number)]
+    first = " ".join(x for x in parts if x).strip()
+    comp = text(complement)
+    return (f"{first} - {comp}" if first and comp else first or comp)[:255]
+
+
+def _sales_invoice_delivery(record: dict, customer: Partner | None = None) -> dict[str, str]:
+    """Endereço de entrega da NF com tolerância às chaves reais do ERPFlex.
+
+    Quando o retorno traz ``Endereco Entrega`` e os demais componentes como
+    ``Numero``, ``Complemento``, ``Bairro``, ``Municipio``, ``Estado`` e ``CEP``
+    no mesmo nível, estes campos são tratados como um único endereço.
+    """
+    out = _address_from_record(record, "delivery")
+    explicit = _case_value(record, ("endereco_entrega", "logradouro_entrega", "delivery_address"))
+    if explicit not in (None, "", [], {}):
+        out["address"] = _scalar_from(explicit) or out["address"]
+        direct = {
+            "number": ("numero_entrega", "numero"),
+            "complement": ("complemento_entrega", "complemento"),
+            "district": ("bairro_entrega", "bairro"),
+            "city": ("municipio_entrega", "cidade_entrega", "municipio", "cidade"),
+            "state": ("uf_entrega", "estado_entrega", "uf", "estado"),
+            "zip": ("cep_entrega", "cep"),
+        }
+        for field, names in direct.items():
+            if not out[field]:
+                out[field] = _scalar_from(_case_value(record, names))
+
+    # Fallback do cadastro mestre: endereço de entrega e, por último, principal.
+    if customer is not None and not out["address"]:
+        if customer.delivery_address or customer.delivery_city or customer.delivery_zip_code:
+            out.update({
+                "address": customer.delivery_address or "", "number": customer.delivery_number or "",
+                "complement": customer.delivery_complement or "", "district": customer.delivery_district or "",
+                "city": customer.delivery_city or "", "state": customer.delivery_state or "",
+                "zip": customer.delivery_zip_code or "",
+            })
+        elif customer.address or customer.city or customer.zip_code:
+            out.update({
+                "address": customer.address or "", "number": customer.address_number or "",
+                "complement": customer.address_complement or "", "district": customer.district or "",
+                "city": customer.city or "", "state": customer.state or "", "zip": customer.zip_code or "",
+            })
+    return out
+
+
+def _enrich_customer_master(row: Partner, record: dict) -> None:
+    main = _address_from_record(record, "main")
+    delivery = _address_from_record(record, "delivery")
+    billing = _address_from_record(record, "billing")
+
+    if main["address"]: row.address = main["address"]
+    if main["number"]: row.address_number = main["number"]
+    if main["complement"]: row.address_complement = main["complement"]
+    if main["district"]: row.district = main["district"]
+    if main["city"]: row.city = main["city"]
+    if main["state"]: row.state = main["state"]
+    if main["zip"]: row.zip_code = main["zip"]
+
+    if delivery["address"]: row.delivery_address = delivery["address"]
+    if delivery["number"]: row.delivery_number = delivery["number"]
+    if delivery["complement"]: row.delivery_complement = delivery["complement"]
+    if delivery["district"]: row.delivery_district = delivery["district"]
+    if delivery["city"]: row.delivery_city = delivery["city"]
+    if delivery["state"]: row.delivery_state = delivery["state"]
+    if delivery["zip"]: row.delivery_zip_code = delivery["zip"]
+
+    if billing["address"]: row.billing_address = billing["address"]
+    if billing["number"]: row.billing_number = billing["number"]
+    if billing["complement"]: row.billing_complement = billing["complement"]
+    if billing["district"]: row.billing_district = billing["district"]
+    if billing["city"]: row.billing_city = billing["city"]
+    if billing["state"]: row.billing_state = billing["state"]
+    if billing["zip"]: row.billing_zip_code = billing["zip"]
+
+    payment = deep_find(record, (
+        "forma_pagamento_desc", "descricao_forma_pagamento", "forma_pagamento", "formaPagamento",
+        "payment_method", "meio_pagamento", "meioPagamento",
+    ))
+    payment_label = _scalar_from(payment, ("descricao", "desc", "nome", "forma_pagamento", "label"))
+    if payment_label:
+        row.payment_method = payment_label
+    terms = deep_find(record, (
+        "condicao_pagamento_desc", "descricao_condicao_pagamento", "condicao_pagamento", "condicaoPagamento",
+        "prazo_pagamento", "payment_terms", "prazo",
+    ))
+    terms_label = _scalar_from(terms, ("descricao", "desc", "nome", "condicao", "prazo", "label"))
+    if terms_label:
+        row.payment_terms = terms_label
+
+    carrier = deep_find(record, ("transportadora", "transportador", "carrier", "dados_transportadora"))
+    carrier_name = _scalar_from(carrier, ("razao_social", "nome", "nome_fantasia", "descricao", "desc", "transportadora"))
+    if not carrier_name:
+        carrier_name = _scalar_from(deep_find(record, ("nome_transportadora", "transportadora_desc", "descricao_transportadora")))
+    if carrier_name:
+        row.carrier_name = carrier_name
+    carrier_id = deep_find(record, ("id_transportadora", "transportadora_id", "idTransportadora", "carrier_id"))
+    if carrier_id in (None, "") and isinstance(carrier, dict):
+        carrier_id = _case_value(carrier, ("id", "id_transportadora", "codigo", "transportadora_id"))
+    if carrier_id not in (None, "", [], {}):
+        row.carrier_erpflex_id = _scalar_from(carrier_id)
+
 def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | None = None):
     if nf_xml and role == "supplier":
         cnpj = digits(nf_xml.get("issuer_cnpj"))
@@ -445,12 +760,16 @@ def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | Non
         peid = deep_find(record, ("cliente_id", "id_cliente"))
     if peid not in (None, "") and not row.erpflex_id:
         row.erpflex_id = str(peid)
-    # Dados de endereço quando claramente disponíveis.
-    row.address = row.address or text(deep_find(record, ("endereco", "logradouro", "endereco_entrega"))) or None
-    row.district = row.district or text(deep_find(record, ("bairro", "bairro_entrega"))) or None
-    row.city = row.city or text(deep_find(record, ("municipio", "cidade", "cidade_entrega"))) or None
-    row.state = row.state or text(deep_find(record, ("uf", "estado", "uf_entrega"))) or None
-    row.zip_code = row.zip_code or text(deep_find(record, ("cep", "cep_entrega"))) or None
+    # Mantém o cadastro consolidado com o máximo de dados efetivamente retornados pela API.
+    # Para clientes, o endpoint individual /api/cliente/{id} é a fonte preferencial do cadastro mestre.
+    if role == "customer":
+        _enrich_customer_master(row, record)
+    else:
+        row.address = row.address or text(deep_find(record, ("endereco", "logradouro"))) or None
+        row.district = row.district or text(deep_find(record, ("bairro",))) or None
+        row.city = row.city or text(deep_find(record, ("municipio", "cidade"))) or None
+        row.state = row.state or text(deep_find(record, ("uf", "estado"))) or None
+        row.zip_code = row.zip_code or text(deep_find(record, ("cep",))) or None
     return row
 
 
@@ -489,6 +808,7 @@ def _erp_product(db, company_id: int, record: dict):
     row.ncm = text(deep_find(record, ("ncm", "codigo_ncm"))) or row.ncm
     row.unit = text(deep_find(record, ("unidade", "un", "unidade_medida"))) or row.unit
     row.category = text(deep_find(record, ("categoria", "grupo", "categoria_produto"))) or row.category
+    row.subcategory = text(deep_find(record, ("subcategoria", "sub_categoria", "subcategoria_produto", "subgrupo", "sub_grupo", "familia", "linha"))) or row.subcategory
 
 
 def _erp_order(db, company_id: int, record: dict, raw_id: int):
@@ -504,6 +824,9 @@ def _erp_order(db, company_id: int, record: dict, raw_id: int):
     row.forecast_date = normalize_date(deep_find(record, ("previsao_faturamento", "previsao_entrega", "data_entrega", "data_previsao"))) or row.forecast_date
     row.status = text(deep_find(record, ("status", "situacao", "estado"))) or row.status
     row.total = fnum(deep_find(record, ("valor_total", "total", "valor", "valor_pedido"))) or row.total
+    seller_id, seller_name = _seller_info(record)
+    row.seller_id = seller_id or row.seller_id
+    row.seller_name = seller_name or row.seller_name
     row.raw_record_id = raw_id
 
 
@@ -622,11 +945,13 @@ def _erp_sales_invoice(db, company_id: int, record: dict, raw_id: int):
     row.total = fnum(deep_find(record, ("valor_nf", "valor_total_da_nota", "valor_total", "total_nf", "total", "valor"))) or row.total
     row.carrier = text(deep_find(record, ("transportadora", "transportadora1", "transportador"))) or row.carrier
     row.carrier2 = text(deep_find(record, ("transportadora2", "modalidade", "tipo_entrega"))) or row.carrier2
-    row.delivery_address = text(deep_find(record, ("endereco_entrega", "logradouro_entrega", "endereco"))) or row.delivery_address
-    row.delivery_district = text(deep_find(record, ("bairro_entrega", "bairro"))) or row.delivery_district
-    row.delivery_city = text(deep_find(record, ("municipio_entrega", "cidade_entrega", "municipio", "cidade"))) or row.delivery_city
-    row.delivery_state = text(deep_find(record, ("uf_entrega", "uf", "estado"))) or row.delivery_state
-    row.delivery_zip = text(deep_find(record, ("cep_entrega", "cep"))) or row.delivery_zip
+    delivery_addr = _sales_invoice_delivery(record, customer)
+    full_delivery = _address_line(delivery_addr["address"], delivery_addr["number"], delivery_addr["complement"])
+    row.delivery_address = full_delivery or row.delivery_address
+    row.delivery_district = delivery_addr["district"] or row.delivery_district
+    row.delivery_city = delivery_addr["city"] or row.delivery_city
+    row.delivery_state = delivery_addr["state"] or row.delivery_state
+    row.delivery_zip = delivery_addr["zip"] or row.delivery_zip
     row.volumes = fnum(deep_find(record, ("quantidade_volume", "qtd_volume", "volumes", "volume"))) or row.volumes
     row.raw_record_id = raw_id
     db.flush()

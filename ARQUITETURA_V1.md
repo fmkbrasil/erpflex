@@ -205,3 +205,49 @@ A consulta Título a Receber V1 é usada de forma controlada para enriquecer id_
 
 ### V1.3.21 — Itens dos documentos
 Corrige chaves de relacionamento de pedidos/faturamentos/compras e mantém compatibilidade com raw_records históricos. O schema permanece 5.
+
+## V1.3.35 — BI comercial e classificação de produtos
+
+O schema 12 adiciona somente `products.subcategory`. Categoria e subcategoria pertencem ao cadastro normalizado de produtos e podem ser complementadas pelos `raw_records` do módulo `products` sem criar nova fonte de verdade.
+
+No BI de Compras, o valor gerencial de uma NF-e usa a primeira fonte não zerada entre `total_erpflex`, `total_nfstock` e a soma de `purchase_items.total`. Essa regra é restrita à apresentação/indicadores do BI e evita que um cabeçalho zerado elimine o valor real já disponível nos itens.
+
+## V1.3.36 — vendedor do pedido, carteira descritiva e UX de roteirização
+
+O schema 13 adiciona `sales_orders.seller_id` e `sales_orders.seller_name`. O sincronizador apenas materializa campos realmente presentes no JSON de pedido; não existe endpoint novo de vendedor nesta versão.
+
+No BI, a resolução do vendedor segue: vendedor presente no faturamento/pedido detalhado → pedido sincronizado por ID exato → pedido sincronizado por número exato e não ambíguo. Não existe fallback por cliente, evitando atribuição histórica incorreta quando a carteira comercial muda.
+
+A descrição da carteira financeira é resolvida na camada de leitura a partir de `receber_detalhe`, `boleto_options`, `banks` e `bank_detail` já persistidos. O ID original permanece a referência quando nenhuma descrição foi retornada.
+
+A tela `/roteirizar` mantém as mesmas rotas e regras de negócio, alterando apenas a camada de interação: seleção visual por cards, resumo das NFs marcadas, volumes/valor selecionados, etapas explícitas e maior destaque para endereço, região e motorista.
+
+
+## V1.3.37 — segurança de período no roteirizador
+
+A roteirização passou a trabalhar com uma única **data operacional** por tela. A referência prioriza `SalesInvoice.forecast_date` (previsão/entrega); quando ela não existe, utiliza `SalesInvoice.issue_date` de forma explicitamente sinalizada. NFs sem ambas as datas ficam em uma visão separada **Sem data**.
+
+O filtro é aplicado no backend antes de montar regiões, KPIs e lista de seleção. No POST de criação do roteiro, o servidor revalida todas as NFs e rejeita qualquer tentativa de misturar datas, mesmo em formulário manipulado. `Route.route_date` continua independente da data operacional da NF.
+
+## V1.3.38 — endereço efetivo e UX de baixa
+
+A logística passa a usar um conceito de **endereço efetivo de entrega** sem criar nova tabela. A resolução é feita em tempo de leitura com a prioridade: campos de entrega da NF (`sales_invoices`) → endereço de entrega do cliente (`partners.delivery_*`) → endereço principal do cliente (`partners.address*`). A interface identifica a origem para facilitar auditoria e não cria valores quando nenhuma fonte possui endereço.
+
+A normalização das chaves da API foi fortalecida somente na comparação de nomes de campos: caixa, acentos, espaços, hífens e sublinhados deixam de impedir o reconhecimento de uma chave. Os valores recebidos permanecem inalterados. O faturamento também consolida número e complemento quando o payload entrega os componentes do endereço no mesmo nível.
+
+A tela de baixa continua usando as mesmas regras de negócio e endpoints existentes. A alteração é de apresentação/operabilidade: status possuem códigos visuais distintos, há contadores por situação e o formulário individual adapta a ação selecionada. O schema permanece 13.
+
+## V1.3.39 — camada de DRE Gerencial
+
+A DRE foi implementada dentro da camada de BI (`app/bi_service.py`) para reutilizar as mesmas regras de Faturamento, filtros globais e normalização financeira.
+
+Regras estruturais:
+- Receita Bruta: somente `sales_invoices` válidas conforme a regra fiscal do BI.
+- Despesas: somente `financial_titles.kind = DESPESA`.
+- `PAGAR` não é somado à DRE, evitando duplicidade quando o mesmo compromisso já estiver representado como despesa.
+- A categoria da despesa é extraída do JSON bruto real com parser tolerante; nenhuma categoria contábil é inventada.
+- O usuário classifica a categoria de origem em um grupo gerencial na tabela `dre_expense_mappings`.
+- Compras não são tratadas como CMV.
+- Linhas dependentes de dados não normalizados permanecem indisponíveis.
+
+Schema 14: nova tabela aditiva `dre_expense_mappings(company_id, source_category, dre_group, updated_at)`.

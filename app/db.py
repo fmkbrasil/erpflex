@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 14
 
 
 class SchemaState(Base):
@@ -399,10 +399,30 @@ class Partner(Base):
     role_supplier: Mapped[bool] = mapped_column(Boolean, default=False)
     erpflex_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    address_complement: Mapped[str | None] = mapped_column(String(160), nullable=True)
     district: Mapped[str | None] = mapped_column(String(120), nullable=True)
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     state: Mapped[str | None] = mapped_column(String(10), nullable=True)
     zip_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    delivery_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    delivery_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    delivery_complement: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    delivery_district: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    delivery_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    delivery_state: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    delivery_zip_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billing_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    billing_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    billing_complement: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    billing_district: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    billing_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    billing_state: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    billing_zip_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_terms: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    carrier_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    carrier_erpflex_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (
         Index("ix_partner_company_cnpj", "company_id", "cnpj_cpf"),
@@ -420,6 +440,7 @@ class Product(Base):
     ncm: Mapped[str | None] = mapped_column(String(30), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
     category: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    subcategory: Mapped[str | None] = mapped_column(String(160), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (
         UniqueConstraint("company_id", "erpflex_id", name="uq_product_erpflex"),
@@ -438,6 +459,8 @@ class SalesOrder(Base):
     forecast_date: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     status: Mapped[str | None] = mapped_column(String(80), nullable=True)
     total: Mapped[float] = mapped_column(Float, default=0)
+    seller_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    seller_name: Mapped[str | None] = mapped_column(String(180), nullable=True, index=True)
     raw_record_id: Mapped[int | None] = mapped_column(ForeignKey("raw_records.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (UniqueConstraint("company_id", "erpflex_id", name="uq_sales_order_erp"),)
@@ -533,6 +556,16 @@ class PurchaseItem(Base):
     ipi: Mapped[float] = mapped_column(Float, default=0)
     pis: Mapped[float] = mapped_column(Float, default=0)
     cofins: Mapped[float] = mapped_column(Float, default=0)
+
+
+class DreExpenseMapping(Base):
+    __tablename__ = "dre_expense_mappings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    source_category: Mapped[str] = mapped_column(String(255), index=True)
+    dre_group: Mapped[str] = mapped_column(String(80), default="NAO_CLASSIFICADO", index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "source_category", name="uq_dre_expense_mapping"),)
 
 
 class FinancialTitle(Base):
@@ -842,8 +875,52 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V8: parâmetros de cobrança automática, clientes com contrato de cobrança e histórico de envios.
     # V9: índice persistente de páginas/offsets ERPFlex para sincronização incremental e forçada por período.
     # V10: worker automático, agenda por módulo, heartbeat e lease de execução entre processos.
+    # V11: enriquecimento aditivo do cadastro de clientes (endereços principal/entrega/cobrança, pagamento e transportadora).
+    # V12: subcategoria normalizada de produtos para análise gerencial de vendas.
+    # V13: identificação aditiva de vendedor no pedido comercial para BI e rastreabilidade.
+    # V14: classificação configurável de categorias de despesas para a DRE Gerencial.
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
+    if "partners" in inspect(engine).get_table_names():
+        existing = {c["name"] for c in inspect(engine).get_columns("partners")}
+        additions = {
+            "address_number": "VARCHAR(60)",
+            "address_complement": "VARCHAR(160)",
+            "delivery_address": "VARCHAR(255)",
+            "delivery_number": "VARCHAR(60)",
+            "delivery_complement": "VARCHAR(160)",
+            "delivery_district": "VARCHAR(120)",
+            "delivery_city": "VARCHAR(120)",
+            "delivery_state": "VARCHAR(10)",
+            "delivery_zip_code": "VARCHAR(20)",
+            "billing_address": "VARCHAR(255)",
+            "billing_number": "VARCHAR(60)",
+            "billing_complement": "VARCHAR(160)",
+            "billing_district": "VARCHAR(120)",
+            "billing_city": "VARCHAR(120)",
+            "billing_state": "VARCHAR(10)",
+            "billing_zip_code": "VARCHAR(20)",
+            "payment_method": "VARCHAR(255)",
+            "payment_terms": "VARCHAR(255)",
+            "carrier_name": "VARCHAR(255)",
+            "carrier_erpflex_id": "VARCHAR(120)",
+        }
+        with engine.begin() as conn:
+            for name, sql_type in additions.items():
+                if name not in existing:
+                    conn.execute(sql_text(f"ALTER TABLE partners ADD COLUMN {name} {sql_type}"))
+    if "products" in inspect(engine).get_table_names():
+        product_existing = {c["name"] for c in inspect(engine).get_columns("products")}
+        if "subcategory" not in product_existing:
+            with engine.begin() as conn:
+                conn.execute(sql_text("ALTER TABLE products ADD COLUMN subcategory VARCHAR(160)"))
+    if "sales_orders" in inspect(engine).get_table_names():
+        order_existing = {c["name"] for c in inspect(engine).get_columns("sales_orders")}
+        with engine.begin() as conn:
+            if "seller_id" not in order_existing:
+                conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_id VARCHAR(120)"))
+            if "seller_name" not in order_existing:
+                conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_name VARCHAR(180)"))
     with SessionLocal() as db:
         state = db.get(SchemaState, 1)
         if not state:

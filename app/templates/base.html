@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=15">
+  <link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
 <header class="topbar">
@@ -12,7 +12,7 @@
   <nav>
     {% set logistics_active = request.url.path.startswith('/logistica') or request.url.path.startswith('/roteirizar') or request.url.path.startswith('/roteiros') or request.url.path.startswith('/painel-entregas') or request.url.path.startswith('/baixa-entregas') or request.url.path.startswith('/painel-gerencial') or request.url.path.startswith('/relatorios-gerenciais') or request.url.path.startswith('/ocorrencias') or request.url.path.startswith('/responsaveis') or request.url.path.startswith('/regras-entrega') or request.url.path.startswith('/parametros-logistica') or request.url.path.startswith('/custos-roteiro') or request.url.path.startswith('/importar-logistica') or request.url.path.startswith('/entregas/') %}
     {% set can_logistics = can_perm('logistica.view') or can_perm('roteirizar.view') or can_perm('roteiros.view') or can_perm('painel_entregas.view') or can_perm('baixa.manage') or can_perm('painel_gerencial.view') or can_perm('relatorios.view') or can_perm('ocorrencias.view') or can_perm('responsaveis.view') or can_perm('importar.manage') %}
-    {% if can_perm('dashboard.view') %}<a href="/" class="{% if request.url.path=='/' %}active{% endif %}">Início</a>{% endif %}
+    {% if can_perm('dashboard.view') %}<a href="/" class="{% if request.url.path=='/' %}active{% endif %}">Início</a><a href="/bi/visao-geral" class="{% if request.url.path.startswith('/bi') or request.url.path.startswith('/dashboard-gerencial') %}active{% endif %}">BI Gerencial</a>{% endif %}
     {% if can_perm('sync.manage') %}<a href="/sincronizacao" class="{% if '/sincronizacao' in request.url.path %}active{% endif %}">Sincronização</a><a href="/integracoes" class="{% if '/integracoes' in request.url.path %}active{% endif %}">Integrações</a>{% endif %}
     {% if can_perm('cadastros.view') %}<a href="/cadastros" class="{% if '/cadastros' in request.url.path %}active{% endif %}">Cadastros</a>{% endif %}
     {% if can_perm('faturamento.view') %}<a href="/faturamento" class="{% if '/faturamento' in request.url.path %}active{% endif %}">Faturamento</a>{% endif %}

@@ -26,7 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .connectors import ERPFlexClient, NFStockClient
 from .db import (
     AccessProfile, AppUser, AuditLog, BoxType, Branch, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, Delivery, DeliveryAssignment, DeliveryMovement,
-    DeliveryOccurrence, DeliveryRule, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesInvoiceItem,
+    DeliveryOccurrence, DeliveryRule, DreExpenseMapping, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesInvoiceItem,
     Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat,
     UserBranchAccess, UserCompanyAccess, UserViewPreference, create_sqlite_backup, database_status, init_db
 )
@@ -37,9 +37,10 @@ from .integration_settings import (
     encryption_fingerprint, encryption_is_default, encryption_source, get_erpflex_settings, get_nfstock_settings, get_smtp_settings,
     integration_public_view, mark_test_result, save_erpflex, save_nfstock, save_smtp,
 )
-from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, endereco_busca, maps_url, raw_channel, regiao_especial, waze_url
+from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, endereco_busca, endereco_entrega_efetivo, maps_url, raw_channel, regiao_especial, waze_url
 from .logistics_import import import_logistics_file
 from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json
+from .bi_service import build_bi, SECTIONS, DRE_GROUPS
 
 BASE_DIR = Path(__file__).resolve().parent
 APP_NAME = os.getenv("APP_NAME") or "Plataforma Gestão Integrada"
@@ -47,11 +48,12 @@ APP_USER = os.getenv("APP_USER") or "admin"
 APP_PASSWORD = os.getenv("APP_PASSWORD") or ""
 SECRET_KEY = os.getenv("SECRET_KEY") or "desenvolvimento-troque-em-producao"
 
-app = FastAPI(title=APP_NAME, version="1.3.30")
+app = FastAPI(title=APP_NAME, version="1.3.39")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
 templates.env.globals["endereco_busca"] = endereco_busca
+templates.env.globals["endereco_entrega_efetivo"] = endereco_entrega_efetivo
 templates.env.globals["maps_url"] = maps_url
 templates.env.globals["waze_url"] = waze_url
 templates.env.globals["alerta_endereco"] = alerta_endereco
@@ -99,6 +101,8 @@ def required_permission(method: str, path: str) -> str | None:
     method = method.upper()
     rules = [
         ("/administracao", "admin.manage"),
+        ("/dashboard-gerencial", "dashboard.view"),
+        ("/bi", "dashboard.view"),
         ("/sincronizacao", "sync.manage"),
         ("/integracoes", "sync.manage"),
         ("/sistema/backup", "admin.manage"),
@@ -163,7 +167,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.30", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.39", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -216,6 +220,246 @@ def dashboard(request: Request):
         last_runs = db.scalars(select(SyncRun).where(SyncRun.company_id == cid).order_by(SyncRun.id.desc()).limit(8)).all()
         latest = db.scalar(select(SyncRun).where(SyncRun.company_id == cid).order_by(SyncRun.id.desc()).limit(1))
     return render(request, "dashboard.html", company=company, counts=counts, recon=recon, runs=last_runs, latest=latest)
+
+
+def _date_value(value: str | None):
+    if not value:
+        return None
+    raw = str(value).strip()[:10]
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except Exception:
+        try:
+            return datetime.strptime(raw, "%d/%m/%Y").date()
+        except Exception:
+            return None
+
+
+def _mgmt_period_bounds(date_from: str = "", date_to: str = "", period: str = "month"):
+    today = date.today()
+    if period == "custom" and date_from and date_to:
+        try:
+            return datetime.strptime(date_from[:10], "%Y-%m-%d").date(), datetime.strptime(date_to[:10], "%Y-%m-%d").date()
+        except Exception:
+            pass
+    if period == "today":
+        return today, today
+    if period == "7":
+        return today - timedelta(days=6), today
+    if period == "30":
+        return today - timedelta(days=29), today
+    if period == "90":
+        return today - timedelta(days=89), today
+    if period == "year":
+        return date(today.year, 1, 1), today
+    return date(today.year, today.month, 1), today
+
+
+def _in_period(value: str | None, start: date, end: date) -> bool:
+    d = _date_value(value)
+    return bool(d and start <= d <= end)
+
+
+def _month_key(value: str | None) -> str | None:
+    d = _date_value(value)
+    return f"{d.year:04d}-{d.month:02d}" if d else None
+
+
+def _series(rows, date_attr: str, value_attr: str, start: date, end: date):
+    span = (end - start).days
+    mode_month = span > 62
+    buckets = {}
+    for row in rows:
+        d = _date_value(getattr(row, date_attr, None))
+        if not d or d < start or d > end:
+            continue
+        key = f"{d.year:04d}-{d.month:02d}" if mode_month else d.isoformat()
+        buckets[key] = buckets.get(key, 0.0) + float(getattr(row, value_attr, 0) or 0)
+    if mode_month:
+        cur = date(start.year, start.month, 1)
+        stop = date(end.year, end.month, 1)
+        keys = []
+        while cur <= stop:
+            keys.append(f"{cur.year:04d}-{cur.month:02d}")
+            cur = date(cur.year + (cur.month == 12), 1 if cur.month == 12 else cur.month + 1, 1)
+        labels = [datetime.strptime(k, "%Y-%m").strftime("%m/%Y") for k in keys]
+    else:
+        keys = [(start + timedelta(days=i)).isoformat() for i in range(span + 1)]
+        labels = [datetime.strptime(k, "%Y-%m-%d").strftime("%d/%m") for k in keys]
+    return {"labels": labels, "values": [round(buckets.get(k, 0.0), 2) for k in keys]}
+
+
+def _top_partner(db, rows, partner_attr: str, value_attr: str, limit: int = 8):
+    sums = {}
+    for row in rows:
+        pid = getattr(row, partner_attr, None)
+        if pid:
+            sums[pid] = sums.get(pid, 0.0) + float(getattr(row, value_attr, 0) or 0)
+    if not sums:
+        return []
+    partners = {p.id: p for p in db.scalars(select(Partner).where(Partner.id.in_(list(sums.keys())))).all()}
+    out = []
+    for pid, val in sorted(sums.items(), key=lambda x: x[1], reverse=True)[:limit]:
+        p = partners.get(pid)
+        out.append({"name": (p.trade_name or p.name) if p else f"ID {pid}", "value": round(val, 2)})
+    return out
+
+
+def _financial_status_rows(rows, today: date):
+    status = {"Pago": 0.0, "Em aberto": 0.0, "Parcial": 0.0, "Vencido": 0.0}
+    for r in rows:
+        value = float(r.value or 0)
+        paid = float(r.paid_value or 0)
+        saldo = max(value - paid, 0.0)
+        if saldo <= 0.005:
+            status["Pago"] += value
+            continue
+        due = _date_value(r.due_date)
+        if paid > 0:
+            status["Parcial"] += saldo
+        elif due and due < today:
+            status["Vencido"] += saldo
+        else:
+            status["Em aberto"] += saldo
+    return [{"name": k, "value": round(v, 2)} for k, v in status.items() if v > 0]
+
+
+def _aging_receivables(rows, today: date):
+    buckets = {"A vencer": 0.0, "1–30 dias": 0.0, "31–60 dias": 0.0, "61–90 dias": 0.0, "> 90 dias": 0.0}
+    for r in rows:
+        saldo = max(float(r.value or 0) - float(r.paid_value or 0), 0.0)
+        if saldo <= 0.005:
+            continue
+        due = _date_value(r.due_date)
+        if not due or due >= today:
+            buckets["A vencer"] += saldo
+            continue
+        days = (today - due).days
+        if days <= 30:
+            buckets["1–30 dias"] += saldo
+        elif days <= 60:
+            buckets["31–60 dias"] += saldo
+        elif days <= 90:
+            buckets["61–90 dias"] += saldo
+        else:
+            buckets["> 90 dias"] += saldo
+    return [{"name": k, "value": round(v, 2)} for k, v in buckets.items()]
+
+
+@app.get("/dashboard-gerencial", response_class=HTMLResponse)
+def dashboard_gerencial_legacy(request: Request):
+    query = request.url.query
+    target = "/bi/visao-geral" + (f"?{query}" if query else "")
+    return RedirectResponse(target, status_code=302)
+
+
+def _bi_filters_from_request(request: Request) -> dict[str, str]:
+    keys = ("customer_id", "supplier_id", "state", "city", "bank", "wallet", "situation", "product", "seller")
+    return {k: (request.query_params.get(k) or "").strip() for k in keys}
+
+
+@app.get("/bi", response_class=HTMLResponse)
+def bi_home(request: Request):
+    return RedirectResponse("/bi/visao-geral", status_code=302)
+
+
+@app.get("/bi/export.xlsx")
+def bi_export_excel(request: Request, period: str = "month", date_from: str = "", date_to: str = ""):
+    filters = _bi_filters_from_request(request)
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        data = build_bi(db, cid, period, date_from, date_to, filters)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Visão Geral"
+    ws.append(["BI Gerencial", company.trade_name or company.name])
+    ws.append(["Período", f"{data['meta']['start'].strftime('%d/%m/%Y')} a {data['meta']['end'].strftime('%d/%m/%Y')}"])
+    ws.append([])
+    ws.append(["Indicador", "Valor"])
+    for label, value in [
+        ("Faturamento", data['overview']['sales']), ("NF-e emitidas", data['overview']['sales_docs']),
+        ("Contas a receber em aberto", data['overview']['ar_open']), ("Inadimplência", data['overview']['overdue']),
+        ("Contas a pagar em aberto", data['overview']['ap_open']), ("Recebido no período", data['overview']['received']),
+        ("Pago no período", data['overview']['paid']), ("Clientes que compraram", data['overview']['customers_bought']),
+    ]: ws.append([label, value])
+    sheets = [
+        ("Faturamento", data['sales']['documents'], ["number","date","partner","value"]),
+        ("Receber", data['receivables']['titles'], ["document","partner","due","value","paid","balance","bank","wallet"]),
+        ("Pagar", data['payables']['titles'], ["document","partner","due","value","paid","balance"]),
+        ("Compras", data['purchases']['documents'], ["number","date","partner","value","reconciliation"]),
+    ]
+    for title, rows, cols in sheets:
+        sh=wb.create_sheet(title)
+        sh.append(cols)
+        for row in rows: sh.append([row.get(c) for c in cols])
+        for cell in sh[1]: cell.font=Font(bold=True)
+        for col in range(1, len(cols)+1): sh.column_dimensions[get_column_letter(col)].width=22
+    dre = wb.create_sheet("DRE Gerencial")
+    dre.append(["DRE Gerencial", company.trade_name or company.name])
+    dre.append(["Período", f"{data['meta']['start'].strftime('%d/%m/%Y')} a {data['meta']['end'].strftime('%d/%m/%Y')}"])
+    dre.append(["Observação", "Demonstrativo gerencial. Linhas sem base confiável permanecem como Dados indisponíveis."])
+    dre.append([])
+    dre.append(["Linha", "Período atual", "Período anterior", "Variação %", "Disponível", "Critério"])
+    for row in data["dre"]["rows"]:
+        dre.append([row["label"], row["value"], row["previous"], row["variation"], "Sim" if row["available"] else "Não", row["note"]])
+    dre.append([])
+    dre.append(["DRE mensal resumida", data["dre"]["year"]])
+    dre.append(["Mês", "Receita bruta", "Despesas conhecidas", "Resultado gerencial parcial"])
+    for row in data["dre"]["monthly"]:
+        dre.append([row["label"], row["sales"], row["expenses"], row["partial"]])
+    for cell in dre[5]: cell.font=Font(bold=True)
+    for cell in dre[5+len(data["dre"]["rows"])+3]: cell.font=Font(bold=True)
+    dre.column_dimensions['A'].width=42; dre.column_dimensions['B'].width=22; dre.column_dimensions['C'].width=22; dre.column_dimensions['D'].width=16; dre.column_dimensions['E'].width=14; dre.column_dimensions['F'].width=70
+
+    for cell in ws[4]: cell.font=Font(bold=True)
+    ws.column_dimensions['A'].width=34; ws.column_dimensions['B'].width=24
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    filename=f"BI_Gerencial_{data['meta']['start'].isoformat()}_{data['meta']['end'].isoformat()}.xlsx"
+    return Response(out.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
+
+@app.post("/bi/dre/classificacao")
+async def bi_dre_classificacao(request: Request):
+    form = await request.form()
+    categories = [str(x or "").strip() for x in form.getlist("source_category")]
+    groups = [str(x or "NAO_CLASSIFICADO").strip() for x in form.getlist("dre_group")]
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        for category, group in zip(categories, groups):
+            if not category:
+                continue
+            if group not in DRE_GROUPS:
+                group = "NAO_CLASSIFICADO"
+            row = db.scalar(select(DreExpenseMapping).where(
+                DreExpenseMapping.company_id == cid, DreExpenseMapping.source_category == category
+            ).limit(1))
+            if not row:
+                row = DreExpenseMapping(company_id=cid, source_category=category, dre_group=group)
+                db.add(row)
+            else:
+                row.dre_group = group
+        db.commit()
+    query = {
+        "period": str(form.get("period") or "month"),
+        "date_from": str(form.get("date_from") or ""),
+        "date_to": str(form.get("date_to") or ""),
+    }
+    for key in ("customer_id","supplier_id","state","city","bank","wallet","situation","product","seller"):
+        value = str(form.get(key) or "").strip()
+        if value:
+            query[key] = value
+    return RedirectResponse("/bi/dre?" + urlencode(query), status_code=303)
+
+
+@app.get("/bi/{section}", response_class=HTMLResponse)
+def bi_section(request: Request, section: str, period: str = "month", date_from: str = "", date_to: str = ""):
+    if section not in SECTIONS:
+        return RedirectResponse("/bi/visao-geral", status_code=302)
+    filters = _bi_filters_from_request(request)
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        data = build_bi(db, cid, period, date_from, date_to, filters)
+    return render(request, "bi.html", company=company, data=data, sections=SECTIONS, section=section, section_title=SECTIONS[section], period=period, filters=filters)
 
 
 @app.get("/sincronizacao", response_class=HTMLResponse)
@@ -2663,8 +2907,64 @@ def _routing_rows(db, cid: int, *, region: str = "", responsible_id: int = 0, q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(or_(SalesInvoice.number.ilike(like), Partner.name.ilike(like), Partner.trade_name.ilike(like),
                               SalesInvoice.delivery_city.ilike(like), SalesInvoice.delivery_district.ilike(like),
-                              SalesInvoice.delivery_address.ilike(like)))
+                              SalesInvoice.delivery_address.ilike(like), Partner.delivery_address.ilike(like),
+                              Partner.delivery_district.ilike(like), Partner.delivery_city.ilike(like),
+                              Partner.address.ilike(like), Partner.district.ilike(like), Partner.city.ilike(like)))
     return db.execute(stmt.order_by(Delivery.region, Responsible.name, SalesInvoice.number, Delivery.id).limit(limit)).all()
+
+
+def _routing_reference_date(invoice: SalesInvoice) -> tuple[date | None, str]:
+    """Data operacional da NF no roteirizador.
+
+    Prioriza previsão/entrega. Quando ela não existe, usa a emissão apenas como
+    referência explícita (nunca de forma silenciosa). Isso permite trabalhar
+    com uma única data por tela e reduz o risco de misturar cargas de períodos
+    diferentes.
+    """
+    forecast = _date_value(invoice.forecast_date)
+    if forecast:
+        return forecast, "Previsão/entrega"
+    issue = _date_value(invoice.issue_date)
+    if issue:
+        return issue, "Emissão (sem previsão)"
+    return None, "Sem data"
+
+
+def _routing_rows_for_date(rows, operational_date: date | None, *, undated: bool = False):
+    filtered = []
+    for row in rows:
+        _delivery, invoice, _partner, _assignment, _responsible = row
+        ref_date, _source = _routing_reference_date(invoice)
+        if undated:
+            if ref_date is None:
+                filtered.append(row)
+        elif operational_date and ref_date == operational_date:
+            filtered.append(row)
+    return filtered
+
+
+def _routing_date_meta(invoice: SalesInvoice, today: date) -> dict:
+    ref_date, source = _routing_reference_date(invoice)
+    issue = _date_value(invoice.issue_date)
+    forecast = _date_value(invoice.forecast_date)
+    def br(value: date | None) -> str:
+        return value.strftime("%d/%m/%Y") if value else "—"
+    if ref_date is None:
+        relation = "sem-data"
+    elif ref_date < today:
+        relation = "anterior"
+    elif ref_date > today:
+        relation = "futura"
+    else:
+        relation = "hoje"
+    return {
+        "ref_iso": ref_date.isoformat() if ref_date else "",
+        "ref_br": br(ref_date),
+        "source": source,
+        "issue_br": br(issue),
+        "forecast_br": br(forecast),
+        "relation": relation,
+    }
 
 
 def _active_route_rows(db, cid: int, delivery_id: int):
@@ -2735,12 +3035,21 @@ def _apply_delivery_closeout(db, cid: int, delivery: Delivery, new_status: str, 
 
 
 @app.get("/roteirizar", response_class=HTMLResponse)
-def roteirizar(request: Request, region: str = "", q: str = "", msg: str = ""):
+def roteirizar(request: Request, region: str = "", q: str = "", operational_date: str = "", undated: int = 0, msg: str = ""):
     with SessionLocal() as db:
         cid, company = company_context(db, request)
-        # A operação é orientada por ZONA. Só exibimos cards das regiões que
-        # realmente possuem NFs disponíveis para roteirização naquele momento.
-        card_rows = _routing_rows(db, cid, region="", responsible_id=0, q=q)
+        today_obj = date.today()
+        show_undated = bool(undated)
+        selected_date = None if show_undated else (_date_value(operational_date) or today_obj)
+
+        # A tela nunca mistura datas: todo o universo exibido é filtrado pela
+        # mesma data operacional (previsão/entrega; emissão somente como fallback).
+        all_pending_rows = _routing_rows(db, cid, region="", responsible_id=0, q="", limit=5000)
+        searched_all_regions = _routing_rows(db, cid, region="", responsible_id=0, q=q, limit=5000)
+        searched_region = _routing_rows(db, cid, region=region, responsible_id=0, q=q, limit=5000)
+        card_rows = _routing_rows_for_date(searched_all_regions, selected_date, undated=show_undated)
+        rows = _routing_rows_for_date(searched_region, selected_date, undated=show_undated)
+
         responsibles, regions, boxes = _active_logistic_catalogs(db, cid)
         zone_counts: dict[str, int] = {}
         for delivery, _inv, _p, _assignment, _rsp in card_rows:
@@ -2755,25 +3064,62 @@ def roteirizar(request: Request, region: str = "", q: str = "", msg: str = ""):
             )
             if count > 0
         ]
-        rows = _routing_rows(db, cid, region=region, responsible_id=0, q=q)
+
+        date_counts: dict[str, int] = {}
+        undated_count = 0
+        past_count = 0
+        future_count = 0
+        today_count = 0
+        for _delivery, invoice, _p, _assignment, _rsp in all_pending_rows:
+            ref_date, _source = _routing_reference_date(invoice)
+            if ref_date is None:
+                undated_count += 1
+                continue
+            iso = ref_date.isoformat()
+            date_counts[iso] = date_counts.get(iso, 0) + 1
+            if ref_date < today_obj:
+                past_count += 1
+            elif ref_date > today_obj:
+                future_count += 1
+            else:
+                today_count += 1
+        date_options = [
+            {"iso": iso, "label": datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m/%Y"), "count": count}
+            for iso, count in sorted(date_counts.items(), reverse=True)
+        ]
+        date_meta = {d.id: _routing_date_meta(inv, today_obj) for d, inv, _p, _a, _r in rows}
+
         total_volumes = sum((d.volumes or inv.volumes or 0) for d, inv, _p, _a, _r in rows)
         total_value = sum((inv.total or 0) for _d, inv, _p, _a, _r in rows)
         unassigned = sum(1 for _d, _inv, _p, a, _r in rows if not a)
-        alerts = sum(1 for d, inv, _p, _a, _r in rows if alerta_endereco(inv.carrier, inv.carrier2) or "VERIFICAR ENDEREÇO" in (d.notes or "").upper())
+        alerts = sum(1 for d, inv, p, _a, _r in rows if alerta_endereco(inv.carrier, inv.carrier2) or "VERIFICAR ENDEREÇO" in (d.notes or "").upper() or not endereco_entrega_efetivo(inv, p).get("complete"))
+
+        selected_date_iso = selected_date.isoformat() if selected_date else ""
+        selected_date_label = selected_date.strftime("%d/%m/%Y") if selected_date else "SEM DATA"
+        selected_is_today = bool(selected_date == today_obj and not show_undated)
+        route_date_default = (selected_date if selected_date and selected_date >= today_obj else today_obj).isoformat()
     return render(
         request, "roteirizar.html", company=company, rows=rows, responsibles=responsibles, regions=regions, boxes=boxes,
         region=region, q=q, msg=msg, total_volumes=total_volumes, total_value=total_value,
-        unassigned=unassigned, alerts=alerts, today=date.today().isoformat(),
-        zone_counts=zone_counts, region_cards=region_cards, card_total=len(card_rows)
+        unassigned=unassigned, alerts=alerts, today=today_obj.isoformat(), route_date_default=route_date_default,
+        zone_counts=zone_counts, region_cards=region_cards, card_total=len(card_rows),
+        operational_date=selected_date_iso, selected_date_label=selected_date_label, show_undated=show_undated,
+        selected_is_today=selected_is_today, date_options=date_options, date_counts=date_counts,
+        today_count=today_count, past_count=past_count, future_count=future_count, undated_count=undated_count,
+        date_meta=date_meta, total_pending=len(all_pending_rows),
     )
 
 
-def _roteirizar_redirect(msg: str = "", region: str = "", q: str = "") -> RedirectResponse:
+def _roteirizar_redirect(msg: str = "", region: str = "", q: str = "", operational_date: str = "", undated: bool = False) -> RedirectResponse:
     params = []
     if region.strip():
         params.append(f"region={quote_plus(region.strip())}")
     if q.strip():
         params.append(f"q={quote_plus(q.strip())}")
+    if undated:
+        params.append("undated=1")
+    elif operational_date.strip():
+        params.append(f"operational_date={quote_plus(operational_date.strip())}")
     if msg:
         params.append(f"msg={quote_plus(msg)}")
     target = "/roteirizar" + ("?" + "&".join(params) if params else "")
@@ -2783,9 +3129,10 @@ def _roteirizar_redirect(msg: str = "", region: str = "", q: str = "") -> Redire
 @app.post("/roteirizar/lote")
 def roteirizar_lote(request: Request, delivery_ids: list[int] = Form([]), region: str = Form(""),
                     box_type: str = Form(""), remember_rule: str | None = Form(None),
-                    return_region: str = Form(""), return_q: str = Form("")):
+                    return_region: str = Form(""), return_q: str = Form(""),
+                    return_operational_date: str = Form(""), return_undated: str = Form("")):
     if not delivery_ids:
-        return _roteirizar_redirect("selecione", return_region, return_q)
+        return _roteirizar_redirect("selecione", return_region, return_q, return_operational_date, bool(return_undated))
     changed = 0
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
@@ -2806,18 +3153,19 @@ def roteirizar_lote(request: Request, delivery_ids: list[int] = Form([]), region
                                     note="Ajuste em lote no Roteirizador"))
             changed += 1
         db.commit()
-    return _roteirizar_redirect(f"alteradas-{changed}", return_region, return_q)
+    return _roteirizar_redirect(f"alteradas-{changed}", return_region, return_q, return_operational_date, bool(return_undated))
 
 
 @app.post("/roteirizar/classificar-regiao")
 def classificar_regiao_selecionadas(
     request: Request, delivery_ids: list[int] = Form([]), region: str = Form(""),
-    remember_region: str | None = Form(None), return_region: str = Form(""), return_q: str = Form("")
+    remember_region: str | None = Form(None), return_region: str = Form(""), return_q: str = Form(""),
+    return_operational_date: str = Form(""), return_undated: str = Form("")
 ):
     if not delivery_ids:
-        return _roteirizar_redirect("selecione", return_region, return_q)
+        return _roteirizar_redirect("selecione", return_region, return_q, return_operational_date, bool(return_undated))
     if not region.strip():
-        return _roteirizar_redirect("selecione-regiao", return_region, return_q)
+        return _roteirizar_redirect("selecione-regiao", return_region, return_q, return_operational_date, bool(return_undated))
     changed = 0
     memorized = 0
     with SessionLocal() as db:
@@ -2826,7 +3174,7 @@ def classificar_regiao_selecionadas(
             Region.company_id == cid, Region.active.is_(True), Region.name == region.strip()
         ).limit(1))
         if not valid_region:
-            return _roteirizar_redirect("selecione-regiao", return_region, return_q)
+            return _roteirizar_redirect("selecione-regiao", return_region, return_q, return_operational_date, bool(return_undated))
         rows = db.execute(
             select(Delivery, SalesInvoice, Partner)
             .join(SalesInvoice, Delivery.sales_invoice_id == SalesInvoice.id)
@@ -2847,24 +3195,25 @@ def classificar_regiao_selecionadas(
             changed += 1
         db.commit()
     suffix = f"regiao-{changed}-{memorized}"
-    return _roteirizar_redirect(suffix, return_region, return_q)
+    return _roteirizar_redirect(suffix, return_region, return_q, return_operational_date, bool(return_undated))
 
 
 @app.post("/roteirizar/classificar-regiao-uma")
 def classificar_regiao_uma(
     request: Request, delivery_id: int = Form(...), region: str = Form(""),
-    remember_region: str | None = Form(None), return_region: str = Form(""), return_q: str = Form("")
+    remember_region: str | None = Form(None), return_region: str = Form(""), return_q: str = Form(""),
+    return_operational_date: str = Form(""), return_undated: str = Form("")
 ):
     """Informa/corrige a região de uma NF sem interferir nas demais seleções da tela."""
     if not region.strip():
-        return _roteirizar_redirect("selecione-regiao", return_region, return_q)
+        return _roteirizar_redirect("selecione-regiao", return_region, return_q, return_operational_date, bool(return_undated))
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
         valid_region = db.scalar(select(Region).where(
             Region.company_id == cid, Region.active.is_(True), Region.name == region.strip()
         ).limit(1))
         if not valid_region:
-            return _roteirizar_redirect("selecione-regiao", return_region, return_q)
+            return _roteirizar_redirect("selecione-regiao", return_region, return_q, return_operational_date, bool(return_undated))
         row = db.execute(
             select(Delivery, SalesInvoice, Partner)
             .join(SalesInvoice, Delivery.sales_invoice_id == SalesInvoice.id)
@@ -2872,10 +3221,10 @@ def classificar_regiao_uma(
             .where(Delivery.company_id == cid, Delivery.id == delivery_id, Delivery.status.in_(["PENDENTE", "REPROGRAMADA"]))
         ).first()
         if not row:
-            return _roteirizar_redirect("entrega-indisponivel", return_region, return_q)
+            return _roteirizar_redirect("entrega-indisponivel", return_region, return_q, return_operational_date, bool(return_undated))
         delivery, invoice, partner = row
         if _active_route_rows(db, cid, delivery.id):
-            return _roteirizar_redirect("entrega-ja-roteirizada", return_region, return_q)
+            return _roteirizar_redirect("entrega-ja-roteirizada", return_region, return_q, return_operational_date, bool(return_undated))
         old_region = delivery.region
         delivery.region = valid_region.name
         db.add(DeliveryMovement(
@@ -2888,24 +3237,27 @@ def classificar_regiao_uma(
             _remember_region_rule(db, cid, partner, valid_region.name)
             memorized = 1
         db.commit()
-    return _roteirizar_redirect(f"regiao-1-{memorized}", return_region, return_q)
+    return _roteirizar_redirect(f"regiao-1-{memorized}", return_region, return_q, return_operational_date, bool(return_undated))
 
 
 @app.post("/roteirizar/reclassificar")
-def reclassificar_pendentes(request: Request, return_region: str = Form(""), return_q: str = Form("")):
+def reclassificar_pendentes(request: Request, return_region: str = Form(""), return_q: str = Form(""),
+                            return_operational_date: str = Form(""), return_undated: str = Form("")):
     changed = 0
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
-        rows = db.execute(select(Delivery, SalesInvoice, RawRecord)
+        rows = db.execute(select(Delivery, SalesInvoice, RawRecord, Partner)
                           .join(SalesInvoice, Delivery.sales_invoice_id == SalesInvoice.id)
                           .outerjoin(RawRecord, SalesInvoice.raw_record_id == RawRecord.id)
+                          .outerjoin(Partner, SalesInvoice.customer_id == Partner.id)
                           .where(Delivery.company_id == cid, Delivery.status.in_(["PENDENTE", "REPROGRAMADA"]))).all()
-        for delivery, inv, raw in rows:
+        for delivery, inv, raw, partner in rows:
             if delivery.region and delivery.region != "A Classificar":
                 continue
             special = regiao_especial(inv.carrier, inv.carrier2)
             channel = raw_channel(raw.payload_json if raw else None)
-            new_region = special or classificar_regiao(inv.delivery_city, inv.delivery_district, inv.delivery_zip, channel)
+            eff_addr = endereco_entrega_efetivo(inv, partner)
+            new_region = special or classificar_regiao(eff_addr.get("city"), eff_addr.get("district"), eff_addr.get("zip"), channel)
             if new_region and new_region != delivery.region:
                 delivery.region = new_region
                 changed += 1
@@ -2919,22 +3271,23 @@ def reclassificar_pendentes(request: Request, return_region: str = Form(""), ret
                     if coleta:
                         _assign_delivery(db, cid, delivery, coleta.id)
         db.commit()
-    return _roteirizar_redirect(f"reclassificadas-{changed}", return_region, return_q)
+    return _roteirizar_redirect(f"reclassificadas-{changed}", return_region, return_q, return_operational_date, bool(return_undated))
 
 
 @app.post("/roteirizar/criar-roteiro")
 def criar_roteiro_selecionado(
     request: Request, delivery_ids: list[int] = Form([]), responsible_id: int = Form(0),
     route_date: str = Form(...), remember_rule: str | None = Form(None),
-    return_region: str = Form(""), return_q: str = Form("")
+    return_region: str = Form(""), return_q: str = Form(""),
+    return_operational_date: str = Form(""), return_undated: str = Form("")
 ):
     if not delivery_ids:
-        return _roteirizar_redirect("selecione", return_region, return_q)
+        return _roteirizar_redirect("selecione", return_region, return_q, return_operational_date, bool(return_undated))
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
         resp = db.get(Responsible, responsible_id)
         if not resp or resp.company_id != cid or not resp.active:
-            return _roteirizar_redirect("selecione-motorista", return_region, return_q)
+            return _roteirizar_redirect("selecione-motorista", return_region, return_q, return_operational_date, bool(return_undated))
         active_ids = set(db.scalars(select(RouteStop.delivery_id).join(Route, RouteStop.route_id == Route.id)
                                     .where(Route.company_id == cid, Route.status.in_(["PLANEJADO", "EM ROTA"]))).all())
         candidates = db.execute(select(Delivery, SalesInvoice, Partner)
@@ -2945,7 +3298,24 @@ def criar_roteiro_selecionado(
                                 .order_by(Delivery.region, SalesInvoice.number, Delivery.id)).all()
         candidates = [(d, inv, partner) for d, inv, partner in candidates if d.id not in active_ids]
         if not candidates:
-            return _roteirizar_redirect("sem-entregas", return_region, return_q)
+            return _roteirizar_redirect("sem-entregas", return_region, return_q, return_operational_date, bool(return_undated))
+
+        # Proteção operacional: mesmo que alguém manipule o formulário, uma
+        # roteirização não pode receber NFs de outra data operacional.
+        expected_undated = bool(return_undated)
+        expected_date = None if expected_undated else (_date_value(return_operational_date) or date.today())
+        candidate_dates = []
+        for _delivery, invoice, _partner in candidates:
+            ref_date, _source = _routing_reference_date(invoice)
+            candidate_dates.append(ref_date)
+            if expected_undated:
+                if ref_date is not None:
+                    return _roteirizar_redirect("periodo-invalido", return_region, return_q, return_operational_date, True)
+            elif ref_date != expected_date:
+                return _roteirizar_redirect("periodo-invalido", return_region, return_q, return_operational_date, False)
+        if len(set(candidate_dates)) > 1:
+            return _roteirizar_redirect("periodo-misto", return_region, return_q, return_operational_date, expected_undated)
+
         # Um motorista/data deve ficar concentrado em um roteiro PLANEJADO.
         # Isso evita fragmentar a operação quando o operador roteiriza zona por zona.
         route = db.scalar(select(Route).where(
@@ -2971,7 +3341,7 @@ def criar_roteiro_selecionado(
         routed_count = len(candidates)
         db.commit()
     # O operador volta à mesma zona para continuar roteirizando as notas restantes.
-    return _roteirizar_redirect(f"roteirizadas-{routed_count}", return_region, return_q)
+    return _roteirizar_redirect(f"roteirizadas-{routed_count}", return_region, return_q, return_operational_date, bool(return_undated))
 
 
 @app.get("/importar-logistica", response_class=HTMLResponse)
@@ -3729,10 +4099,15 @@ def baixa_entregas(request: Request, status: str = "", msg: str = ""):
         route_by_delivery = {}
         for delivery_id, route in active_route_rows:
             route_by_delivery.setdefault(delivery_id, route)
-        base_rows = _delivery_rows(db, cid, status=status, limit=2000)
-        rows = [row for row in base_rows if row[0].id in route_by_delivery]
+        base_rows = _delivery_rows(db, cid, status="", limit=2000)
+        active_rows = [row for row in base_rows if row[0].id in route_by_delivery]
+        status_counts = {}
+        for row in active_rows:
+            key = row[0].status or "PENDENTE"
+            status_counts[key] = status_counts.get(key, 0) + 1
+        rows = [row for row in active_rows if not status or row[0].status == status]
     return render(request, "baixa_entregas.html", company=company, rows=rows, status=status, msg=msg,
-                  route_by_delivery=route_by_delivery)
+                  route_by_delivery=route_by_delivery, status_counts=status_counts, total_routed=len(active_rows))
 
 
 @app.post("/baixa-entregas/lote")
@@ -3870,8 +4245,10 @@ CADASTRO_COLUMN_DEFS = {
     ],
     "clientes": [
         ("cnpj_cpf", "CNPJ/CPF"), ("name", "Razão social"), ("trade_name", "Fantasia"),
-        ("address", "Endereço"), ("district", "Bairro"), ("city", "Cidade"), ("state", "UF"),
-        ("zip_code", "CEP"), ("erpflex_id", "ID ERPFlex"), ("updated_at", "Atualizado"),
+        ("main_address", "Endereço principal"), ("delivery_address", "Endereço de entrega"),
+        ("billing_address", "Endereço de cobrança"), ("payment_method", "Forma de pagamento"),
+        ("payment_terms", "Condição/prazo"), ("carrier_name", "Transportadora"),
+        ("city", "Cidade principal"), ("state", "UF"), ("erpflex_id", "ID ERPFlex"), ("updated_at", "Atualizado"),
     ],
     "fornecedores": [
         ("cnpj_cpf", "CNPJ/CPF"), ("name", "Fornecedor"), ("trade_name", "Fantasia"),
@@ -3887,7 +4264,7 @@ CADASTRO_COLUMN_DEFS = {
 
 CADASTRO_DEFAULT_COLS = {
     "produtos": ["code", "description", "ean", "ncm", "unit", "category"],
-    "clientes": ["cnpj_cpf", "name", "trade_name", "city", "state", "erpflex_id"],
+    "clientes": ["cnpj_cpf", "name", "main_address", "delivery_address", "billing_address", "payment_method", "carrier_name"],
     "fornecedores": ["cnpj_cpf", "name", "trade_name", "city", "state", "erpflex_id"],
     "parceiros": ["cnpj_cpf", "name", "trade_name", "roles", "city", "state"],
     "bancos": ["external_id", "name", "code", "updated_at"],
@@ -3909,6 +4286,15 @@ def _format_dt(value):
     if isinstance(value, datetime):
         return value.strftime("%d/%m/%Y %H:%M")
     return value or "—"
+
+
+def _partner_address(address, number=None, complement=None, district=None, city=None, state=None, zip_code=None):
+    first = " ".join(x for x in [str(address or "").strip(), str(number or "").strip()] if x).strip()
+    if complement:
+        first = (first + " · " + str(complement).strip()).strip(" ·")
+    locality = " · ".join(x for x in [str(district or "").strip(), str(city or "").strip(), str(state or "").strip()] if x)
+    parts = [x for x in [first, locality, str(zip_code or "").strip()] if x]
+    return " — ".join(parts) if parts else "—"
 
 
 @app.get("/cadastros", response_class=HTMLResponse)
@@ -3977,7 +4363,13 @@ def cadastros(
                 rows_view.append({"_id": r.id, "_name": r.name or r.trade_name or f"Parceiro {r.id}",
                     "cnpj_cpf": r.cnpj_cpf or "—", "name": r.name or "—", "trade_name": r.trade_name or "—", "roles": roles,
                     "address": r.address or "—", "district": r.district or "—", "city": r.city or "—", "state": r.state or "—",
-                    "zip_code": r.zip_code or "—", "erpflex_id": r.erpflex_id or "—", "updated_at": _format_dt(r.updated_at)})
+                    "zip_code": r.zip_code or "—",
+                    "main_address": _partner_address(r.address, r.address_number, r.address_complement, r.district, r.city, r.state, r.zip_code),
+                    "delivery_address": _partner_address(r.delivery_address, r.delivery_number, r.delivery_complement, r.delivery_district, r.delivery_city, r.delivery_state, r.delivery_zip_code),
+                    "billing_address": _partner_address(r.billing_address, r.billing_number, r.billing_complement, r.billing_district, r.billing_city, r.billing_state, r.billing_zip_code),
+                    "payment_method": r.payment_method or "—", "payment_terms": r.payment_terms or "—",
+                    "carrier_name": r.carrier_name or "—",
+                    "erpflex_id": r.erpflex_id or "—", "updated_at": _format_dt(r.updated_at)})
         else:  # bancos preservados integralmente em raw_records
             stmt = select(RawRecord).where(RawRecord.company_id == cid, RawRecord.source == "ERPFLEX", RawRecord.module == "banks")
             count_stmt = select(func.count(RawRecord.id)).where(RawRecord.company_id == cid, RawRecord.source == "ERPFLEX", RawRecord.module == "banks")
@@ -4012,6 +4404,7 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
     with SessionLocal() as db:
         cid, company = company_context(db, request)
         summary = []
+        detail_sections = []
         raw_rows = []
         title = "Detalhe"
         if tipo == "produtos":
@@ -4027,7 +4420,28 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
             if not row or row.company_id != cid:
                 return HTMLResponse("Registro não encontrado.", status_code=404)
             title = row.name or row.trade_name or f"Parceiro {row.id}"
-            summary = [("CNPJ/CPF", row.cnpj_cpf), ("Razão social", row.name), ("Fantasia", row.trade_name), ("Endereço", row.address), ("Bairro", row.district), ("Cidade", row.city), ("UF", row.state), ("CEP", row.zip_code), ("ID ERPFlex", row.erpflex_id)]
+            summary = [("CNPJ/CPF", row.cnpj_cpf), ("Razão social", row.name), ("Fantasia", row.trade_name), ("ID ERPFlex", row.erpflex_id)]
+            if tipo == "clientes":
+                detail_sections = [
+                    ("Endereço principal", [
+                        ("Endereço", _partner_address(row.address, row.address_number, row.address_complement)),
+                        ("Bairro", row.district), ("Cidade", row.city), ("UF", row.state), ("CEP", row.zip_code),
+                    ]),
+                    ("Endereço de entrega", [
+                        ("Endereço", _partner_address(row.delivery_address, row.delivery_number, row.delivery_complement)),
+                        ("Bairro", row.delivery_district), ("Cidade", row.delivery_city), ("UF", row.delivery_state), ("CEP", row.delivery_zip_code),
+                    ]),
+                    ("Endereço de cobrança", [
+                        ("Endereço", _partner_address(row.billing_address, row.billing_number, row.billing_complement)),
+                        ("Bairro", row.billing_district), ("Cidade", row.billing_city), ("UF", row.billing_state), ("CEP", row.billing_zip_code),
+                    ]),
+                    ("Condições comerciais", [
+                        ("Forma de pagamento", row.payment_method), ("Condição / prazo", row.payment_terms),
+                        ("Transportadora", row.carrier_name), ("ID transportadora", row.carrier_erpflex_id),
+                    ]),
+                ]
+            else:
+                detail_sections = [("Endereço", [("Endereço", _partner_address(row.address, row.address_number, row.address_complement)), ("Bairro", row.district), ("Cidade", row.city), ("UF", row.state), ("CEP", row.zip_code)])]
             conditions = []
             if row.erpflex_id:
                 conditions.append(and_(RawRecord.module == "clientes", RawRecord.external_id == row.erpflex_id))
@@ -4050,7 +4464,7 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
             try: data = json.loads(raw.payload_json or "{}")
             except Exception: data = {"raw": raw.payload_json}
             payloads.append({"module": raw.module, "external_id": raw.external_id, "updated_at": _format_dt(raw.updated_at), "data": data, "pretty": json.dumps(data, ensure_ascii=False, indent=2, default=str)})
-    return render(request, "cadastro_detalhe.html", company=company, tipo=tipo, title=title, summary=summary, payloads=payloads)
+    return render(request, "cadastro_detalhe.html", company=company, tipo=tipo, title=title, summary=summary, detail_sections=detail_sections, payloads=payloads)
 
 
 @app.get("/diagnostico", response_class=HTMLResponse)

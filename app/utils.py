@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 
@@ -49,13 +50,30 @@ def normalize_date(value: Any) -> str | None:
     return s[:40]
 
 
+def key_norm(value: Any) -> str:
+    """Normaliza nomes de campos da API sem alterar os valores.
+
+    O ERPFlex pode retornar a mesma informação com espaços, sublinhados,
+    hífens, maiúsculas ou acentos diferentes (ex.: ``Endereco Entrega`` e
+    ``endereco_entrega``). A normalização é usada somente para comparar chaves.
+    """
+    raw = unicodedata.normalize("NFKD", str(value or "").strip().casefold())
+    raw = "".join(c for c in raw if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", "", raw)
+
+
 def _case_get(d: dict, name: str):
     if name in d:
         return d.get(name)
-    lname = name.lower()
+    lname = str(name).lower()
     for k, v in d.items():
         if str(k).lower() == lname:
             return v
+    wanted = key_norm(name)
+    if wanted:
+        for k, v in d.items():
+            if key_norm(k) == wanted:
+                return v
     return None
 
 

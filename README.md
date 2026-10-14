@@ -425,3 +425,67 @@ Use dois serviços apontando para o mesmo código e o mesmo PostgreSQL:
 O Worker não abre porta HTTP. Configure uma única réplica do serviço Worker. Os dois serviços precisam compartilhar `DATABASE_URL`, `SECRET_KEY`, `INTEGRATION_SECRET_KEY` e as mesmas credenciais/variáveis necessárias às integrações. A configuração de agenda fica no banco e é editada em **Sincronização → Robô de sincronização**.
 
 Por segurança, a automação é criada **desativada** após a atualização. Ative-a na Central de Sincronização depois que o serviço Worker estiver online.
+
+## V1.3.32 — Dashboard Gerencial
+A versão 1.3.32 adiciona o menu **Dashboard** (`/dashboard-gerencial`) com visão consolidada de Faturamento, Comercial, Compras, Contas a Receber/Aging, Contas a Pagar, Despesas e Logística. Os gráficos são renderizados localmente no navegador, sem dependências externas. O schema do banco permanece 10.
+
+## V1.3.33 — Cadastro de clientes enriquecido
+A versão 1.3.33 amplia o cadastro de Clientes usando exclusivamente o endpoint individual já validado `/api/cliente/{id}`. O cadastro passa a consolidar endereço principal, endereço de entrega, endereço de cobrança, forma/condição de pagamento e transportadora vinculada quando esses campos forem retornados pela integração. O JSON bruto permanece disponível na tela de detalhe para auditoria. O schema passa a 11 por migração aditiva da tabela `partners`; dados existentes são preservados. Após o deploy, execute a sincronização do módulo **Clientes** para popular os novos campos.
+
+## V1.3.34 — BI Gerencial
+
+Acesse **BI Gerencial** no menu ou diretamente em `/bi/visao-geral`.
+O módulo lê somente o banco já sincronizado e separa indicadores por Faturamento, Financeiro, Comercial, Clientes, Produtos, Compras, Logística e Alertas. Métricas sem fonte confiável são exibidas como **Dados indisponíveis** em vez de estimadas.
+
+## V1.3.35 — Ajustes do BI por produto, carteira, fornecedor e vendedor
+
+O BI passa a exibir **código + nome** dos produtos/itens em Faturamento, Produtos e Compras. Contas a Receber recebe uma visão consolidada **por carteira**. Produtos ganha resultados por **categoria e subcategoria**; a subcategoria passa a ser normalizada no cadastro de produtos por migração aditiva para o schema 12.
+
+Em Compras, quando o total do cabeçalho ERPFlex estiver zerado, o BI usa uma regra de fallback auditável: total ERPFlex → total NFStock → soma dos itens da própria NF-e. Isso corrige Total comprado, Ticket médio e os valores dos principais fornecedores sem criar valores simulados.
+
+Em Comercial — Vendedores, metas foram removidas. A página mostra faturamento por vendedor, comparação com o mês anterior equivalente, crescimento percentual e o cruzamento **Vendedor × Categoria**.
+
+## V1.3.36 — Vendedor, descrição de carteira e roteirização operacional
+
+- Comercial — Vendedores passa a procurar o vendedor no JSON do faturamento/pedido detalhado e, quando necessário, usa somente vínculo exato com o pedido sincronizado por ID ou número. Não atribui vendedor pelo cliente.
+- `sales_orders` recebe `seller_id` e `seller_name` por migração aditiva (schema 13). Os campos são preenchidos quando efetivamente retornados pela API; JSONs históricos continuam sendo consultados como fallback.
+- A página de vendedores exibe diagnóstico da origem do vínculo, permitindo identificar quantas NF-e possuem vendedor e quantas permanecem sem identificação.
+- Contas a Receber resolve a descrição de carteira usando, em ordem, detalhe do título, dados armazenados no título e catálogos já sincronizados de bancos/opções de boleto. Se só houver ID, mantém `Carteira <ID>` em vez de inventar uma descrição.
+- A tela **Roteirizar** foi redesenhada para operação diária: fluxo visual em 3 etapas, pesquisa destacada, cards de região, cards de entrega, resumo fixo da seleção com quantidade/volumes/valor e ações mais claras para corrigir região e escolher motorista.
+
+
+## V1.3.37 — Roteirização isolada por data operacional
+
+- Tela inspirada no fluxo operacional do roteirizador V46.5: resumo de regiões, lista compacta de NFs e seleção clara do responsável.
+- A tela abre por padrão somente a data de hoje.
+- O operador escolhe uma data exata; nunca existe mistura automática de vários períodos na mesma lista.
+- Data operacional = previsão/entrega; quando ausente, a emissão é usada apenas como fallback explícito e sinalizado.
+- Contadores separados de NFs de hoje, anteriores, futuras e sem data.
+- NFs de outras datas ficam fora da lista corrente e aparecem apenas como contagem/atalhos de datas pendentes.
+- Cada card mostra previsão/entrega e emissão.
+- O backend valida a data operacional novamente antes de criar o roteiro e bloqueia lote de período diferente.
+- Data da NF e data do roteiro são apresentadas como conceitos distintos.
+- Schema permanece 13; nenhuma migração de banco é necessária.
+
+## V1.3.38 — logística visual, baixa operacional e endereços resilientes
+
+- Roteirizador com cores mais vivas e maior contraste em período, regiões, seleção de NFs, motoristas e alertas.
+- **Baixa de Entregas** redesenhada com cards de status, contadores, ícones, cores próprias para Pendente / Em rota / Entregue / Não entregue / Ocorrência e ações individuais mais claras.
+- O endereço logístico agora usa a seguinte prioridade: endereço da NF → endereço de entrega do cadastro do cliente → endereço principal do cliente. A origem usada fica visível no roteirizador.
+- O parser de chaves da API passou a tolerar diferenças de espaços, sublinhados, hífens, acentos e maiúsculas/minúsculas. Assim, por exemplo, `Endereco Entrega` e `endereco_entrega` são tratados como a mesma chave de integração.
+- Quando o ERPFlex retorna o endereço de entrega em campos planos (`Endereco Entrega`, `Numero`, `Complemento`, `Bairro`, `Municipio`, `Estado`, `CEP`), os componentes são consolidados corretamente.
+- Pesquisa e reclassificação de região também consideram o endereço do cadastro do cliente quando a NF não possui endereço materializado.
+- Schema permanece **13**; nenhuma migração de banco é necessária.
+- Após o deploy, recomenda-se sincronizar **Clientes** e **Faturamento** para reprocessar endereços já armazenados com o parser aprimorado.
+
+## V1.3.39 — DRE Gerencial
+
+A nova página **BI Gerencial → DRE Gerencial** cria um demonstrativo econômico gerencial usando somente informações verificáveis já sincronizadas. A Receita Bruta utiliza NF-e válidas do Faturamento e as despesas são obtidas somente do módulo **Despesas**, sem somar novamente Contas a Pagar.
+
+As categorias reais encontradas no JSON das despesas podem ser classificadas pelo usuário em **Comerciais, Administrativas, Logísticas, Outras Operacionais, Financeiras** ou **Não classificadas**. O mapeamento é persistido por empresa e não altera o lançamento original do ERP.
+
+A DRE mostra período atual x período anterior, visão mensal do ano, detalhamento dos lançamentos e exportação para Excel. Quando não há base suficiente para uma linha — por exemplo **deduções/tributos sobre vendas, CMV, Receita Líquida ou Lucro Bruto** — a plataforma mostra **Dados indisponíveis** em vez de estimar números. Compras do mês nunca substituem o CMV.
+
+O indicador **Resultado gerencial parcial** representa apenas `Receita Bruta - Despesas conhecidas`; ele é identificado explicitamente como parcial e não deve ser tratado como lucro contábil enquanto deduções, tributos e CMV não estiverem normalizados.
+
+O schema passa para **14** com a nova tabela aditiva `dre_expense_mappings`. Dados existentes são preservados.

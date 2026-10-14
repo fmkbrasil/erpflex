@@ -1,0 +1,183 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard Gerencial · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero managerial-hero">
+  <div>
+    <h1>Dashboard Gerencial</h1>
+    <p>Indicadores executivos consolidados de comercial, faturamento, compras, financeiro e logística.</p>
+  </div>
+  <div class="hero-actions"><a class="btn" href="/sincronizacao">Sincronização</a></div>
+</section>
+
+<section class="panel dashboard-filter">
+  <form method="get" action="/dashboard-gerencial" class="filter-grid">
+    <div class="quick-periods">
+      <button type="submit" name="period" value="today" class="btn small {% if period=='today' %}primary{% endif %}">Hoje</button>
+      <button type="submit" name="period" value="7" class="btn small {% if period=='7' %}primary{% endif %}">7 dias</button>
+      <button type="submit" name="period" value="30" class="btn small {% if period=='30' %}primary{% endif %}">30 dias</button>
+      <button type="submit" name="period" value="month" class="btn small {% if period=='month' %}primary{% endif %}">Mês</button>
+      <button type="submit" name="period" value="90" class="btn small {% if period=='90' %}primary{% endif %}">90 dias</button>
+      <button type="submit" name="period" value="year" class="btn small {% if period=='year' %}primary{% endif %}">Ano</button>
+    </div>
+    <label>De<input type="date" name="date_from" value="{{ date_from }}"></label>
+    <label>Até<input type="date" name="date_to" value="{{ date_to }}"></label>
+    <button class="btn primary" type="submit" name="period" value="custom">Aplicar período</button>
+  </form>
+  <div class="period-note">Período analisado: <b>{{ date_from }}</b> a <b>{{ date_to }}</b>. Saldos em aberto e Aging representam a posição atual da carteira.</div>
+</section>
+
+<section class="executive-grid">
+  <article class="executive-card"><span>Faturamento</span><strong data-money="{{ data.faturamento.total }}"></strong><small>{{ data.faturamento.docs }} NF-e · ticket <span data-money="{{ data.faturamento.ticket }}"></span></small></article>
+  <article class="executive-card"><span>Pedidos comerciais</span><strong data-money="{{ data.comercial.orders_total }}"></strong><small>{{ data.comercial.orders_count }} pedidos · ticket <span data-money="{{ data.comercial.ticket }}"></span></small></article>
+  <article class="executive-card"><span>Compras</span><strong data-money="{{ data.compras.total }}"></strong><small>{{ data.compras.docs }} NF-e · ticket <span data-money="{{ data.compras.ticket }}"></span></small></article>
+  <article class="executive-card alert"><span>Receber em aberto</span><strong data-money="{{ data.receber.open }}"></strong><small>Vencido: <b data-money="{{ data.receber.overdue }}"></b></small></article>
+  <article class="executive-card danger"><span>Pagar em aberto</span><strong data-money="{{ data.pagar.open }}"></strong><small>Vencido: <b data-money="{{ data.pagar.overdue }}"></b></small></article>
+  <article class="executive-card"><span>Despesas no período</span><strong data-money="{{ data.despesas.total }}"></strong><small>{{ data.despesas.count }} lançamentos · ticket <span data-money="{{ data.despesas.ticket }}"></span></small></article>
+</section>
+
+<section class="dashboard-section" id="faturamento">
+  <div class="section-head"><div><span class="eyebrow">Faturamento</span><h2>Indicadores de faturamento</h2></div><a href="/faturamento">Abrir módulo</a></div>
+  <div class="indicator-row">
+    <div class="indicator"><span>Valor faturado</span><b data-money="{{ data.faturamento.total }}"></b></div>
+    <div class="indicator"><span>NF-e emitidas</span><b>{{ data.faturamento.docs }}</b></div>
+    <div class="indicator"><span>Ticket médio por NF-e</span><b data-money="{{ data.faturamento.ticket }}"></b></div>
+  </div>
+  <div class="detail-grid">
+    <article class="detail-card">
+      <h3>Principais clientes faturados</h3>
+      <div class="rank-list">
+        {% for row in data.faturamento.top_customers[:8] %}<div><span class="rank">{{ loop.index }}</span><span class="label">{{ row.name }}</span><b data-money="{{ row.value }}"></b></div>{% else %}<p class="empty">Sem dados no período.</p>{% endfor %}
+      </div>
+    </article>
+    <article class="detail-card">
+      <h3>Produtos com maior faturamento</h3>
+      <div class="rank-list">
+        {% for row in data.faturamento.top_products[:8] %}<div><span class="rank">{{ loop.index }}</span><span class="label">{{ row.name }}</span><b data-money="{{ row.value }}"></b></div>{% else %}<p class="empty">Sem itens faturados no período.</p>{% endfor %}
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="comercial">
+  <div class="section-head"><div><span class="eyebrow">Comercial</span><h2>Indicadores do setor comercial</h2></div></div>
+  <div class="indicator-row four">
+    <div class="indicator"><span>Pedidos</span><b>{{ data.comercial.orders_count }}</b></div>
+    <div class="indicator"><span>Valor dos pedidos</span><b data-money="{{ data.comercial.orders_total }}"></b></div>
+    <div class="indicator"><span>Ticket médio</span><b data-money="{{ data.comercial.ticket }}"></b></div>
+    <div class="indicator"><span>Faturado / pedidos</span><b>{{ '%.1f'|format(data.comercial.relation) }}%</b><small>Relação monetária; não representa conversão unitária.</small></div>
+  </div>
+  <article class="detail-card single">
+    <h3>Clientes com maior valor em pedidos</h3>
+    <div class="rank-list two-col">
+      {% for row in data.comercial.top_customers[:10] %}<div><span class="rank">{{ loop.index }}</span><span class="label">{{ row.name }}</span><b data-money="{{ row.value }}"></b></div>{% else %}<p class="empty">Sem pedidos no período.</p>{% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="dashboard-section" id="compras">
+  <div class="section-head"><div><span class="eyebrow">Compras</span><h2>Compras e conciliação</h2></div><a href="/compras">Abrir módulo</a></div>
+  <div class="indicator-row">
+    <div class="indicator"><span>Valor comprado</span><b data-money="{{ data.compras.total }}"></b></div>
+    <div class="indicator"><span>NF-e de entrada</span><b>{{ data.compras.docs }}</b></div>
+    <div class="indicator"><span>Ticket médio</span><b data-money="{{ data.compras.ticket }}"></b></div>
+  </div>
+  <div class="detail-grid">
+    <article class="detail-card">
+      <h3>Conciliação ERPFlex × NF Stock</h3>
+      <div class="status-list">
+        {% for row in data.compras.reconciliation %}<div><span>{{ row.name }}</span><b>{{ row.value }}</b></div>{% else %}<p class="empty">Sem documentos para conciliar.</p>{% endfor %}
+      </div>
+    </article>
+    <article class="detail-card">
+      <h3>Principais fornecedores</h3>
+      <div class="rank-list">
+        {% for row in data.compras.top_suppliers[:8] %}<div><span class="rank">{{ loop.index }}</span><span class="label">{{ row.name }}</span><b data-money="{{ row.value }}"></b></div>{% else %}<p class="empty">Sem compras no período.</p>{% endfor %}
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="receber">
+  <div class="section-head"><div><span class="eyebrow">Financeiro</span><h2>Contas a receber e Aging</h2></div><a href="/financeiro?kind=RECEBER">Abrir contas a receber</a></div>
+  {% set ar_overdue_pct = (data.receber.overdue / data.receber.open * 100) if data.receber.open else 0 %}
+  <div class="indicator-row four">
+    <div class="indicator"><span>Emitido no período</span><b data-money="{{ data.receber.issued }}"></b></div>
+    <div class="indicator"><span>Saldo em aberto</span><b data-money="{{ data.receber.open }}"></b></div>
+    <div class="indicator danger-text"><span>Total vencido</span><b data-money="{{ data.receber.overdue }}"></b></div>
+    <div class="indicator {% if ar_overdue_pct >= 30 %}danger-text{% elif ar_overdue_pct >= 10 %}warning-text{% endif %}"><span>% vencido da carteira</span><b>{{ '%.1f'|format(ar_overdue_pct) }}%</b></div>
+  </div>
+  <div class="detail-grid">
+    <article class="detail-card">
+      <h3>Aging da carteira</h3>
+      <table class="indicator-table"><thead><tr><th>Faixa</th><th>Valor</th><th>% da carteira</th></tr></thead><tbody>
+        {% for row in data.receber.aging %}
+        <tr><td>{{ row.name }}</td><td data-money="{{ row.value }}"></td><td>{{ '%.1f'|format((row.value / data.receber.open * 100) if data.receber.open else 0) }}%</td></tr>
+        {% endfor %}
+      </tbody></table>
+    </article>
+    <article class="detail-card">
+      <h3>Situação da carteira</h3>
+      <table class="indicator-table"><thead><tr><th>Status</th><th>Valor</th></tr></thead><tbody>
+        {% for row in data.receber.status %}<tr><td><span class="status-pill">{{ row.name }}</span></td><td data-money="{{ row.value }}"></td></tr>{% else %}<tr><td colspan="2" class="empty">Sem títulos.</td></tr>{% endfor %}
+      </tbody></table>
+    </article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="pagar">
+  <div class="section-head"><div><span class="eyebrow">Financeiro</span><h2>Contas a pagar</h2></div><a href="/financeiro?kind=PAGAR">Abrir contas a pagar</a></div>
+  {% set ap_overdue_pct = (data.pagar.overdue / data.pagar.open * 100) if data.pagar.open else 0 %}
+  <div class="indicator-row four">
+    <div class="indicator"><span>Lançado no período</span><b data-money="{{ data.pagar.period_total }}"></b></div>
+    <div class="indicator"><span>Saldo em aberto</span><b data-money="{{ data.pagar.open }}"></b></div>
+    <div class="indicator danger-text"><span>Total vencido</span><b data-money="{{ data.pagar.overdue }}"></b></div>
+    <div class="indicator {% if ap_overdue_pct >= 30 %}danger-text{% elif ap_overdue_pct >= 10 %}warning-text{% endif %}"><span>% vencido do contas a pagar</span><b>{{ '%.1f'|format(ap_overdue_pct) }}%</b></div>
+  </div>
+  <article class="detail-card single">
+    <h3>Status dos pagamentos</h3>
+    <div class="status-grid">
+      {% for row in data.pagar.status %}<div><span>{{ row.name }}</span><b data-money="{{ row.value }}"></b></div>{% else %}<p class="empty">Sem títulos a pagar.</p>{% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="dashboard-section" id="despesas">
+  <div class="section-head"><div><span class="eyebrow">Despesas</span><h2>Despesas operacionais</h2></div><a href="/financeiro?kind=DESPESA">Abrir despesas</a></div>
+  <div class="indicator-row">
+    <div class="indicator"><span>Total no período</span><b data-money="{{ data.despesas.total }}"></b></div>
+    <div class="indicator"><span>Lançamentos</span><b>{{ data.despesas.count }}</b></div>
+    <div class="indicator"><span>Ticket médio</span><b data-money="{{ data.despesas.ticket }}"></b></div>
+  </div>
+  <article class="detail-card single">
+    <h3>Status dos lançamentos</h3>
+    <div class="status-grid">
+      {% for row in data.despesas.status %}<div><span>{{ row.name }}</span><b data-money="{{ row.value }}"></b></div>{% else %}<p class="empty">Sem despesas registradas.</p>{% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="dashboard-section" id="logistica">
+  <div class="section-head"><div><span class="eyebrow">Logística</span><h2>Indicadores da operação</h2></div><a href="/painel-gerencial">Abrir painel logístico</a></div>
+  <div class="indicator-row four">
+    <div class="indicator"><span>Entregas no período</span><b>{{ data.logistica.deliveries }}</b></div>
+    <div class="indicator"><span>Volumes</span><b>{{ '%.0f'|format(data.logistica.volumes) }}</b></div>
+    <div class="indicator"><span>Custo de frete</span><b data-money="{{ data.logistica.freight }}"></b></div>
+    <div class="indicator"><span>Custo médio por entrega</span><b data-money="{{ (data.logistica.freight / data.logistica.deliveries) if data.logistica.deliveries else 0 }}"></b></div>
+  </div>
+  <div class="detail-grid">
+    <article class="detail-card"><h3>Entregas por status</h3><div class="status-list">{% for row in data.logistica.status %}<div><span>{{ row.name }}</span><b>{{ row.value }}</b></div>{% else %}<p class="empty">Sem entregas no período.</p>{% endfor %}</div></article>
+    <article class="detail-card"><h3>Entregas por região</h3><div class="rank-list">{% for row in data.logistica.regions %}<div><span class="rank">{{ loop.index }}</span><span class="label">{{ row.name }}</span><b>{{ row.value }}</b></div>{% else %}<p class="empty">Sem regiões no período.</p>{% endfor %}</div></article>
+  </div>
+</section>
+
+<style>
+.dashboard-filter{margin-top:14px}.filter-grid{display:grid;grid-template-columns:1.5fr .6fr .6fr auto;gap:12px;align-items:end}.filter-grid label{display:flex;flex-direction:column;gap:5px;font-size:.78rem;font-weight:700}.filter-grid input{min-height:38px;border:1px solid #cbd5e1;border-radius:8px;padding:6px 9px}.quick-periods{display:flex;gap:6px;flex-wrap:wrap}.period-note{margin-top:10px;color:#64748b;font-size:.8rem}.executive-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0 24px}.executive-card,.indicator,.detail-card{background:#fff;border:1px solid #dbe4f0;border-radius:13px}.executive-card{padding:16px;border-top:3px solid #2563eb}.executive-card.alert{border-top-color:#d97706}.executive-card.danger{border-top-color:#dc2626}.executive-card>span,.indicator>span{display:block;color:#64748b;font-size:.78rem;font-weight:700}.executive-card strong{display:block;color:#0f2745;font-size:1.55rem;margin:5px 0}.executive-card small{color:#64748b}.dashboard-section{margin:27px 0}.section-head{display:flex;justify-content:space-between;align-items:end;margin-bottom:11px}.section-head h2{margin:2px 0 0}.section-head a{font-size:.85rem}.eyebrow{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#2563eb;font-weight:800}.indicator-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}.indicator-row.four{grid-template-columns:repeat(4,minmax(0,1fr))}.indicator{padding:13px 14px;background:#f8fafc}.indicator b{display:block;margin-top:5px;font-size:1.15rem;color:#0f2745}.indicator small{display:block;margin-top:4px;color:#64748b;font-size:.72rem}.danger-text b{color:#b42318!important}.warning-text b{color:#b45309!important}.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.detail-card{padding:15px}.detail-card.single{margin-top:4px}.detail-card h3{font-size:.92rem;margin:0 0 11px;color:#0f2745}.rank-list>div,.status-list>div{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;padding:8px 0;border-bottom:1px solid #edf2f7}.rank-list>div:last-child,.status-list>div:last-child{border-bottom:0}.rank{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:7px;background:#eaf2ff;color:#1d4ed8;font-size:.72rem;font-weight:800}.rank-list .label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-list b,.status-list b{font-size:.82rem;color:#0f2745}.rank-list.two-col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:25px}.status-list>div{grid-template-columns:minmax(0,1fr) auto}.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.status-grid>div{padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px}.status-grid span{display:block;color:#64748b;font-size:.76rem}.status-grid b{display:block;margin-top:4px;color:#0f2745}.indicator-table{width:100%;border-collapse:collapse;font-size:.82rem}.indicator-table th,.indicator-table td{padding:9px 7px;border-bottom:1px solid #e8edf4;text-align:left}.indicator-table th{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:#64748b}.indicator-table th:nth-child(n+2),.indicator-table td:nth-child(n+2){text-align:right}.status-pill{display:inline-block;border-radius:999px;background:#eef3f8;padding:4px 8px;font-size:.72rem;font-weight:700}.empty{color:#94a3b8;font-size:.8rem;margin:6px 0}.managerial-hero{margin-bottom:0}@media(max-width:1050px){.executive-grid{grid-template-columns:repeat(2,1fr)}.indicator-row,.indicator-row.four{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr}.rank-list.two-col{grid-template-columns:1fr}.status-grid{grid-template-columns:repeat(2,1fr)}.filter-grid{grid-template-columns:1fr 1fr}.quick-periods{grid-column:1/-1}}@media(max-width:640px){.executive-grid,.indicator-row,.indicator-row.four,.status-grid,.filter-grid{grid-template-columns:1fr}.quick-periods{grid-column:auto}.section-head{align-items:flex-start;gap:8px;flex-direction:column}.executive-card strong{font-size:1.35rem}}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const money=v=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(v||0));
+document.querySelectorAll('[data-money]').forEach(el=>el.textContent=money(el.dataset.money));
+</script>
+{% endblock %}

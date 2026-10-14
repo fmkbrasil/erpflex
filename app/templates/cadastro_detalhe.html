@@ -8,6 +8,14 @@
     {% for label,value in summary %}<div class="detail-field"><small>{{ label }}</small><b>{{ value or '—' }}</b></div>{% endfor %}
   </div>
 </section>
+{% for section_title, fields in detail_sections %}
+<section class="panel">
+  <div class="panel-title"><h2>{{ section_title }}</h2></div>
+  <div class="detail-grid">
+    {% for label,value in fields %}<div class="detail-field"><small>{{ label }}</small><b>{{ value or '—' }}</b></div>{% endfor %}
+  </div>
+</section>
+{% endfor %}
 <section class="panel">
   <div class="panel-title"><div><h2>Dados completos da origem</h2><p class="hint">Os campos abaixo são preservados como recebidos da API, sem inventar propriedades ausentes.</p></div><span>{{ payloads|length }} registro(s) de origem</span></div>
   {% for p in payloads %}

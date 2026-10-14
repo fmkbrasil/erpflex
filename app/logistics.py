@@ -147,6 +147,61 @@ def endereco_busca(address: str | None, district: str | None, city: str | None, 
     return ", ".join(str(x).strip() for x in parts if str(x or "").strip())
 
 
+
+def _address_line(address=None, number=None, complement=None) -> str:
+    base = re.sub(r"\s+", " ", str(address or "").strip())
+    num = re.sub(r"\s+", " ", str(number or "").strip())
+    comp = re.sub(r"\s+", " ", str(complement or "").strip())
+    first = " ".join(x for x in (base, num) if x).strip()
+    if comp:
+        first = f"{first} - {comp}" if first else comp
+    return first
+
+
+def endereco_entrega_efetivo(invoice=None, partner=None) -> dict:
+    """Retorna o melhor endereço de entrega disponível para a logística.
+
+    Prioridade: endereço gravado na NF -> endereço de entrega do cliente ->
+    endereço principal do cliente. A função não inventa endereço e informa a
+    origem para diagnóstico na interface.
+    """
+    def val(obj, attr):
+        return getattr(obj, attr, None) if obj is not None else None
+
+    address = str(val(invoice, "delivery_address") or "").strip()
+    district = str(val(invoice, "delivery_district") or "").strip()
+    city = str(val(invoice, "delivery_city") or "").strip()
+    state = str(val(invoice, "delivery_state") or "").strip()
+    zip_code = str(val(invoice, "delivery_zip") or "").strip()
+    source = "NF" if any((address, district, city, state, zip_code)) else ""
+
+    if partner is not None and not address:
+        paddr = _address_line(val(partner, "delivery_address"), val(partner, "delivery_number"), val(partner, "delivery_complement"))
+        if paddr or val(partner, "delivery_city") or val(partner, "delivery_zip_code"):
+            address = paddr
+            district = str(val(partner, "delivery_district") or district or "").strip()
+            city = str(val(partner, "delivery_city") or city or "").strip()
+            state = str(val(partner, "delivery_state") or state or "").strip()
+            zip_code = str(val(partner, "delivery_zip_code") or zip_code or "").strip()
+            source = "Cadastro · entrega"
+
+    if partner is not None and not address:
+        paddr = _address_line(val(partner, "address"), val(partner, "address_number"), val(partner, "address_complement"))
+        if paddr or val(partner, "city") or val(partner, "zip_code"):
+            address = paddr
+            district = str(val(partner, "district") or district or "").strip()
+            city = str(val(partner, "city") or city or "").strip()
+            state = str(val(partner, "state") or state or "").strip()
+            zip_code = str(val(partner, "zip_code") or zip_code or "").strip()
+            source = "Cadastro · principal"
+
+    query = endereco_busca(address, district, city, state, zip_code)
+    return {
+        "address": address, "district": district, "city": city, "state": state,
+        "zip": zip_code, "source": source or "Não informado", "query": query,
+        "complete": bool(address and city),
+    }
+
 def maps_url(query: str) -> str:
     return f"https://www.google.com/maps/search/?api=1&query={quote_plus(query)}" if query else "#"
 
