@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Administração · {{ app_name }}{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>Administração</h1><p>Usuários, perfis, empresas, filiais e trilha de auditoria do núcleo central.</p></div></div>
+<div class="page-head"><div><h1>Administração e controle de acesso</h1><p>Defina quem pode consultar ou operar cada módulo, incluindo BI, sincronização, logística e personalização visual.</p></div></div>
+<section class="panel access-summary"><div class="panel-title"><div><h2>Como funciona</h2><p class="hint">1. Crie um perfil com as permissões desejadas. 2. Crie ou ajuste o usuário. 3. Vincule empresa, perfil e filiais autorizadas. Superusuários mantêm acesso total.</p></div></div></section>
 
 <div class="admin-grid">
   {% if current_user and current_user.is_superuser %}<section class="panel"><h2>Nova empresa</h2><form method="post" action="/administracao/empresa" class="form-grid">
@@ -23,7 +24,7 @@
   <div class="permission-grid">{% for perm,label in permission_catalog %}<label class="check"><input type="checkbox" name="permissions" value="{{perm}}"> <span><b>{{label}}</b><small>{{perm}}</small></span></label>{% endfor %}</div>
   <button class="btn primary" type="submit">Salvar perfil</button>
 </form></section>
-<section class="panel"><h2>Perfis existentes</h2>{% for p in profiles %}<div class="profile-card"><div><b>{{p.name}}</b>{% if p.system %}<span class="badge">Sistema</span>{% endif %}<small>{{p.description or ''}}</small></div><div class="perm-list">{% for perm in profile_permissions[p.id] %}<span>{{perm}}</span>{% endfor %}</div></div>{% endfor %}</section>
+<section class="panel"><h2>Perfis existentes</h2>{% for p in profiles %}<div class="profile-card"><div><b>{{p.name}}</b>{% if p.system %}<span class="badge">Sistema protegido</span>{% endif %}<small>{{p.description or ''}}</small></div><div class="perm-list">{% for perm in profile_permissions[p.id] %}<span>{{perm}}</span>{% endfor %}</div>{% if not p.system %}<details style="margin-top:8px"><summary>Editar permissões</summary><form method="post" action="/administracao/perfil" style="margin-top:9px"><input type="hidden" name="name" value="{{p.name}}"><label>Descrição<input name="description" value="{{p.description or ''}}"></label><div class="permission-grid">{% for perm,label in permission_catalog %}<label class="check"><input type="checkbox" name="permissions" value="{{perm}}" {% if perm in profile_permissions[p.id] %}checked{% endif %}> <span><b>{{label}}</b><small>{{perm}}</small></span></label>{% endfor %}</div><button class="btn primary" type="submit">Atualizar perfil</button></form></details>{% endif %}</div>{% endfor %}</section>
 </div>
 
 <section class="panel"><h2>Novo usuário</h2><form method="post" action="/administracao/usuario" class="form-grid wide">

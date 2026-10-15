@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class SchemaState(Base):
@@ -221,6 +221,35 @@ class UserViewPreference(Base):
     per_page: Mapped[int] = mapped_column(Integer, default=50)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (UniqueConstraint("user_id", "company_id", "view_key", name="uq_user_view_preference"),)
+
+
+class UIThemeSetting(Base):
+    __tablename__ = "ui_theme_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), unique=True, index=True)
+    primary_color: Mapped[str] = mapped_column(String(20), default="#2463eb")
+    nav_color: Mapped[str] = mapped_column(String(20), default="#111b2b")
+    secondary_color: Mapped[str] = mapped_column(String(20), default="#edf1f6")
+    secondary_text_color: Mapped[str] = mapped_column(String(20), default="#142642")
+    success_color: Mapped[str] = mapped_column(String(20), default="#0c9f6e")
+    warning_color: Mapped[str] = mapped_column(String(20), default="#c77a00")
+    danger_color: Mapped[str] = mapped_column(String(20), default="#d64545")
+    background_color: Mapped[str] = mapped_column(String(20), default="#f4f7fb")
+    panel_color: Mapped[str] = mapped_column(String(20), default="#ffffff")
+    text_color: Mapped[str] = mapped_column(String(20), default="#10233f")
+    button_text_color: Mapped[str] = mapped_column(String(20), default="#ffffff")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UILabelOverride(Base):
+    __tablename__ = "ui_label_overrides"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    original_text: Mapped[str] = mapped_column(String(255), index=True)
+    custom_text: Mapped[str] = mapped_column(String(255))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "original_text", name="uq_ui_label_company_original"),)
 
 
 class SyncRun(Base):
@@ -755,11 +784,11 @@ class LogisticsImport(Base):
 DEFAULT_PERMISSIONS = {
     "Administrador": ["*"],
     "Diretoria": [
-        "dashboard.view", "cadastros.view", "faturamento.view", "financeiro.view", "compras.view",
+        "dashboard.view", "bi.view", "cadastros.view", "faturamento.view", "financeiro.view", "compras.view",
         "logistica.view", "roteirizar.view", "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "ocorrencias.view", "diagnostico.view", "api.read"
     ],
     "Operacional": [
-        "dashboard.view", "logistica.view", "logistica.edit", "roteirizar.view", "roteirizar.manage", "importar.manage",
+        "dashboard.view", "bi.view", "logistica.view", "logistica.edit", "roteirizar.view", "roteirizar.manage", "importar.manage",
         "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "roteiros.manage",
         "baixa.manage", "ocorrencias.view", "ocorrencias.manage", "responsaveis.view", "responsaveis.manage",
         "regras.manage", "parametros.manage", "api.read"
@@ -879,6 +908,7 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V12: subcategoria normalizada de produtos para análise gerencial de vendas.
     # V13: identificação aditiva de vendedor no pedido comercial para BI e rastreabilidade.
     # V14: classificação configurável de categorias de despesas para a DRE Gerencial.
+    # V15: personalização visual/legendas por empresa e expansão do controle de acesso.
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
     if "partners" in inspect(engine).get_table_names():
@@ -921,6 +951,15 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
                 conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_id VARCHAR(120)"))
             if "seller_name" not in order_existing:
                 conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_name VARCHAR(180)"))
+    # V15 preserva o acesso ao BI de perfis legados que antes dependiam de dashboard.view.
+    if previous_version < 15:
+        with SessionLocal() as db:
+            legacy_profiles = db.scalars(select(AccessProfile).join(ProfilePermission, ProfilePermission.profile_id == AccessProfile.id).where(ProfilePermission.permission == "dashboard.view")).all()
+            for profile in legacy_profiles:
+                exists = db.scalar(select(ProfilePermission.id).where(ProfilePermission.profile_id == profile.id, ProfilePermission.permission == "bi.view").limit(1))
+                if not exists:
+                    db.add(ProfilePermission(profile_id=profile.id, permission="bi.view"))
+            db.commit()
     with SessionLocal() as db:
         state = db.get(SchemaState, 1)
         if not state:

@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block title %}Aparência e legendas · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><h1>Aparência e legendas</h1><p>Personalize cores e nomes exibidos na interface sem alterar os dados ou as integrações.</p></div>
+</section>
+{% if request.query_params.get('saved') %}<div class="alert success">Personalização salva.</div>{% endif %}
+<div class="admin-grid ui-config-grid">
+  <section class="panel">
+    <div class="panel-title"><div><h2>Cores do aplicativo</h2><p class="hint">As cores são aplicadas à empresa atual.</p></div></div>
+    <form method="post" action="/aparencia/tema" class="theme-form">
+      {% set colors = [
+        ('primary_color','Botão / cor principal'),('secondary_color','Botão secundário'),('secondary_text_color','Texto botão secundário'),('nav_color','Menu superior'),('success_color','Sucesso'),
+        ('warning_color','Avisos'),('danger_color','Erros / crítico'),('background_color','Fundo do app'),
+        ('panel_color','Cards / painéis'),('text_color','Texto principal'),('button_text_color','Texto dos botões principais')
+      ] %}
+      <div class="theme-color-grid">
+        {% for key,label in colors %}
+        <label class="theme-color-field"><span>{{ label }}</span><div><input type="color" name="{{ key }}" value="{{ theme_form[key] }}"><code>{{ theme_form[key] }}</code></div></label>
+        {% endfor %}
+      </div>
+      <div class="theme-preview">
+        <span>Pré-visualização</span>
+        <button class="btn primary" type="button">Botão principal</button>
+        <span class="badge ok">Concluído</span><span class="badge aviso">Atenção</span><span class="badge erro">Erro</span>
+      </div>
+      <button class="btn primary" type="submit">Salvar cores</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-title"><div><h2>Editar legendas</h2><p class="hint">Troque termos da interface inteira. Ex.: “Contas a Receber” → “Recebíveis”.</p></div></div>
+    <form method="post" action="/aparencia/legenda" class="form-grid">
+      <label>Texto atual<input name="original_text" maxlength="255" placeholder="Ex.: Faturamento" required></label>
+      <label>Nova legenda<input name="custom_text" maxlength="255" placeholder="Ex.: Vendas faturadas" required></label>
+      <button class="btn primary" type="submit">Salvar legenda</button>
+    </form>
+    <div class="hint-block"><b>Atalho:</b> usuários com esta permissão também podem clicar em <b>Editar legendas</b> no canto da tela e selecionar títulos, botões e cabeçalhos diretamente.</div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-title"><div><h2>Legendas personalizadas</h2><p class="hint">Somente os textos abaixo substituem os nomes padrão.</p></div><span>{{ labels|length }} alteração(ões)</span></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Texto original</th><th>Como aparece</th><th>Ação</th></tr></thead>
+    <tbody>{% for row in labels %}<tr><td>{{ row.original_text }}</td><td><b>{{ row.custom_text }}</b></td><td><form method="post" action="/aparencia/legenda/{{ row.id }}/excluir"><button class="btn small" type="submit">Restaurar padrão</button></form></td></tr>{% else %}<tr><td colspan="3" class="empty">Nenhuma legenda personalizada.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

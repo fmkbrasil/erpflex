@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import smtplib
 import ssl
 import threading
@@ -28,7 +29,7 @@ from .db import (
     AccessProfile, AppUser, AuditLog, BoxType, Branch, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, Delivery, DeliveryAssignment, DeliveryMovement,
     DeliveryOccurrence, DeliveryRule, DreExpenseMapping, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesInvoiceItem,
     Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat,
-    UserBranchAccess, UserCompanyAccess, UserViewPreference, create_sqlite_backup, database_status, init_db
+    UserBranchAccess, UserCompanyAccess, UserViewPreference, UIThemeSetting, UILabelOverride, create_sqlite_backup, database_status, init_db
 )
 from .access import access_context, add_audit, auth_configured, can, current_user
 from .security import hash_password, verify_password
@@ -48,7 +49,7 @@ APP_USER = os.getenv("APP_USER") or "admin"
 APP_PASSWORD = os.getenv("APP_PASSWORD") or ""
 SECRET_KEY = os.getenv("SECRET_KEY") or "desenvolvimento-troque-em-producao"
 
-app = FastAPI(title=APP_NAME, version="1.3.39")
+app = FastAPI(title=APP_NAME, version="1.3.40")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -101,8 +102,9 @@ def required_permission(method: str, path: str) -> str | None:
     method = method.upper()
     rules = [
         ("/administracao", "admin.manage"),
-        ("/dashboard-gerencial", "dashboard.view"),
-        ("/bi", "dashboard.view"),
+        ("/aparencia", "ui.customize"),
+        ("/dashboard-gerencial", "bi.view"),
+        ("/bi", "bi.view"),
         ("/sincronizacao", "sync.manage"),
         ("/integracoes", "sync.manage"),
         ("/sistema/backup", "admin.manage"),
@@ -138,7 +140,15 @@ def required_permission(method: str, path: str) -> str | None:
     return None
 
 
+DEFAULT_UI_THEME = {
+    "primary_color": "#2463eb", "nav_color": "#111b2b", "secondary_color": "#edf1f6", "secondary_text_color": "#142642", "success_color": "#0c9f6e",
+    "warning_color": "#c77a00", "danger_color": "#d64545", "background_color": "#f4f7fb",
+    "panel_color": "#ffffff", "text_color": "#10233f", "button_text_color": "#ffffff",
+}
+
 def render(request: Request, template: str, **ctx):
+    theme = dict(DEFAULT_UI_THEME)
+    label_overrides = {}
     with SessionLocal() as db:
         configured = auth_configured(db)
         ac = None
@@ -147,6 +157,17 @@ def render(request: Request, template: str, **ctx):
                 ac = access_context(db, request)
             except Exception:
                 ac = None
+        if ac and ac.company:
+            row = db.scalar(select(UIThemeSetting).where(UIThemeSetting.company_id == ac.company.id).limit(1))
+            if row:
+                for key in theme:
+                    value = getattr(row, key, None)
+                    if value:
+                        theme[key] = value
+            labels = db.scalars(select(UILabelOverride).where(
+                UILabelOverride.company_id == ac.company.id, UILabelOverride.active.is_(True)
+            ).order_by(UILabelOverride.original_text)).all()
+            label_overrides = {r.original_text: r.custom_text for r in labels if r.original_text and r.custom_text}
     if ac:
         ctx.update({
             "company": ctx.get("company") or ac.company, "branch": ac.branch, "current_user": ac.user,
@@ -156,7 +177,8 @@ def render(request: Request, template: str, **ctx):
     else:
         ctx.update({"branch": None, "current_user": None, "current_profile": None, "permissions": set(),
                     "available_companies": [], "available_branches": [], "can_perm": lambda p: False})
-    ctx.update({"request": request, "app_name": APP_NAME, "auth_enabled": configured})
+    ctx.update({"request": request, "app_name": APP_NAME, "auth_enabled": configured,
+                "ui_theme": theme, "ui_label_overrides": label_overrides})
     return templates.TemplateResponse(template, ctx)
 
 
@@ -167,7 +189,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.39", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.40", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -4482,7 +4504,8 @@ def diagnostico(request: Request):
 
 
 PERMISSION_CATALOG = [
-    ("dashboard.view", "Início / indicadores"), ("sync.manage", "Sincronização ERPFlex / NF Stock"),
+    ("dashboard.view", "Início / indicadores"), ("bi.view", "BI Gerencial / DRE"),
+    ("sync.manage", "Sincronização ERPFlex / NF Stock"),
     ("cadastros.view", "Cadastros"), ("faturamento.view", "Faturamento"),
     ("financeiro.view", "Financeiro"), ("compras.view", "Compras / NF-e"),
     ("logistica.view", "Consultar logística"), ("logistica.edit", "Editar logística"),
@@ -4494,8 +4517,84 @@ PERMISSION_CATALOG = [
     ("ocorrencias.manage", "Resolver ocorrências"), ("responsaveis.view", "Consultar responsáveis"),
     ("responsaveis.manage", "Gerenciar responsáveis"), ("regras.manage", "Gerenciar regras de entrega"),
     ("parametros.manage", "Gerenciar parâmetros logísticos"), ("diagnostico.view", "Diagnóstico"),
-    ("api.read", "Consumir API interna somente leitura"), ("admin.manage", "Administração de usuários, perfis, empresas e filiais"),
+    ("api.read", "Consumir API interna somente leitura"), ("ui.customize", "Personalizar cores e legendas da interface"),
+    ("admin.manage", "Administração de usuários, perfis, empresas e filiais"),
 ]
+
+
+def _valid_hex_color(value: str, fallback: str) -> str:
+    value = (value or "").strip()
+    return value if re.fullmatch(r"#[0-9A-Fa-f]{6}", value) else fallback
+
+
+@app.get("/aparencia", response_class=HTMLResponse)
+def appearance_page(request: Request):
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        theme_row = db.scalar(select(UIThemeSetting).where(UIThemeSetting.company_id == cid).limit(1))
+        labels = db.scalars(select(UILabelOverride).where(UILabelOverride.company_id == cid).order_by(UILabelOverride.original_text)).all()
+        theme = dict(DEFAULT_UI_THEME)
+        if theme_row:
+            for key in theme:
+                theme[key] = getattr(theme_row, key) or theme[key]
+    return render(request, "aparencia.html", company=company, theme_form=theme, labels=labels)
+
+
+@app.post("/aparencia/tema")
+async def appearance_theme_save(request: Request):
+    form = await request.form()
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        row = db.scalar(select(UIThemeSetting).where(UIThemeSetting.company_id == cid).limit(1))
+        if not row:
+            row = UIThemeSetting(company_id=cid)
+            db.add(row)
+        for key, fallback in DEFAULT_UI_THEME.items():
+            setattr(row, key, _valid_hex_color(str(form.get(key) or ""), fallback))
+        db.flush()
+        add_audit(db, ac, "TEMA_INTERFACE_ATUALIZADO", "ui_theme", row.id, "Cores da aplicação atualizadas")
+        db.commit()
+    return RedirectResponse("/aparencia?saved=theme", status_code=303)
+
+
+@app.post("/aparencia/legenda")
+async def appearance_label_save(request: Request):
+    form = await request.form()
+    original = str(form.get("original_text") or "").strip()[:255]
+    custom = str(form.get("custom_text") or "").strip()[:255]
+    if not original or not custom:
+        return JSONResponse({"error": "Informe o texto original e a nova legenda."}, status_code=400)
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        row = db.scalar(select(UILabelOverride).where(UILabelOverride.company_id == cid, UILabelOverride.original_text == original).limit(1))
+        if not row:
+            row = UILabelOverride(company_id=cid, original_text=original, custom_text=custom, active=True)
+            db.add(row)
+        else:
+            row.custom_text = custom
+            row.active = True
+        db.flush()
+        add_audit(db, ac, "LEGENDA_INTERFACE_ATUALIZADA", "ui_label", row.id, f"{original} -> {custom}")
+        db.commit()
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True, "original": original, "custom": custom})
+    return RedirectResponse("/aparencia?saved=label", status_code=303)
+
+
+@app.post("/aparencia/legenda/{label_id}/excluir")
+def appearance_label_delete(request: Request, label_id: int):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        row = db.scalar(select(UILabelOverride).where(UILabelOverride.id == label_id, UILabelOverride.company_id == cid).limit(1))
+        if row:
+            detail = row.original_text
+            db.delete(row)
+            add_audit(db, ac, "LEGENDA_INTERFACE_EXCLUIDA", "ui_label", label_id, detail)
+            db.commit()
+    return RedirectResponse("/aparencia", status_code=303)
 
 
 @app.post("/contexto")

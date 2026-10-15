@@ -1,212 +1,92 @@
 {% extends 'base.html' %}
 {% block title %}Sincronização · {{ app_name }}{% endblock %}
 {% block content %}
-<section class="hero">
-  <div>
-    <h1>Central de Sincronização</h1>
-    <p>Selecione os cadastros e movimentos que deseja atualizar. Pedidos, Faturamento e Financeiro usam o mesmo mecanismo de navegação/paginação validado no ERPFlex Analytics V7.8; cadastros mestres continuam paginados integralmente.</p>
-  </div>
-  <div class="actions"><a class="btn" href="/integracoes">Configurar integrações</a></div>
+<section class="hero sync-simple-hero">
+  <div><h1>Sincronização</h1><p>Controle simples da atualização automática. As opções técnicas e reprocessamentos ficam em “Ferramentas avançadas”.</p></div>
+  <div class="actions"><a class="btn" href="/integracoes">Integrações</a></div>
 </section>
 
 {% if request.query_params.get('error') %}
-<div class="alert error">
-  {% if request.query_params.get('error') == 'selecione-modulos' %}Selecione ao menos um módulo para sincronizar.
-  {% elif request.query_params.get('error') == 'selecione-modulos-forcar' %}Selecione ao menos uma movimentação para forçar a sincronização.
-  {% elif request.query_params.get('error') == 'periodo-invalido' %}Informe um período válido.
-  {% else %}Não foi possível iniciar a sincronização.{% endif %}
-</div>
+<div class="alert error">{% if request.query_params.get('error') == 'selecione-modulos' %}Selecione ao menos um módulo para sincronizar.{% elif request.query_params.get('error') == 'selecione-modulos-forcar' %}Selecione ao menos uma movimentação para reprocessar.{% elif request.query_params.get('error') == 'periodo-invalido' %}Informe um período válido.{% else %}Não foi possível iniciar a sincronização.{% endif %}</div>
 {% endif %}
+{% if request.query_params.get('worker') == 'saved' %}<div class="alert success">Configuração da sincronização automática salva.</div>{% endif %}
+{% if request.query_params.get('worker') == 'queued' %}<div class="alert success">Execução solicitada. O worker iniciará no próximo ciclo.</div>{% endif %}
+
+<section class="sync-overview">
+  <div class="sync-overview-card {{ 'online' if worker_view.online else 'offline' }}"><span>Worker</span><strong>{{ 'Online' if worker_view.online else 'Offline' }}</strong><small>{{ worker_view.status }}</small></div>
+  <div class="sync-overview-card"><span>Automação</span><strong>{{ 'Ativa' if worker_cfg and worker_cfg.active else 'Pausada' }}</strong><small>{{ worker_modules|selectattr('enabled')|list|length }} módulo(s) habilitado(s)</small></div>
+  <div class="sync-overview-card"><span>Último sinal</span><strong>{% if worker_view.heartbeat_at %}{{ worker_view.heartbeat_at.strftime('%H:%M:%S') }}{% else %}—{% endif %}</strong><small>{% if worker_view.heartbeat_at %}{{ worker_view.heartbeat_at.strftime('%d/%m/%Y') }}{% else %}Worker ainda não registrou heartbeat{% endif %}</small></div>
+  <div class="sync-overview-card"><span>Integrações</span><strong>{{ ('ERPFlex ✓' if erp_configured else 'ERPFlex ✕') }}</strong><small>{{ ('NF Stock ✓' if nf_configured else 'NF Stock não configurado') }}</small></div>
+</section>
 
 <section class="panel">
-  <div class="panel-title">
-    <div>
-      <h2>Robô de sincronização</h2>
-      <p class="hint">Worker independente para Railway. Executa a sincronização incremental automaticamente e reaproveita os cursores/índice de páginas da plataforma.</p>
-    </div>
-    <span class="badge {{ 'ok' if worker_view.online else 'erro' }}">{{ 'ONLINE' if worker_view.online else 'OFFLINE' }}</span>
-  </div>
-  {% if request.query_params.get('worker') == 'saved' %}<div class="alert success">Configuração do worker salva.</div>{% endif %}
-  {% if request.query_params.get('worker') == 'queued' %}<div class="alert success">Execução imediata colocada na fila. O worker online iniciará no próximo ciclo.</div>{% endif %}
-  <div class="hint-block">
-    <b>Status:</b> {{ worker_view.status }}
-    {% if worker_view.message %} · {{ worker_view.message }}{% endif %}
-    {% if worker_view.current_module %} · módulo {{ worker_view.current_module }}{% endif %}
-    {% if worker_view.current_run_id %} · execução #{{ worker_view.current_run_id }}{% endif %}
-    {% if worker_view.heartbeat_at %}<br><small>Último heartbeat: {{ worker_view.heartbeat_at.strftime('%d/%m/%Y %H:%M:%S') }} · instância {{ worker_view.instance_id }}</small>{% endif %}
-  </div>
+  <div class="panel-title"><div><h2>Sincronização automática</h2><p class="hint">Escolha o que deve ficar atualizado. O operador normalmente só precisa desta área.</p></div><span class="badge {{ 'ok' if worker_view.online else 'erro' }}">{{ 'ONLINE' if worker_view.online else 'OFFLINE' }}</span></div>
+  <div class="sync-worker-status"><b>{{ worker_view.status }}</b>{% if worker_view.message %}<small>{{ worker_view.message }}</small>{% endif %}{% if worker_view.current_module %}<span class="badge em_execucao">{{ worker_view.current_module }}</span>{% endif %}</div>
   <form method="post" action="/sincronizacao/worker-config">
-    <div class="sync-settings">
-      <label class="check"><input type="checkbox" name="active" value="1" {% if worker_cfg and worker_cfg.active %}checked{% endif %}> <b>Ativar sincronização automática</b></label>
-      <label>Verificar agenda a cada (s)<input type="number" name="poll_seconds" min="5" max="300" value="{{ worker_cfg.poll_seconds if worker_cfg else 30 }}"></label>
-      <label>Janela inicial (hora)<input type="number" name="allowed_start_hour" min="0" max="23" value="{{ worker_cfg.allowed_start_hour if worker_cfg else 0 }}"></label>
-      <label>Janela final (hora)<input type="number" name="allowed_end_hour" min="0" max="23" value="{{ worker_cfg.allowed_end_hour if worker_cfg else 23 }}"></label>
-      <label>Limite movimentos<input type="number" name="max_blocks" min="1" max="1000" value="{{ worker_cfg.max_blocks if worker_cfg else 100 }}"></label>
-      <label>Limite cadastros<input type="number" name="master_max_pages" min="1" max="2000" value="{{ worker_cfg.master_max_pages if worker_cfg else 500 }}"></label>
-      <label>Máx. clientes<input type="number" name="max_clients" min="1" max="5000" value="{{ worker_cfg.max_clients if worker_cfg else 1000 }}"></label>
-      <label class="check"><input type="checkbox" name="sales_details" value="1" {% if not worker_cfg or worker_cfg.sales_details %}checked{% endif %}> Enriquecer itens do faturamento</label>
-      <label class="check"><input type="checkbox" name="purchase_details" value="1" {% if not worker_cfg or worker_cfg.purchase_details %}checked{% endif %}> Enriquecer itens de compras</label>
-    </div>
+    <label class="check sync-main-toggle"><input type="checkbox" name="active" value="1" {% if worker_cfg and worker_cfg.active %}checked{% endif %}> <b>Ativar sincronização automática</b></label>
     {% set module_labels = {'products':'Produtos','banks':'Bancos','clientes':'Clientes','orders':'Pedidos','faturamento':'Faturamento','receber':'Contas a receber','pagar':'Contas a pagar','compras':'Compras','despesas':'Despesas'} %}
-    <div class="table-wrap"><table>
-      <thead><tr><th>Ativo</th><th>Módulo</th><th>Intervalo (min)</th><th>Última execução</th><th>Próxima execução</th><th>Status</th></tr></thead>
-      <tbody>
+    {% set module_hints = {'products':'Cadastro de produtos','banks':'Bancos e opções','clientes':'Dados completos de clientes','orders':'Pedidos comerciais','faturamento':'NF-e de saída','receber':'Títulos a receber','pagar':'Títulos a pagar','compras':'NF-e de entrada','despesas':'Despesas operacionais'} %}
+    <div class="sync-module-grid">
       {% for m in worker_modules %}
-        <tr>
-          <td><input type="checkbox" name="modules" value="{{ m.module }}" {% if m.enabled %}checked{% endif %}></td>
-          <td><b>{{ module_labels.get(m.module, m.module) }}</b></td>
-          <td><input style="max-width:110px" type="number" name="interval_{{ m.module }}" min="1" max="10080" value="{{ m.interval_minutes }}"></td>
-          <td>{{ m.last_finished_at.strftime('%d/%m/%Y %H:%M') if m.last_finished_at else '—' }}</td>
-          <td>{{ m.next_run_at.strftime('%d/%m/%Y %H:%M') if m.next_run_at else 'Ao ativar' }}</td>
-          <td><span class="badge {{ 'ok' if m.last_status in ['CONCLUIDO','CONCLUIDO_COM_ERROS'] else 'aviso' }}">{{ m.last_status or 'AGUARDANDO' }}</span></td>
-        </tr>
+      <label class="sync-module-card"><input type="checkbox" name="modules" value="{{ m.module }}" {% if m.enabled %}checked{% endif %}><span><b>{{ module_labels.get(m.module,m.module) }}</b><small>{{ module_hints.get(m.module,'') }} · {{ m.last_status or 'aguardando' }}</small></span><input type="number" name="interval_{{ m.module }}" min="1" max="10080" value="{{ m.interval_minutes }}" title="Intervalo em minutos"></label>
       {% endfor %}
-      </tbody>
-    </table></div>
-    <div class="actions">
-      <button class="btn primary" type="submit">Salvar automação</button>
     </div>
-  </form>
-  <form method="post" action="/sincronizacao/worker-executar" class="actions" style="margin-top:10px">
-    <button class="btn" type="submit" {% if not worker_view.online %}title="O worker precisa estar online"{% endif %}>Executar módulos ativos agora</button>
-  </form>
-  <p class="hint"><b>Railway:</b> crie um segundo serviço a partir do mesmo projeto e use o Start Command <code>python -m app.worker</code>. Mantenha 1 réplica do worker. O Web continua com <code>uvicorn app.main:app ...</code>. Ambos devem usar o mesmo <code>DATABASE_URL</code>.</p>
-</section>
-
-<section class="panel">
-  <div class="panel-title">
-    <div><h2>ERPFlex</h2><p class="hint">Sincronização somente leitura → base central · motor de paginação do Analytics V7.8. O lote roda em sequência para não sobrecarregar a API.</p></div>
-    <span class="badge {{ 'ok' if erp_configured else 'erro' }}">{{ 'Configurado' if erp_configured else 'Não configurado' }}</span>
-  </div>
-  <form method="post" action="/sincronizacao/erpflex-lote" id="erp-sync-form">
-    <div class="sync-groups">
-      <div class="sync-group">
-        <div class="sync-group-head"><div><h3>Cadastros mestres</h3><p>Não usam filtro de período. A plataforma pagina até terminar ou atingir o limite de segurança.</p></div><button class="btn small" type="button" data-toggle-group="masters">Marcar todos</button></div>
-        <div class="sync-options" data-group="masters">
-          <label class="sync-option"><input type="checkbox" name="modules" value="products" checked><span><b>Produtos</b><small>Cadastro completo disponível em /api/produtos/.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="banks"><span><b>Bancos</b><small>Cadastro retornado pelo endpoint de bancos.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="clientes"><span><b>Clientes conhecidos · detalhes</b><small>Enriquece clientes já identificados em pedidos, faturamento e contas a receber usando o endpoint individual validado.</small></span></label>
-          <div class="sync-option disabled"><span><b>Fornecedores</b><small>São atualizados a partir de Compras/Despesas. Não há endpoint de cadastro em lote validado nesta versão.</small></span></div>
-        </div>
+    <details class="sync-advanced"><summary>Parâmetros avançados da automação</summary>
+      <div class="sync-settings" style="margin-top:10px">
+        <label>Verificar agenda (s)<input type="number" name="poll_seconds" min="5" max="300" value="{{ worker_cfg.poll_seconds if worker_cfg else 30 }}"></label>
+        <label>Hora inicial<input type="number" name="allowed_start_hour" min="0" max="23" value="{{ worker_cfg.allowed_start_hour if worker_cfg else 0 }}"></label>
+        <label>Hora final<input type="number" name="allowed_end_hour" min="0" max="23" value="{{ worker_cfg.allowed_end_hour if worker_cfg else 23 }}"></label>
+        <label>Limite movimentos<input type="number" name="max_blocks" min="1" max="1000" value="{{ worker_cfg.max_blocks if worker_cfg else 100 }}"></label>
+        <label>Limite cadastros<input type="number" name="master_max_pages" min="1" max="2000" value="{{ worker_cfg.master_max_pages if worker_cfg else 500 }}"></label>
+        <label>Máx. clientes<input type="number" name="max_clients" min="1" max="5000" value="{{ worker_cfg.max_clients if worker_cfg else 1000 }}"></label>
+        <label class="check"><input type="checkbox" name="sales_details" value="1" {% if not worker_cfg or worker_cfg.sales_details %}checked{% endif %}> Enriquecer itens do faturamento</label>
+        <label class="check"><input type="checkbox" name="purchase_details" value="1" {% if not worker_cfg or worker_cfg.purchase_details %}checked{% endif %}> Enriquecer itens de compras</label>
       </div>
+    </details>
+    <div class="sync-primary-actions" style="margin-top:12px"><button class="btn primary" type="submit">Salvar configuração</button></div>
+  </form>
+  <form method="post" action="/sincronizacao/worker-executar" class="sync-primary-actions" style="margin-top:8px"><button class="btn" type="submit">Executar módulos ativos agora</button></form>
+</section>
 
-      <div class="sync-group">
-        <div class="sync-group-head"><div><h3>Movimentações</h3><p>Use o período abaixo. Você pode sincronizar somente os módulos necessários.</p></div><button class="btn small" type="button" data-toggle-group="moves">Marcar todos</button></div>
-        <div class="sync-options" data-group="moves">
-          <label class="sync-option"><input type="checkbox" name="modules" value="orders" checked><span><b>Pedidos</b><small>Pedidos/vendas confirmadas encontradas nos blocos consultados.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="faturamento" checked><span><b>Faturamento / NF-e</b><small>Notas fiscais de saída e dados de entrega.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="receber" checked><span><b>Contas a receber</b><small>Títulos, vencimentos, bancos e carteiras quando fornecidos.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="pagar"><span><b>Contas a pagar</b><small>Títulos a pagar retornados pela API.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="compras"><span><b>Compras</b><small>Compras/NF-e de entrada. Com “Enriquecer detalhes”, consulta o detalhe de cada compra do período para trazer itens e campos fiscais.</small></span></label>
-          <label class="sync-option"><input type="checkbox" name="modules" value="despesas"><span><b>Despesas</b><small>No modo por período usa o endpoint diário já validado.</small></span></label>
-        </div>
+<details class="panel sync-tools">
+  <summary>Ferramentas avançadas · sincronização manual, reprocessamento e NF Stock</summary>
+  <div class="sync-manual-block">
+    <div class="panel-title"><div><h3>Atualização manual ERPFlex</h3><p class="hint">Use para um período específico ou para atualizar cadastros sob demanda.</p></div><span class="badge {{ 'ok' if erp_configured else 'erro' }}">{{ 'Configurado' if erp_configured else 'Não configurado' }}</span></div>
+    <form method="post" action="/sincronizacao/erpflex-lote" id="erp-sync-form">
+      <div class="sync-module-compact" data-group="manual">
+        {% for mod,label in [('products','Produtos'),('banks','Bancos'),('clientes','Clientes'),('orders','Pedidos'),('faturamento','Faturamento'),('receber','Contas a receber'),('pagar','Contas a pagar'),('compras','Compras'),('despesas','Despesas')] %}<label><input type="checkbox" name="modules" value="{{ mod }}" {% if mod in ['orders','faturamento','receber'] %}checked{% endif %}> {{ label }}</label>{% endfor %}
       </div>
-    </div>
-
-    <div class="sync-settings">
-      <label>Data inicial<input type="date" name="start_date" value="{{ default_start }}" required></label>
-      <label>Data final<input type="date" name="end_date" value="{{ default_end }}" required></label>
-      <label>Blocos/páginas de movimentos<input type="number" name="max_blocks" min="1" max="1000" value="100"></label>
-      <label>Páginas máximas de cadastro<input type="number" name="master_max_pages" min="1" max="2000" value="500"></label>
-      <label>Máx. clientes para enriquecer<input type="number" name="max_clients" min="1" max="5000" value="1000"></label>
-      <label class="check"><input type="checkbox" name="sales_details" value="1" checked> Enriquecer faturamento consultando itens de cada NF</label>
-      <label class="check"><input type="checkbox" name="purchase_details" value="1" checked> Enriquecer compras consultando detalhe e itens</label>
-    </div>
-    <div class="hint-block">
-      <b>Sincronização incremental:</b> a plataforma mantém o cursor principal de cada módulo e, a partir desta versão, também grava um índice local das páginas/offsets já percorridos (datas, IDs, quantidade e assinatura do conteúdo). A rotina normal continua revalidando a borda recente para encontrar documentos novos, mas reaproveita o índice quando ele ajuda a localizar períodos já conhecidos.
-    </div>
-    <div class="actions">
-      <button class="btn primary" type="submit" name="action" value="selected">Sincronizar selecionados</button>
-      <button class="btn" type="submit" name="action" value="all">Sincronizar tudo disponível</button>
-      <button class="btn" type="button" onclick="testConn('erpflex')">Testar conexão</button>
-    </div>
-    <p class="hint">Credenciais: {{ 'banco central' if integrations.erpflex.source=='database' else 'variáveis de ambiente' }}. <a href="/integracoes">Editar</a>.</p>
-  </form>
-</section>
-
-<section class="panel">
-  <div class="panel-title">
-    <div>
-      <h2>Forçar sincronização</h2>
-      <p class="hint">Use somente quando precisar reconsultar deliberadamente um período específico. O processo ignora a cobertura já concluída para os documentos, mas preserva o cursor incremental principal. Se o intervalo já estiver no índice local, a plataforma começa diretamente nas páginas/offsets conhecidos.</p>
-    </div>
-    <span class="badge aviso">AUDITORIA / RECUPERAÇÃO</span>
+      <div class="sync-settings" style="margin-top:10px"><label>De<input type="date" name="start_date" value="{{ default_start }}" required></label><label>Até<input type="date" name="end_date" value="{{ default_end }}" required></label><label>Limite movimentos<input type="number" name="max_blocks" min="1" max="1000" value="100"></label><label>Limite cadastros<input type="number" name="master_max_pages" min="1" max="2000" value="500"></label><label>Máx. clientes<input type="number" name="max_clients" min="1" max="5000" value="1000"></label><label class="check"><input type="checkbox" name="sales_details" value="1" checked> Itens de faturamento</label><label class="check"><input type="checkbox" name="purchase_details" value="1" checked> Itens de compras</label></div>
+      <div class="actions"><button class="btn primary" type="submit" name="action" value="selected">Sincronizar selecionados</button><button class="btn" type="submit" name="action" value="all">Sincronizar tudo</button><button class="btn" type="button" onclick="testConn('erpflex')">Testar conexão</button></div>
+    </form>
   </div>
-  <form method="post" action="/sincronizacao/erpflex-forcar" id="force-sync-form">
-    <div class="sync-options">
-      <label class="sync-option"><input type="checkbox" name="modules" value="orders"><span><b>Pedidos</b><small>Reconsulta os pedidos do período.</small></span></label>
-      <label class="sync-option"><input type="checkbox" name="modules" value="faturamento" checked><span><b>Faturamento / NF-e</b><small>Reconsulta as NF-e de saída do período.</small></span></label>
-      <label class="sync-option"><input type="checkbox" name="modules" value="receber" checked><span><b>Contas a receber</b><small>Revalida títulos, saldos, banco/carteira e boleto.</small></span></label>
-      <label class="sync-option"><input type="checkbox" name="modules" value="pagar"><span><b>Contas a pagar</b><small>Revalida títulos e status de pagamento.</small></span></label>
-      <label class="sync-option"><input type="checkbox" name="modules" value="compras"><span><b>Compras</b><small>Reconsulta NF-e de entrada do período.</small></span></label>
-      <label class="sync-option"><input type="checkbox" name="modules" value="despesas"><span><b>Despesas</b><small>Reconsulta diariamente o período informado.</small></span></label>
-    </div>
-    <div class="sync-settings">
-      <label>Data inicial<input type="date" name="start_date" value="{{ default_start }}" required></label>
-      <label>Data final<input type="date" name="end_date" value="{{ default_end }}" required></label>
-      <label>Limite de páginas/blocos<input type="number" name="max_blocks" min="1" max="2000" value="300"></label>
-      <label class="check"><input type="checkbox" name="sales_details" value="1" checked> Atualizar itens relacionados ao faturamento</label>
-      <label class="check"><input type="checkbox" name="purchase_details" value="1" checked> Atualizar detalhes/itens de compras</label>
-    </div>
-    <div class="actions">
-      <button class="btn primary" type="submit">Forçar sincronização do período</button>
-    </div>
-    <p class="hint"><b>Importante:</b> esta rotina faz novas chamadas à API mesmo para registros já existentes. A gravação continua por atualização/upsert, portanto não cria uma segunda NF/título apenas por reprocessar o período.</p>
-  </form>
-</section>
 
-<section class="panel">
-  <div class="panel-title"><div><h2>Índice local de páginas ERPFlex</h2><p class="hint">Mapa persistente das páginas/offsets já observados. Ele é apenas um acelerador de navegação; os documentos oficiais continuam nas tabelas centrais.</p></div><span>{{ page_index|length }} módulo(s)</span></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Módulo</th><th>Páginas/blocos indexados</th><th>Data mais antiga</th><th>Data mais recente</th><th>Última validação</th></tr></thead>
-    <tbody>
-      {% for i in page_index %}<tr><td><b>{{ i.module }}</b></td><td>{{ i.pages }}</td><td>{{ i.from or '—' }}</td><td>{{ i.to or '—' }}</td><td>{{ i.last_checked_at.strftime('%d/%m/%Y %H:%M') if i.last_checked_at else '—' }}</td></tr>
-      {% else %}<tr><td colspan="5" class="empty">O índice será preenchido automaticamente nas próximas sincronizações ERPFlex.</td></tr>{% endfor %}
-    </tbody>
-  </table></div>
-</section>
+  <div class="sync-manual-block">
+    <h3>Reprocessar período</h3><p class="hint">Ferramenta de auditoria/recuperação. Faz novas chamadas à API, mantendo UPSERT e sem duplicar documentos.</p>
+    <form method="post" action="/sincronizacao/erpflex-forcar" id="force-sync-form">
+      <div class="sync-module-compact">{% for mod,label in [('orders','Pedidos'),('faturamento','Faturamento'),('receber','Receber'),('pagar','Pagar'),('compras','Compras'),('despesas','Despesas')] %}<label><input type="checkbox" name="modules" value="{{ mod }}" {% if mod in ['faturamento','receber'] %}checked{% endif %}> {{ label }}</label>{% endfor %}</div>
+      <div class="sync-settings" style="margin-top:10px"><label>De<input type="date" name="start_date" value="{{ default_start }}" required></label><label>Até<input type="date" name="end_date" value="{{ default_end }}" required></label><label>Limite<input type="number" name="max_blocks" min="1" max="2000" value="300"></label><label class="check"><input type="checkbox" name="sales_details" value="1" checked> Atualizar itens de faturamento</label><label class="check"><input type="checkbox" name="purchase_details" value="1" checked> Atualizar itens de compras</label></div>
+      <button class="btn primary" type="submit">Reprocessar período</button>
+    </form>
+  </div>
 
-<section class="panel">
-  <div class="panel-title"><div><h2>NF Stock</h2><p class="hint">NF-e de entrada e documentos indefinidos.</p></div><span class="badge {{ 'ok' if nf_configured else 'erro' }}">{{ 'Configurado' if nf_configured else 'Não configurado' }}</span></div>
-  <form method="post" action="/sincronizacao/nfstock" class="sync-settings">
-    <label>Data inicial<input type="date" name="start_date" value="{{ default_start }}" required></label>
-    <label>Data final<input type="date" name="end_date" value="{{ default_end }}" required></label>
-    <label>Máximo de páginas<input type="number" name="max_pages" min="1" max="500" value="100"></label>
-    <div class="actions"><button class="btn primary" type="submit">Sincronizar NF Stock</button><button class="btn" type="button" onclick="testConn('nfstock')">Testar conexão</button></div>
-  </form>
-  <p class="hint">Credenciais: {{ 'banco central' if integrations.nfstock.source=='database' else 'variáveis de ambiente' }}. <a href="/integracoes">Editar</a>.</p>
-</section>
+  <div class="sync-manual-block">
+    <div class="panel-title"><div><h3>NF Stock</h3><p class="hint">Atualização de NF-e de entrada pela integração independente.</p></div><span class="badge {{ 'ok' if nf_configured else 'erro' }}">{{ 'Configurado' if nf_configured else 'Não configurado' }}</span></div>
+    <form method="post" action="/sincronizacao/nfstock" class="sync-settings"><label>De<input type="date" name="start_date" value="{{ default_start }}" required></label><label>Até<input type="date" name="end_date" value="{{ default_end }}" required></label><label>Máx. páginas<input type="number" name="max_pages" min="1" max="500" value="100"></label><div class="actions"><button class="btn primary" type="submit">Sincronizar NF Stock</button><button class="btn" type="button" onclick="testConn('nfstock')">Testar conexão</button></div></form>
+  </div>
+
+  <details class="sync-advanced" style="margin-top:10px"><summary>Índice local de páginas ERPFlex</summary><div class="table-wrap"><table><thead><tr><th>Módulo</th><th>Páginas/blocos</th><th>Mais antiga</th><th>Mais recente</th><th>Última validação</th></tr></thead><tbody>{% for i in page_index %}<tr><td><b>{{ i.module }}</b></td><td>{{ i.pages }}</td><td>{{ i.from or '—' }}</td><td>{{ i.to or '—' }}</td><td>{{ i.last_checked_at.strftime('%d/%m/%Y %H:%M') if i.last_checked_at else '—' }}</td></tr>{% else %}<tr><td colspan="5" class="empty">Índice ainda não preenchido.</td></tr>{% endfor %}</tbody></table></div></details>
+</details>
 
 <div id="test-result"></div>
 <section class="panel sync-live-panel" id="sync-live-panel" hidden aria-live="polite">
-  <div class="panel-title sync-live-head">
-    <div>
-      <h2>Sincronização em andamento</h2>
-      <p class="hint" id="sync-progress-subtitle">Acompanhando o processamento em tempo real.</p>
-    </div>
-    <span class="badge em_execucao" id="sync-progress-status">EM EXECUÇÃO</span>
-  </div>
-  <div class="sync-progress-summary">
-    <div><b id="sync-progress-module">Preparando…</b><small id="sync-progress-phase">Aguardando worker</small></div>
-    <strong id="sync-progress-percent">0%</strong>
-  </div>
-  <div class="sync-progress-track" role="progressbar" aria-label="Progresso estimado da sincronização" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="sync-progress-track">
-    <div class="sync-progress-bar" id="sync-progress-bar"></div>
-  </div>
-  <div class="sync-progress-meta">
-    <span id="sync-progress-detail">Iniciando…</span>
-    <span id="sync-progress-heartbeat">Aguardando sinal do processo…</span>
-  </div>
-  <div class="sync-progress-warning" id="sync-progress-warning" hidden></div>
-  <p class="hint sync-progress-note">O percentual é exato durante processamento de registros e estimado nas etapas de localização/paginação da API.</p>
+  <div class="panel-title sync-live-head"><div><h2>Sincronização em andamento</h2><p class="hint" id="sync-progress-subtitle">Acompanhando processamento.</p></div><span class="badge em_execucao" id="sync-progress-status">EM EXECUÇÃO</span></div>
+  <div class="sync-progress-summary"><div><b id="sync-progress-module">Preparando…</b><small id="sync-progress-phase">Aguardando worker</small></div><strong id="sync-progress-percent">0%</strong></div>
+  <div class="sync-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="sync-progress-track"><div class="sync-progress-bar" id="sync-progress-bar"></div></div>
+  <div class="sync-progress-meta"><span id="sync-progress-detail">Iniciando…</span><span id="sync-progress-heartbeat">Aguardando sinal…</span></div><div class="sync-progress-warning" id="sync-progress-warning" hidden></div>
 </section>
-<section class="panel">
-  <div class="panel-title"><h2>Histórico por módulo</h2><span>{{ runs|length }} execução(ões)</span></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>ID</th><th>Fonte</th><th>Módulo</th><th>Status</th><th>Encontrados</th><th>Processados</th><th>Novos</th><th>Atualizados</th><th>Erros</th><th>Etapa</th><th>Detalhes</th><th>Início</th></tr></thead>
-    <tbody>{% for r in runs %}<tr data-run="{{ r.id }}" data-run-status="{{ r.status }}"><td>{{ r.id }}</td><td>{{ r.source }}</td><td>{{ r.module }}</td><td data-field="status"><span class="badge {{ r.status|lower }}">{{ r.status }}</span></td><td data-field="found">{{ r.total_found }}</td><td data-field="processed">{{ r.total_processed }}</td><td data-field="inserted">{{ r.total_inserted }}</td><td data-field="updated">{{ r.total_updated }}</td><td data-field="errors">{{ r.total_errors }}</td><td data-field="step">{{ r.current_step or '—' }}</td><td data-field="message">{% if r.message %}<details class="sync-detail"><summary>Ver</summary><pre>{{ r.message }}</pre></details>{% else %}—{% endif %}</td><td>{{ r.started_at.strftime('%d/%m/%Y %H:%M') if r.started_at else '' }}</td></tr>{% else %}<tr><td colspan="12" class="empty">Nenhuma sincronização executada.</td></tr>{% endfor %}</tbody>
-  </table></div>
-</section>
+
+<section class="panel"><div class="panel-title"><div><h2>Histórico recente</h2><p class="hint">As execuções mais novas aparecem primeiro.</p></div><span>{{ runs|length }} execução(ões)</span></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Fonte</th><th>Módulo</th><th>Status</th><th>Processados</th><th>Novos</th><th>Atualizados</th><th>Erros</th><th>Etapa</th><th>Início</th></tr></thead><tbody>{% for r in runs %}<tr data-run="{{ r.id }}" data-run-status="{{ r.status }}"><td>{{ r.id }}</td><td>{{ r.source }}</td><td>{{ r.module }}</td><td data-field="status"><span class="badge {{ r.status|lower }}">{{ r.status }}</span></td><td data-field="processed">{{ r.total_processed }}</td><td data-field="inserted">{{ r.total_inserted }}</td><td data-field="updated">{{ r.total_updated }}</td><td data-field="errors">{{ r.total_errors }}</td><td data-field="step">{{ r.current_step or '—' }}</td><td>{{ r.started_at.strftime('%d/%m/%Y %H:%M') if r.started_at else '' }}</td></tr>{% else %}<tr><td colspan="10" class="empty">Nenhuma sincronização executada.</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}
 
 {% block scripts %}

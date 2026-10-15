@@ -14,6 +14,9 @@
 <nav class="bi-tabs" aria-label="Áreas do BI">
 {% for key,label in sections.items() %}<a href="/bi/{{ key }}?period={{ period }}&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}" class="{% if section==key %}active{% endif %}">{{ label }}</a>{% endfor %}
 </nav>
+<select class="bi-mobile-nav" aria-label="Área do BI" onchange="if(this.value) location.href=this.value">
+{% for key,label in sections.items() %}<option value="/bi/{{ key }}?period={{ period }}&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}" {% if section==key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+</select>
 
 <section class="panel bi-filter-panel">
 <form method="get" class="bi-filters">

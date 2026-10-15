@@ -1,3 +1,7 @@
+# V1.3.40 — Interface configurável, acesso e BI mobile
+
+Esta versão simplifica a Central de Sincronização, cria personalização de cores e legendas por empresa, melhora o BI para smartphone, adiciona paginação automática às tabelas detalhadas e amplia o controle de acesso com permissões próprias para BI e customização visual. O schema passa para 15 de forma aditiva, com `ui_theme_settings` e `ui_label_overrides`.
+
 # V1.3.18 — Consultas de documentos, filtros e espelho DANFE
 
 Filtros rápidos, colunas personalizáveis, paginação e visualização/impressão de NF-e em formato de espelho DANFE.

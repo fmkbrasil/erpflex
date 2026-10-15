@@ -4,7 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=16">
+  <link rel="stylesheet" href="/static/style.css?v=17">
+  <style>
+    :root{
+      --bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};
+      --blue:{{ ui_theme.primary_color }};--nav:{{ ui_theme.nav_color }};--secondary:{{ ui_theme.secondary_color }};--secondary-text:{{ ui_theme.secondary_text_color }};--green:{{ ui_theme.success_color }};
+      --amber:{{ ui_theme.warning_color }};--red:{{ ui_theme.danger_color }};--btn-text:{{ ui_theme.button_text_color }};
+    }
+    .btn{background:var(--secondary);color:var(--secondary-text)}.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--btn-text)!important}.topbar{background:var(--nav)!important}body{background:var(--bg)!important;color:var(--ink)!important}.panel,.metric,.info-card,.bi-card,.bi-kpi{background:var(--panel)!important}
+  </style>
 </head>
 <body>
 <header class="topbar">
@@ -12,7 +20,7 @@
   <nav>
     {% set logistics_active = request.url.path.startswith('/logistica') or request.url.path.startswith('/roteirizar') or request.url.path.startswith('/roteiros') or request.url.path.startswith('/painel-entregas') or request.url.path.startswith('/baixa-entregas') or request.url.path.startswith('/painel-gerencial') or request.url.path.startswith('/relatorios-gerenciais') or request.url.path.startswith('/ocorrencias') or request.url.path.startswith('/responsaveis') or request.url.path.startswith('/regras-entrega') or request.url.path.startswith('/parametros-logistica') or request.url.path.startswith('/custos-roteiro') or request.url.path.startswith('/importar-logistica') or request.url.path.startswith('/entregas/') %}
     {% set can_logistics = can_perm('logistica.view') or can_perm('roteirizar.view') or can_perm('roteiros.view') or can_perm('painel_entregas.view') or can_perm('baixa.manage') or can_perm('painel_gerencial.view') or can_perm('relatorios.view') or can_perm('ocorrencias.view') or can_perm('responsaveis.view') or can_perm('importar.manage') %}
-    {% if can_perm('dashboard.view') %}<a href="/" class="{% if request.url.path=='/' %}active{% endif %}">Início</a><a href="/bi/visao-geral" class="{% if request.url.path.startswith('/bi') or request.url.path.startswith('/dashboard-gerencial') %}active{% endif %}">BI Gerencial</a>{% endif %}
+    {% if can_perm('dashboard.view') %}<a href="/" class="{% if request.url.path=='/' %}active{% endif %}">Início</a>{% endif %}{% if can_perm('bi.view') %}<a href="/bi/visao-geral" class="{% if request.url.path.startswith('/bi') or request.url.path.startswith('/dashboard-gerencial') %}active{% endif %}">BI Gerencial</a>{% endif %}
     {% if can_perm('sync.manage') %}<a href="/sincronizacao" class="{% if '/sincronizacao' in request.url.path %}active{% endif %}">Sincronização</a><a href="/integracoes" class="{% if '/integracoes' in request.url.path %}active{% endif %}">Integrações</a>{% endif %}
     {% if can_perm('cadastros.view') %}<a href="/cadastros" class="{% if '/cadastros' in request.url.path %}active{% endif %}">Cadastros</a>{% endif %}
     {% if can_perm('faturamento.view') %}<a href="/faturamento" class="{% if '/faturamento' in request.url.path %}active{% endif %}">Faturamento</a>{% endif %}
@@ -20,6 +28,7 @@
     {% if can_perm('compras.view') %}<a href="/compras" class="{% if '/compras' in request.url.path %}active{% endif %}">Compras / NF-e</a>{% endif %}
     {% if can_logistics %}<a href="/logistica/inicio" class="{% if logistics_active %}active{% endif %}">Logística</a>{% endif %}
     {% if can_perm('diagnostico.view') %}<a href="/diagnostico" class="{% if '/diagnostico' in request.url.path %}active{% endif %}">Diagnóstico</a>{% endif %}
+    {% if can_perm('ui.customize') %}<a href="/aparencia" class="{% if '/aparencia' in request.url.path %}active{% endif %}">Aparência</a>{% endif %}
     {% if can_perm('admin.manage') %}<a href="/administracao" class="{% if '/administracao' in request.url.path %}active{% endif %}">Administração</a>{% endif %}
   </nav>
   {% if auth_enabled and current_user %}<a class="user-chip" href="/minha-conta"><b>{{ current_user.name or current_user.username }}</b><small>{{ current_profile.name if current_profile else ('Administrador' if current_user.is_superuser else '') }}</small></a><a class="logout" href="/logout">Sair</a>{% endif %}
@@ -70,6 +79,29 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
+{% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Clique e depois selecione um título, botão ou cabeçalho">✎ Editar legendas</button>{% endif %}
+<script>
+window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};
+(function(){
+  const map=window.UI_LABEL_OVERRIDES||{};
+  const editableSelector='h1,h2,h3,h4,th,button,a,summary,label,.bi-kpi>span,.metric>span,.info-card>span,.module-nav-title a,.bi-tabs a';
+  function directTextNodes(el){return [...el.childNodes].filter(n=>n.nodeType===Node.TEXT_NODE && n.nodeValue.trim());}
+  function applyLabels(){document.querySelectorAll(editableSelector).forEach(el=>{directTextNodes(el).forEach(n=>{const raw=n.nodeValue.trim();if(map[raw]){const pre=n.nodeValue.match(/^\s*/)?.[0]||'';const post=n.nodeValue.match(/\s*$/)?.[0]||'';n.nodeValue=pre+map[raw]+post;}});});}
+  applyLabels();
+  const toggle=document.getElementById('label-editor-toggle');let editMode=false;
+  if(toggle){toggle.addEventListener('click',()=>{editMode=!editMode;document.body.classList.toggle('label-edit-mode',editMode);toggle.classList.toggle('active',editMode);toggle.textContent=editMode?'✓ Finalizar edição':'✎ Editar legendas';});
+    document.addEventListener('click',async e=>{if(!editMode)return;const el=e.target.closest(editableSelector);if(!el||el===toggle||el.closest('.label-editor-toggle'))return;e.preventDefault();e.stopPropagation();const nodes=directTextNodes(el);if(!nodes.length)return;const visible=nodes[0].nodeValue.trim();const original=Object.keys(map).find(k=>map[k]===visible)||visible;const custom=prompt('Nova legenda para “'+visible+'”:',visible);if(!custom||custom.trim()===visible)return;const body=new URLSearchParams({original_text:original,custom_text:custom.trim()});const r=await fetch('/aparencia/legenda',{method:'POST',headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'},body});if(r.ok)location.reload();else alert('Não foi possível salvar a legenda.');},true);}
+
+  function initTablePagination(table){
+    if(table.dataset.noPagination!==undefined||table.classList.contains('operator-table')||table.classList.contains('routing-table')||table.classList.contains('closeout-table')||(table.closest('.panel')&&table.closest('.panel').querySelector('.pagination-bar')))return;
+    const tbody=table.tBodies[0];if(!tbody)return;const rows=[...tbody.rows];if(rows.length<=25)return;
+    let page=1,per=25;const wrap=table.closest('.table-wrap')||table.parentElement;const bar=document.createElement('div');bar.className='table-pager';bar.innerHTML='<span class="pager-info"></span><div><label>Linhas <select><option>25</option><option>50</option><option>100</option></select></label><button type="button" class="btn small prev">‹</button><span class="pager-page"></span><button type="button" class="btn small next">›</button></div>';wrap.appendChild(bar);
+    const render=()=>{const pages=Math.max(1,Math.ceil(rows.length/per));page=Math.min(page,pages);rows.forEach((r,i)=>r.hidden=!(i>=(page-1)*per&&i<page*per));bar.querySelector('.pager-info').textContent=rows.length+' registro(s)';bar.querySelector('.pager-page').textContent=page+' / '+pages;bar.querySelector('.prev').disabled=page<=1;bar.querySelector('.next').disabled=page>=pages;};
+    bar.querySelector('select').addEventListener('change',e=>{per=Number(e.target.value);page=1;render();});bar.querySelector('.prev').addEventListener('click',()=>{if(page>1){page--;render();}});bar.querySelector('.next').addEventListener('click',()=>{if(page<Math.ceil(rows.length/per)){page++;render();}});render();
+  }
+  document.querySelectorAll('.table-wrap table,.bi-card table,.panel table').forEach(initTablePagination);
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

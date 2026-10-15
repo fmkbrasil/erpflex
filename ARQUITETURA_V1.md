@@ -251,3 +251,14 @@ Regras estruturais:
 - Linhas dependentes de dados não normalizados permanecem indisponíveis.
 
 Schema 14: nova tabela aditiva `dre_expense_mappings(company_id, source_category, dre_group, updated_at)`.
+
+
+## V1.3.40 — camada de apresentação configurável e acesso
+
+O schema 15 adiciona duas tabelas exclusivamente de apresentação: `ui_theme_settings` (uma configuração de tema por empresa) e `ui_label_overrides` (substituições de legendas por empresa). Nenhuma delas altera os dados operacionais. O layout base injeta as cores em variáveis CSS e aplica as legendas no navegador somente aos elementos de interface elegíveis.
+
+A permissão `bi.view` separa a consulta do BI da permissão da tela inicial. A permissão `ui.customize` protege a tela de Aparência e o modo de edição rápida de legendas. Perfis legados que tinham `dashboard.view` recebem `bi.view` durante a migração para preservar o comportamento anterior.
+
+A paginação introduzida na camada de interface limita a quantidade de linhas visíveis por página (25/50/100) nas tabelas padrão. Tabelas operacionais com seleção em lote, como roteirização e baixa, não são paginadas automaticamente para evitar alteração do fluxo operacional.
+
+No smartphone, o BI usa navegação compacta por seletor, grids responsivos de KPIs/filtros e rolagem controlada de tabelas detalhadas.
