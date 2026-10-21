@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=19">
   <style>
     :root{
       --bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};
@@ -14,7 +14,7 @@
     .btn{background:var(--secondary);color:var(--secondary-text)}.btn.primary{background:var(--blue);border-color:var(--blue);color:var(--btn-text)!important}.topbar{background:var(--nav)!important}body{background:var(--bg)!important;color:var(--ink)!important}.panel,.metric,.info-card,.bi-card,.bi-kpi{background:var(--panel)!important}
   </style>
 </head>
-<body class="{% if request.url.path.startswith('/bi') or request.url.path.startswith('/dashboard-gerencial') %}page-bi{% endif %}">
+<body class="{% if request.url.path == '/mobile' %}page-mobile-home {% endif %}{% if request.url.path.startswith('/bi') or request.url.path.startswith('/dashboard-gerencial') %}page-bi{% endif %}">
 {% set logistics_active = request.url.path.startswith('/logistica') or request.url.path.startswith('/roteirizar') or request.url.path.startswith('/roteiros') or request.url.path.startswith('/painel-entregas') or request.url.path.startswith('/baixa-entregas') or request.url.path.startswith('/painel-gerencial') or request.url.path.startswith('/relatorios-gerenciais') or request.url.path.startswith('/ocorrencias') or request.url.path.startswith('/responsaveis') or request.url.path.startswith('/regras-entrega') or request.url.path.startswith('/parametros-logistica') or request.url.path.startswith('/custos-roteiro') or request.url.path.startswith('/importar-logistica') or request.url.path.startswith('/entregas/') %}
 {% set can_logistics = can_perm('logistica.view') or can_perm('roteirizar.view') or can_perm('roteiros.view') or can_perm('painel_entregas.view') or can_perm('baixa.manage') or can_perm('painel_gerencial.view') or can_perm('relatorios.view') or can_perm('ocorrencias.view') or can_perm('responsaveis.view') or can_perm('importar.manage') %}
 {% set system_active = request.url.path.startswith('/sincronizacao') or request.url.path.startswith('/integracoes') or request.url.path.startswith('/diagnostico') or request.url.path.startswith('/aparencia') or request.url.path.startswith('/administracao') %}
@@ -48,7 +48,7 @@
   <details class="mobile-app-menu">
     <summary aria-label="Abrir menu">☰ <span>Menu</span></summary>
     <div class="mobile-app-menu-panel">
-      {% if can_perm('dashboard.view') %}<a href="/">Início</a>{% endif %}
+      {% if can_perm('dashboard.view') %}<a href="/mobile">Início</a>{% endif %}
       {% if can_perm('bi.view') %}<a href="/bi/visao-geral">BI Gerencial</a>{% endif %}
       {% if can_perm('faturamento.view') %}<a href="/faturamento">Faturamento</a>{% endif %}
       {% if can_perm('financeiro.view') %}<a href="/financeiro">Financeiro</a>{% endif %}
@@ -64,6 +64,13 @@
     </div>
   </details>
 </header>
+<nav class="mobile-bottom-nav" aria-label="Navegação rápida no celular">
+  <a href="/mobile" class="{% if request.url.path == '/mobile' %}active{% endif %}"><b>⌂</b><span>Início</span></a>
+  {% if can_perm('bi.view') %}<a href="/bi/visao-geral" class="{% if request.url.path.startswith('/bi') %}active{% endif %}"><b>▦</b><span>BI</span></a>{% endif %}
+  {% if can_perm('faturamento.view') %}<a href="/faturamento" class="{% if request.url.path.startswith('/faturamento') %}active{% endif %}"><b>↗</b><span>Faturamento</span></a>{% endif %}
+  {% if can_perm('financeiro.view') %}<a href="/financeiro" class="{% if request.url.path.startswith('/financeiro') %}active{% endif %}"><b>$</b><span>Financeiro</span></a>{% endif %}
+  {% if can_logistics %}<a href="/logistica/inicio" class="{% if logistics_active %}active{% endif %}"><b>◇</b><span>Logística</span></a>{% endif %}
+</nav>
 <main>
   {% if company %}
   <div class="company-strip">
@@ -112,7 +119,7 @@
 </main>
 {% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Ative e clique em um texto da interface para editar">✎ Editar textos</button>{% endif %}
 <script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_CAN_CUSTOMIZE={{ 'true' if can_perm('ui.customize') else 'false' }};</script>
-<script src="/static/ui.js?v=18"></script>
+<script src="/static/ui.js?v=19"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -50,7 +50,15 @@ APP_USER = os.getenv("APP_USER") or "admin"
 APP_PASSWORD = os.getenv("APP_PASSWORD") or ""
 SECRET_KEY = os.getenv("SECRET_KEY") or "desenvolvimento-troque-em-producao"
 
-app = FastAPI(title=APP_NAME, version="1.3.48")
+MOBILE_USER_AGENT_RE = re.compile(r"android|iphone|ipad|ipod|mobile|windows phone|opera mini|opera mobi", re.I)
+
+def _is_mobile_request(request: Request) -> bool:
+    # Client Hint (Chrome/Edge Android) when available, with User-Agent fallback.
+    if (request.headers.get("sec-ch-ua-mobile") or "").strip() == "?1":
+        return True
+    return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
+
+app = FastAPI(title=APP_NAME, version="1.3.49")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -191,7 +199,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.48", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.49", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -212,7 +220,7 @@ def login(request: Request, user: str = Form(""), password: str = Form("")):
             request.session["company_id"] = ac.company.id
             if ac.branch:
                 request.session["branch_id"] = ac.branch.id
-            return RedirectResponse("/", status_code=303)
+            return RedirectResponse("/mobile" if _is_mobile_request(request) else "/", status_code=303)
     return render(request, "login.html", error="Usuário ou senha inválidos.")
 
 
@@ -222,20 +230,26 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+def _dashboard_counts(db, cid: int) -> dict:
+    return {
+        "orders": db.scalar(select(func.count(SalesOrder.id)).where(SalesOrder.company_id == cid)) or 0,
+        "sales_invoices": db.scalar(select(func.count(SalesInvoice.id)).where(SalesInvoice.company_id == cid)) or 0,
+        "purchase_invoices": db.scalar(select(func.count(PurchaseInvoice.id)).where(PurchaseInvoice.company_id == cid)) or 0,
+        "products": db.scalar(select(func.count(Product.id)).where(Product.company_id == cid)) or 0,
+        "partners": db.scalar(select(func.count(Partner.id)).where(Partner.company_id == cid)) or 0,
+        "deliveries": db.scalar(select(func.count(Delivery.id)).where(Delivery.company_id == cid)) or 0,
+        "receivable": db.scalar(select(func.count(FinancialTitle.id)).where(FinancialTitle.company_id == cid, FinancialTitle.kind == "RECEBER")) or 0,
+        "payable": db.scalar(select(func.count(FinancialTitle.id)).where(FinancialTitle.company_id == cid, FinancialTitle.kind.in_(["PAGAR", "DESPESA"]))) or 0,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
+    if _is_mobile_request(request) and request.query_params.get("desktop") != "1":
+        return RedirectResponse("/mobile", status_code=302)
     with SessionLocal() as db:
         cid, company = company_context(db, request)
-        counts = {
-            "orders": db.scalar(select(func.count(SalesOrder.id)).where(SalesOrder.company_id == cid)) or 0,
-            "sales_invoices": db.scalar(select(func.count(SalesInvoice.id)).where(SalesInvoice.company_id == cid)) or 0,
-            "purchase_invoices": db.scalar(select(func.count(PurchaseInvoice.id)).where(PurchaseInvoice.company_id == cid)) or 0,
-            "products": db.scalar(select(func.count(Product.id)).where(Product.company_id == cid)) or 0,
-            "partners": db.scalar(select(func.count(Partner.id)).where(Partner.company_id == cid)) or 0,
-            "deliveries": db.scalar(select(func.count(Delivery.id)).where(Delivery.company_id == cid)) or 0,
-            "receivable": db.scalar(select(func.count(FinancialTitle.id)).where(FinancialTitle.company_id == cid, FinancialTitle.kind == "RECEBER")) or 0,
-            "payable": db.scalar(select(func.count(FinancialTitle.id)).where(FinancialTitle.company_id == cid, FinancialTitle.kind.in_(["PAGAR", "DESPESA"]))) or 0,
-        }
+        counts = _dashboard_counts(db, cid)
         recon = dict(db.execute(
             select(PurchaseInvoice.reconciliation_status, func.count(PurchaseInvoice.id))
             .where(PurchaseInvoice.company_id == cid)
@@ -244,6 +258,15 @@ def dashboard(request: Request):
         last_runs = db.scalars(select(SyncRun).where(SyncRun.company_id == cid).order_by(SyncRun.id.desc()).limit(8)).all()
         latest = db.scalar(select(SyncRun).where(SyncRun.company_id == cid).order_by(SyncRun.id.desc()).limit(1))
     return render(request, "dashboard.html", company=company, counts=counts, recon=recon, runs=last_runs, latest=latest)
+
+
+@app.get("/mobile", response_class=HTMLResponse)
+def mobile_home(request: Request):
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        counts = _dashboard_counts(db, cid)
+        latest = db.scalar(select(SyncRun).where(SyncRun.company_id == cid).order_by(SyncRun.id.desc()).limit(1))
+    return render(request, "mobile_home.html", company=company, counts=counts, latest=latest)
 
 
 def _date_value(value: str | None):

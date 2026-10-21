@@ -7,7 +7,7 @@
     '.module-nav a','.module-nav-title span','.module-nav-group>b','label','.hint','.hint-block',
     '.hero p','.panel-title p','.panel-title span','.panel>p','.bi-card>p','.bi-executive-note p',
     '.bi-note','.bi-period','.bi-kicker','.bi-sync','.bi-data-warning','.bi-unavailable','.bi-empty',
-    '.alert','.status-tabs a','.mobile-menu-divider','.bi-kpi>span','.bi-kpi>small','.metric>span',
+    '.alert','.status-tabs a','.mobile-menu-divider','.mobile-bottom-nav a span','.mobile-home-card b','.mobile-home-card small','.mobile-home-feature b','.mobile-home-feature small','.mobile-home-feature em','.mobile-home-bi-shortcuts a','.bi-kpi>span','.bi-kpi>small','.metric>span',
     '.info-card>span','.theme-color-field span','select option[value=""]','select[name="situation"] option',
     '[data-ui-label]'
   ].join(',');

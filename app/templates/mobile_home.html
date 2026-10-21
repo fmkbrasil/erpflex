@@ -1,0 +1,45 @@
+{% extends 'base.html' %}{% block title %}Início mobile · {{ app_name }}{% endblock %}{% block content %}
+<section class="mobile-home-hero" data-ui-label>
+  <span class="mobile-home-kicker">Acesso rápido</span>
+  <h1>O que você quer consultar?</h1>
+  <p>Escolha uma área. No celular, cada BI abre com submenus para exibir somente o resultado que você deseja analisar.</p>
+</section>
+
+{% if can_perm('bi.view') %}
+<a class="mobile-home-feature" href="/bi/visao-geral">
+  <span class="mobile-home-feature-icon">▦</span>
+  <span><b>BI Gerencial</b><small>Faturamento, receber, pagar, fluxo de caixa, DRE, comercial, produtos, compras e logística.</small></span>
+  <em>Abrir BI ›</em>
+</a>
+{% endif %}
+
+<div class="mobile-home-grid">
+  {% if can_perm('faturamento.view') %}<a class="mobile-home-card" href="/faturamento"><span>↗</span><b>Faturamento</b><small>{{ counts.sales_invoices }} NF-e na base</small></a>{% endif %}
+  {% if can_perm('financeiro.view') %}<a class="mobile-home-card" href="/bi/contas-receber"><span>↓</span><b>Contas a Receber</b><small>{{ counts.receivable }} título(s)</small></a>{% endif %}
+  {% if can_perm('financeiro.view') %}<a class="mobile-home-card" href="/bi/contas-pagar"><span>↑</span><b>Contas a Pagar</b><small>{{ counts.payable }} título(s)</small></a>{% endif %}
+  {% if can_perm('compras.view') %}<a class="mobile-home-card" href="/bi/compras"><span>▣</span><b>Compras</b><small>{{ counts.purchase_invoices }} NF-e de entrada</small></a>{% endif %}
+  {% if can_logistics %}<a class="mobile-home-card" href="/logistica/inicio"><span>◇</span><b>Logística</b><small>{{ counts.deliveries }} entrega(s)</small></a>{% endif %}
+  {% if can_perm('cadastros.view') %}<a class="mobile-home-card" href="/cadastros"><span>◎</span><b>Cadastros</b><small>{{ counts.products }} produto(s)</small></a>{% endif %}
+</div>
+
+{% if can_perm('bi.view') %}
+<section class="mobile-home-bi-shortcuts">
+  <h2>Atalhos do BI</h2>
+  <div>
+    <a href="/bi/faturamento">Faturamento</a>
+    <a href="/bi/contas-receber">Receber</a>
+    <a href="/bi/contas-pagar">Pagar</a>
+    <a href="/bi/fluxo-caixa">Fluxo de Caixa</a>
+    <a href="/bi/dre">DRE</a>
+    <a href="/bi/vendedores">Vendedores</a>
+    <a href="/bi/clientes">Clientes</a>
+    <a href="/bi/produtos">Produtos</a>
+  </div>
+</section>
+{% endif %}
+
+<div class="mobile-home-footer-note">
+  {% if latest %}<span>Última sincronização: {{ latest.finished_at or latest.started_at }}</span>{% else %}<span>Nenhuma sincronização registrada.</span>{% endif %}
+  <a href="/?desktop=1">Abrir versão desktop</a>
+</div>
+{% endblock %}
