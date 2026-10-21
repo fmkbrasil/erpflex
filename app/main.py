@@ -33,15 +33,16 @@ from .db import (
 )
 from .access import access_context, add_audit, auth_configured, can, current_user
 from .security import hash_password, verify_password
-from .sync_service import start_sync, start_sync_batch, recover_interrupted_sync_runs, page_index_summary, _purchase_items_from_record, _purchase_item_value
+from .sync_service import start_sync, start_sync_batch, recover_interrupted_sync_runs, page_index_summary, _purchase_items_from_record, _purchase_item_value, _enrich_customer_master, _partner
 from .integration_settings import (
     encryption_fingerprint, encryption_is_default, encryption_source, get_erpflex_settings, get_nfstock_settings, get_smtp_settings,
-    integration_public_view, mark_test_result, save_erpflex, save_nfstock, save_smtp,
+    integration_public_view, mark_test_result, save_erpflex, save_erpflex_v1, save_nfstock, save_smtp,
 )
 from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, endereco_busca, endereco_entrega_efetivo, maps_url, raw_channel, regiao_especial, waze_url
 from .logistics_import import import_logistics_file
-from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json
+from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES
 from .bi_service import build_bi, SECTIONS, DRE_GROUPS
+from .xml_parser import parse_nfe
 
 BASE_DIR = Path(__file__).resolve().parent
 APP_NAME = os.getenv("APP_NAME") or "Plataforma Gestão Integrada"
@@ -49,7 +50,7 @@ APP_USER = os.getenv("APP_USER") or "admin"
 APP_PASSWORD = os.getenv("APP_PASSWORD") or ""
 SECRET_KEY = os.getenv("SECRET_KEY") or "desenvolvimento-troque-em-producao"
 
-app = FastAPI(title=APP_NAME, version="1.3.40")
+app = FastAPI(title=APP_NAME, version="1.3.48")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -157,15 +158,16 @@ def render(request: Request, template: str, **ctx):
                 ac = access_context(db, request)
             except Exception:
                 ac = None
-        if ac and ac.company:
-            row = db.scalar(select(UIThemeSetting).where(UIThemeSetting.company_id == ac.company.id).limit(1))
+        ui_company = ac.company if ac and ac.company else db.scalar(select(Company).order_by(Company.id).limit(1))
+        if ui_company:
+            row = db.scalar(select(UIThemeSetting).where(UIThemeSetting.company_id == ui_company.id).limit(1))
             if row:
                 for key in theme:
                     value = getattr(row, key, None)
                     if value:
                         theme[key] = value
             labels = db.scalars(select(UILabelOverride).where(
-                UILabelOverride.company_id == ac.company.id, UILabelOverride.active.is_(True)
+                UILabelOverride.company_id == ui_company.id, UILabelOverride.active.is_(True)
             ).order_by(UILabelOverride.original_text)).all()
             label_overrides = {r.original_text: r.custom_text for r in labels if r.original_text and r.custom_text}
     if ac:
@@ -189,7 +191,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.40", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.48", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -376,7 +378,7 @@ def dashboard_gerencial_legacy(request: Request):
 
 
 def _bi_filters_from_request(request: Request) -> dict[str, str]:
-    keys = ("customer_id", "supplier_id", "state", "city", "bank", "wallet", "situation", "product", "seller")
+    keys = ("customer_id", "supplier_id", "state", "city", "bank", "wallet", "situation", "product", "seller", "compare_mode", "compare_from", "compare_to")
     return {k: (request.query_params.get(k) or "").strip() for k in keys}
 
 
@@ -407,7 +409,7 @@ def bi_export_excel(request: Request, period: str = "month", date_from: str = ""
     sheets = [
         ("Faturamento", data['sales']['documents'], ["number","date","partner","value"]),
         ("Receber", data['receivables']['titles'], ["document","partner","due","value","paid","balance","bank","wallet"]),
-        ("Pagar", data['payables']['titles'], ["document","partner","due","value","paid","balance"]),
+        ("Pagar", data['payables']['titles'], ["document","partner","due","status","days_overdue","value","paid","balance"]),
         ("Compras", data['purchases']['documents'], ["number","date","partner","value","reconciliation"]),
     ]
     for title, rows, cols in sheets:
@@ -416,6 +418,31 @@ def bi_export_excel(request: Request, period: str = "month", date_from: str = ""
         for row in rows: sh.append([row.get(c) for c in cols])
         for cell in sh[1]: cell.font=Font(bold=True)
         for col in range(1, len(cols)+1): sh.column_dimensions[get_column_letter(col)].width=22
+    pagar = wb.create_sheet("Pagar Resumo")
+    pagar.append(["Contas a Pagar", company.trade_name or company.name])
+    pagar.append(["Período", f"{data['meta']['start'].strftime('%d/%m/%Y')} a {data['meta']['end'].strftime('%d/%m/%Y')}"])
+    pagar.append([])
+    pagar.append(["Indicador", "Valor"])
+    for label, value in [
+        ("Previsto no período", data['payables']['planned']),
+        ("Realizado no período", data['payables']['realized']),
+        ("Desvio realizado x previsto", data['payables']['variance']),
+        ("Execução do previsto (%)", data['payables']['execution_pct']),
+        ("Vencido em aberto", data['payables']['overdue']),
+        ("Títulos vencidos", data['payables']['overdue_count']),
+        ("Pago em atraso no período", data['payables']['paid_late']),
+        ("Total em aberto", data['payables']['open']),
+        ("Total a vencer", data['payables']['due']),
+    ]:
+        pagar.append([label, value])
+    pagar.append([])
+    pagar.append(["Fluxo de caixa de curto prazo", "Pagamentos previstos", "Recebimentos conhecidos", "Saldo líquido", "Cobertura %"])
+    for row in data['payables']['short_cashflow']:
+        pagar.append([f"Próximos {row['days']} dias", row['payables'], row['receivables'], row['net'], row['coverage_pct']])
+    for cell in pagar[4]: cell.font=Font(bold=True)
+    for cell in pagar[15]: cell.font=Font(bold=True)
+    for col in range(1,6): pagar.column_dimensions[get_column_letter(col)].width=28
+
     dre = wb.create_sheet("DRE Gerencial")
     dre.append(["DRE Gerencial", company.trade_name or company.name])
     dre.append(["Período", f"{data['meta']['start'].strftime('%d/%m/%Y')} a {data['meta']['end'].strftime('%d/%m/%Y')}"])
@@ -477,6 +504,9 @@ async def bi_dre_classificacao(request: Request):
 def bi_section(request: Request, section: str, period: str = "month", date_from: str = "", date_to: str = ""):
     if section not in SECTIONS:
         return RedirectResponse("/bi/visao-geral", status_code=302)
+    # O painel de Faturamento abre no dia atual por padrão. As demais áreas mantêm o mês atual.
+    if section == "faturamento" and request.query_params.get("period") is None and not date_from and not date_to:
+        period = "today"
     filters = _bi_filters_from_request(request)
     with SessionLocal() as db:
         cid, company = company_context(db, request)
@@ -521,7 +551,7 @@ def sync_page(request: Request):
 @app.post("/sincronizacao/worker-config")
 async def save_sync_worker_config(request: Request):
     form = await request.form()
-    allowed = ["products", "banks", "clientes", "orders", "faturamento", "receber", "pagar", "compras", "despesas"]
+    allowed = ["products", "banks", "clientes", "fornecedores", "orders", "faturamento", "receber", "pagar", "compras", "despesas"]
     enabled = set(form.getlist("modules"))
     now = datetime.utcnow()
     with SessionLocal() as db:
@@ -601,6 +631,20 @@ def integracoes_erpflex(
         add_audit(db, ac, "INTEGRACAO_SALVA", "integration", row.id, "ERPFlex atualizado; segredo não registrado no log")
         db.commit()
     return RedirectResponse("/integracoes?saved=erpflex", status_code=303)
+
+
+@app.post("/integracoes/erpflex-v1")
+def integracoes_erpflex_v1(
+    request: Request, base_url: str = Form("http://servicosflex.rpinfo.com.br:9000"),
+    username: str = Form(""), password: str = Form(""), active: str | None = Form(None),
+):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        row = save_erpflex_v1(db, cid, base_url=base_url, username=username, password=password, active=bool(active))
+        ac = access_context(db, request)
+        add_audit(db, ac, "INTEGRACAO_SALVA", "integration", row.id, "ERPFlex Cadastros v1 atualizado; segredo não registrado no log")
+        db.commit()
+    return RedirectResponse("/integracoes?saved=erpflex-v1", status_code=303)
 
 
 @app.post("/integracoes/nfstock")
@@ -693,7 +737,7 @@ def start_erpflex_sync(
     purchase_details: str | None = Form(None),
     sales_details: str | None = Form(None),
 ):
-    allowed = {"products", "orders", "faturamento", "receber", "pagar", "compras", "despesas"}
+    allowed = {"products", "fornecedores", "orders", "faturamento", "receber", "pagar", "compras", "despesas"}
     if module not in allowed:
         return JSONResponse({"error": "módulo inválido"}, status_code=400)
     with SessionLocal() as db:
@@ -718,7 +762,7 @@ def start_erpflex_batch_route(
     purchase_details: str | None = Form(None),
     sales_details: str | None = Form(None),
 ):
-    ordered_allowed = ["products", "banks", "orders", "faturamento", "receber", "pagar", "compras", "despesas", "clientes"]
+    ordered_allowed = ["products", "banks", "fornecedores", "orders", "faturamento", "receber", "pagar", "compras", "despesas", "clientes"]
     if action == "all":
         selected = list(ordered_allowed)
     else:
@@ -809,7 +853,9 @@ def start_nfstock_sync(
 @app.post("/sincronizacao/testar/{source}")
 def test_connection(request: Request, source: str):
     source_key = source.lower()
-    provider = "ERPFLEX" if source_key == "erpflex" else ("NFSTOCK" if source_key == "nfstock" else ("SMTP" if source_key == "smtp" else ""))
+    provider = ("ERPFLEX" if source_key == "erpflex" else
+                ("ERPFLEX_V1" if source_key in {"erpflex-v1", "erpflex_v1", "v1"} else
+                 ("NFSTOCK" if source_key == "nfstock" else ("SMTP" if source_key == "smtp" else ""))))
     if not provider:
         return JSONResponse({"error": "fonte inválida"}, status_code=400)
     with SessionLocal() as db:
@@ -817,6 +863,8 @@ def test_connection(request: Request, source: str):
         try:
             if provider == "ERPFLEX":
                 result = ERPFlexClient(get_erpflex_settings(db, cid)).test()
+            elif provider == "ERPFLEX_V1":
+                result = ERPFlexClient(get_erpflex_settings(db, cid)).test_v1()
             elif provider == "NFSTOCK":
                 result = NFStockClient(get_nfstock_settings(db, cid)).test()
             else:
@@ -828,13 +876,13 @@ def test_connection(request: Request, source: str):
                     try: server.quit()
                     except Exception: server.close()
                 result = {"ok": True, "message": "Conexão SMTP autenticada com sucesso."}
-            if provider in {"ERPFLEX", "NFSTOCK"}:
+            if provider in {"ERPFLEX", "ERPFLEX_V1", "NFSTOCK"}:
                 msg = f"Conexão OK. {result}"
                 mark_test_result(db, cid, provider, True, msg)
                 db.commit()
             return JSONResponse(result)
         except Exception as e:
-            if provider in {"ERPFLEX", "NFSTOCK"}:
+            if provider in {"ERPFLEX", "ERPFLEX_V1", "NFSTOCK"}:
                 mark_test_result(db, cid, provider, False, str(e)); db.commit()
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
@@ -1814,26 +1862,71 @@ def _wallets_from_bank_payload(payload: dict, bank_id: str) -> dict[tuple[str,st
 
 
 def _finance_maps(db, cid: int):
-    bank_names: dict[str,str] = {}; wallet_names: dict[tuple[str,str],str] = {}
+    """Resolve IDs de banco/carteira usando todos os nós persistidos, não só o primeiro.
+
+    O retorno de /api/bancos/ pode vir como lista/envelope e versões antigas usavam
+    deep_find sobre o envelope inteiro, o que podia registrar apenas um banco.
+    """
+    bank_names: dict[str,str] = dict(VERIFIED_BANK_NAMES)
+    wallet_names: dict[tuple[str,str],str] = {}
     raws = db.scalars(select(RawRecord).where(
         RawRecord.company_id == cid, RawRecord.source == "ERPFLEX", RawRecord.module.in_(["banks", "bank_detail", "boleto_options"])
     )).all()
+
+    def scalar(node, names):
+        if not isinstance(node, dict):
+            return ""
+        lower={str(k).lower():v for k,v in node.items()}
+        for name in names:
+            val=lower.get(str(name).lower())
+            if val not in (None,"",[],{}):
+                if isinstance(val, dict):
+                    val=deep_find(val,("descricao","nome","name","codigo","id"))
+                return text(val).strip()
+        return ""
+
+    def walk_banks(node):
+        if isinstance(node, dict):
+            bid=scalar(node,("SA6_ID","id_banco","banco_id","idBanco"))
+            code=scalar(node,("SA6_Codigo","codigo_banco","codigoBanco"))
+            name=scalar(node,("SA6_Desc","banco_desc","nome_banco","descricao_banco"))
+            # Em detalhes de banco, campos genéricos id/codigo/nome também são válidos.
+            if not bid and any(str(k).lower() in {"sa6_desc","nome_banco","banco_desc"} for k in node):
+                bid=scalar(node,("id","codigo"))
+            if not name and bid:
+                name=scalar(node,("nome","descricao","banco"))
+            if bid and name and not name.lower().startswith("banco "):
+                bank_names[bid]=name
+            if code and name and not name.lower().startswith("banco "):
+                bank_names.setdefault(code,name)
+            for child in node.values():
+                walk_banks(child)
+        elif isinstance(node,list):
+            for child in node:
+                walk_banks(child)
+
     for raw in raws:
         try: payload = json.loads(raw.payload_json or "{}")
         except Exception: continue
         if raw.module == "boleto_options":
             wallet_names.update(_wallets_from_boleto_options(payload))
             continue
-        # /api/bancos/ da conta real retorna nomenclatura legada SA6_* (ex.: SA6_ID=25325, SA6_Desc=ITAU VIN).
-        bid = text(deep_find(payload, ("SA6_ID", "id", "banco_id", "id_banco"))) or (str(raw.external_id) if raw.module=="bank_detail" else "")
-        code = text(deep_find(payload, ("SA6_Codigo", "codigo", "codigo_banco")))
-        name = text(deep_find(payload, ("SA6_Desc", "nome", "descricao", "banco", "razao_social", "banco_desc", "nome_banco")))
-        if bid and name:
-            bank_names[bid] = name
-        if code and name:
-            bank_names.setdefault(code, name)
-        if bid:
-            wallet_names.update(_wallets_from_bank_payload(payload, bid))
+        walk_banks(payload)
+        # O external_id do detalhe é o ID solicitado; ajuda quando a resposta
+        # individual não repete explicitamente o identificador no corpo.
+        if raw.module == "bank_detail":
+            bid=str(raw.external_id or "").strip()
+            name=text(deep_find(payload,("SA6_Desc","nome_banco","banco_desc","nome","descricao","banco"))).strip()
+            if bid and name and not name.lower().startswith("banco "):
+                bank_names[bid]=name
+            if bid:
+                wallet_names.update(_wallets_from_bank_payload(payload,bid))
+        else:
+            # Na listagem, associa carteira somente ao banco presente no próprio
+            # registro para não cruzar carteiras de bancos diferentes.
+            bid=text(deep_find(payload,("SA6_ID","id_banco","banco_id","idBanco"))).strip()
+            if bid:
+                wallet_names.update(_wallets_from_bank_payload(payload,bid))
     return bank_names, wallet_names
 
 
@@ -1874,8 +1967,10 @@ def _financial_display(db, title: FinancialTitle, partner: Partner | None, bank_
         partner_name = text(deep_find(detail, fields)) or text(deep_find(payload, fields)) or "—"
     issue = title.issue_date or normalize_date(deep_find(detail, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data"))) or normalize_date(deep_find(payload, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data"))) or "—"
 
-    bank_id = text(deep_find(detail, ("id_banco", "banco_id", "idBanco"))) or text(deep_find(payload, ("banco_id", "id_banco", "idBanco")))
-    bank_desc = text(deep_find(detail, ("banco_desc", "nome_banco", "banco"))) or text(deep_find(payload, ("banco_desc", "nome_banco", "banco")))
+    bank_id = text(deep_find(detail, ("id_banco", "banco_id", "idBanco", "SA6_ID"))) or text(deep_find(payload, ("banco_id", "id_banco", "idBanco", "SA6_ID")))
+    if not bank_id and text(title.bank).lower().startswith("banco "):
+        bank_id = text(title.bank).split(" ", 1)[1].strip()
+    bank_desc = text(deep_find(detail, ("banco_desc", "nome_banco", "SA6_Desc", "banco"))) or text(deep_find(payload, ("banco_desc", "nome_banco", "SA6_Desc", "banco")))
     stored_bank = "" if _generic_financial_label(title.bank, ("Sem banco", "Banco ", "Banco ID ")) else text(title.bank)
     bank = bank_desc or stored_bank or bank_names.get(bank_id, "")
     if not bank:
@@ -1905,21 +2000,61 @@ def _save_receivable_detail(db, title: FinancialTitle, detail: dict, bank_names:
     _save_raw_detail(db, title.company_id, "receber_detalhe", ext, detail)
     if bank_names is None or wallet_names is None:
         bank_names, wallet_names = _finance_maps(db, title.company_id)
-    bank_id = text(deep_find(detail, ("id_banco", "banco_id", "idBanco")))
-    bank_desc = text(deep_find(detail, ("banco_desc", "nome_banco", "banco")))
+    bank_id = text(deep_find(detail, ("id_banco", "banco_id", "idBanco", "SA6_ID")))
+    bank_desc = text(deep_find(detail, ("banco_desc", "nome_banco", "SA6_Desc", "banco")))
     wallet_id = text(deep_find(detail, ("id_carteira", "carteira_id", "idCarteira")))
     wallet_desc = text(deep_find(detail, ("carteira_desc", "nome_carteira", "carteira")))
     if bank_desc:
         title.bank = bank_desc
     elif bank_id:
-        title.bank = bank_names.get(bank_id) or f"Banco {bank_id}"
+        title.bank = bank_names.get(bank_id) or VERIFIED_BANK_NAMES.get(bank_id) or f"Banco {bank_id}"
     if wallet_desc:
         title.wallet = wallet_desc
     elif wallet_id:
         title.wallet = wallet_names.get((bank_id, wallet_id)) or wallet_names.get(("", wallet_id)) or f"Carteira {wallet_id}"
-    issue = normalize_date(deep_find(detail, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data")))
+    issue = normalize_date(deep_find(detail, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data_lancamento", "dt_lancamento", "data")))
     if issue and not title.issue_date:
         title.issue_date = issue
+    due = normalize_date(deep_find(detail, ("vencimento", "data_vencimento", "dt_vencimento", "dataVencimento", "dtVencimento", "data_vcto", "dt_vcto")))
+    if due and not title.due_date:
+        title.due_date = due
+    paid = normalize_date(deep_find(detail, ("pagamento", "data_pagamento", "dt_pagamento", "baixa", "data_baixa", "dt_baixa")))
+    if paid and not title.paid_date:
+        title.paid_date = paid
+
+    # Recupera o cliente sem criar associação por aproximação. Primeiro usa os campos
+    # explícitos do detalhe; depois NF-e/pedido relacionados, somente por identificadores exatos.
+    current_partner = db.get(Partner, title.partner_id) if title.partner_id else None
+    current_is_missing = (not current_partner) or text(current_partner.name).strip().lower() in {"", "não identificado", "nao identificado", "sem cadastro"}
+    if current_is_missing:
+        customer_id = text(deep_find(detail, ("cliente_id", "id_cliente", "codigo_cliente", "idcliente"))).strip()
+        customer_name = text(deep_find(detail, ("cliente_desc", "cliente_nome", "cliente", "razao_social", "nome_cliente"))).strip()
+        customer_doc = text(deep_find(detail, ("cliente_cnpj", "cnpj_cliente", "cpf_cnpj", "cnpj_cpf", "cnpjcpf", "documento_cliente"))).strip()
+        if customer_id or customer_name or customer_doc:
+            partner = _partner(db, title.company_id, "customer", detail, erpflex_id_hint=customer_id or None)
+            if partner and text(partner.name).strip().lower() not in {"", "não identificado", "nao identificado"}:
+                title.partner_id = partner.id
+
+    if not title.partner_id or (db.get(Partner, title.partner_id) and text(db.get(Partner, title.partner_id).name).strip().lower() in {"não identificado", "nao identificado"}):
+        nf_number = _title_nf_number(detail)
+        faturamento_id = _title_faturamento_id(detail)
+        inv = None
+        if faturamento_id:
+            inv = db.scalar(select(SalesInvoice).where(SalesInvoice.company_id == title.company_id, SalesInvoice.erpflex_id == faturamento_id).limit(1))
+        if not inv and nf_number:
+            inv = db.scalar(select(SalesInvoice).where(SalesInvoice.company_id == title.company_id, SalesInvoice.number == nf_number).limit(1))
+        if inv and inv.customer_id:
+            title.partner_id = inv.customer_id
+        else:
+            order_id = text(deep_find(detail, ("orcamento_id", "id_orcamento", "pedido_id", "id_pedido", "solicitacao_id", "id_solicitacao"))).strip()
+            order_number = _title_order_number(detail, "")
+            order = None
+            if order_id:
+                order = db.scalar(select(SalesOrder).where(SalesOrder.company_id == title.company_id, SalesOrder.erpflex_id == order_id).limit(1))
+            if not order and order_number:
+                order = db.scalar(select(SalesOrder).where(SalesOrder.company_id == title.company_id, SalesOrder.number == order_number).limit(1))
+            if order and order.customer_id:
+                title.partner_id = order.customer_id
 
 
 def _ensure_bank_detail(db, client: ERPFlexClient, cid: int, bank_id: str) -> bool:
@@ -4319,6 +4454,76 @@ def _partner_address(address, number=None, complement=None, district=None, city=
     return " — ".join(parts) if parts else "—"
 
 
+def _repair_partner_master_data(db, cid: int, company: Company, rows: list[Partner]) -> bool:
+    """Reaproveita dados já persistidos para corrigir cadastros sem nova chamada externa.
+
+    Clientes são reenriquecidos a partir do raw `clientes`; fornecedores usam o
+    `enderEmit` de XMLs NF-e de entrada já armazenados. Isso permite que uma base
+    sincronizada em versões antigas se beneficie do parser novo imediatamente.
+    """
+    changed=False
+    states={"AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"}
+    for row in rows:
+        before=(row.cnpj_cpf,row.address,row.address_number,row.district,row.city,row.state,row.zip_code,
+                row.delivery_address,row.billing_address)
+        address_text=str(row.address or "").strip()
+        invalid_main = (not address_text) or (len(address_text)==2 and address_text.upper() in states)
+        if address_text and len(address_text)==2 and address_text.upper() in states:
+            if not row.state:
+                row.state=address_text.upper()
+            row.address=None
+        needs_customer_enrichment = invalid_main or not row.cnpj_cpf or not row.delivery_address or not row.billing_address or not row.payment_method or not row.carrier_name
+        if row.role_customer and row.erpflex_id and needs_customer_enrichment:
+            raw=db.scalar(select(RawRecord).where(
+                RawRecord.company_id==cid, RawRecord.source=="ERPFLEX", RawRecord.module=="clientes",
+                RawRecord.external_id==str(row.erpflex_id)
+            ).order_by(RawRecord.id.desc()).limit(1))
+            if raw:
+                try:
+                    payload=json.loads(raw.payload_json or "{}")
+                except Exception:
+                    payload={}
+                if isinstance(payload,dict) and payload:
+                    # Reaplica o parser completo do parceiro para recuperar também
+                    # CNPJ/CPF e demais campos mestre, além dos endereços.
+                    _partner(db,cid,"customer",payload,erpflex_id_hint=row.erpflex_id,preferred_partner_id=row.id)
+        if row.role_supplier and ((not row.address) or (len(str(row.address).strip())==2 and str(row.address).strip().upper() in states) or not row.cnpj_cpf):
+            if row.erpflex_id:
+                raw_supplier=db.scalar(select(RawRecord).where(
+                    RawRecord.company_id==cid, RawRecord.source=="ERPFLEX", RawRecord.module=="fornecedores",
+                    RawRecord.external_id==str(row.erpflex_id)
+                ).order_by(RawRecord.id.desc()).limit(1))
+                if raw_supplier:
+                    try: supplier_payload=json.loads(raw_supplier.payload_json or "{}")
+                    except Exception: supplier_payload={}
+                    if isinstance(supplier_payload,dict) and supplier_payload:
+                        _partner(db,cid,"supplier",supplier_payload,erpflex_id_hint=row.erpflex_id,preferred_partner_id=row.id)
+            inv=db.scalar(select(PurchaseInvoice).where(
+                PurchaseInvoice.company_id==cid, PurchaseInvoice.supplier_id==row.id
+            ).order_by(PurchaseInvoice.issue_date.desc(),PurchaseInvoice.id.desc()).limit(1))
+            if inv and inv.erpflex_raw_id:
+                raw_purchase=db.get(RawRecord,inv.erpflex_raw_id)
+                if raw_purchase:
+                    try:
+                        purchase_payload=json.loads(raw_purchase.payload_json or "{}")
+                    except Exception:
+                        purchase_payload={}
+                    if isinstance(purchase_payload,dict) and purchase_payload:
+                        _partner(db,cid,"supplier",purchase_payload,preferred_partner_id=row.id)
+            if inv and inv.xml_text and ((not row.address) or not row.cnpj_cpf):
+                try:
+                    parsed=parse_nfe(inv.xml_text, company.cnpj or "")
+                    _partner(db,cid,"supplier",{},nf_xml=parsed,preferred_partner_id=row.id)
+                except Exception:
+                    pass
+        after=(row.cnpj_cpf,row.address,row.address_number,row.district,row.city,row.state,row.zip_code,
+               row.delivery_address,row.billing_address)
+        changed = changed or before != after
+    if changed:
+        db.commit()
+    return changed
+
+
 @app.get("/cadastros", response_class=HTMLResponse)
 def cadastros(
     request: Request, tipo: str = "produtos", q: str = "", page: int = 1,
@@ -4380,6 +4585,7 @@ def cadastros(
             pages = max(1, (total + pp - 1) // pp)
             page = min(page, pages)
             rows = db.scalars(stmt.order_by(Partner.name).offset((page-1)*pp).limit(pp)).all()
+            _repair_partner_master_data(db, cid, company, rows)
             for r in rows:
                 roles = " / ".join(x for x, ok in (("Cliente", r.role_customer), ("Fornecedor", r.role_supplier)) if ok) or "—"
                 rows_view.append({"_id": r.id, "_name": r.name or r.trade_name or f"Parceiro {r.id}",
@@ -4420,6 +4626,117 @@ def cadastros(
                   all_columns=all_columns, prev_url=prev_url, next_url=next_url)
 
 
+
+def _customer_product_relationships(db, company_id: int, customer_id: int) -> list[dict]:
+    rows = db.execute(
+        select(
+            SalesInvoiceItem.product_code, SalesInvoiceItem.product_id, SalesInvoiceItem.description,
+            func.sum(SalesInvoiceItem.qty), func.sum(SalesInvoiceItem.total),
+            func.count(func.distinct(SalesInvoice.id)), func.min(SalesInvoice.issue_date), func.max(SalesInvoice.issue_date),
+        )
+        .join(SalesInvoice, SalesInvoice.id == SalesInvoiceItem.sales_invoice_id)
+        .where(SalesInvoice.company_id == company_id, SalesInvoice.customer_id == customer_id)
+        .group_by(SalesInvoiceItem.product_code, SalesInvoiceItem.product_id, SalesInvoiceItem.description)
+        .order_by(func.sum(SalesInvoiceItem.total).desc())
+    ).all()
+    product_map = {}
+    products = db.scalars(select(Product).where(Product.company_id == company_id)).all()
+    for p in products:
+        if p.code: product_map[("code", str(p.code).strip())] = p
+        if p.erpflex_id: product_map[("id", str(p.erpflex_id).strip())] = p
+    out=[]
+    for code, pid, desc, qty, value, nfs, first_date, last_date in rows:
+        prod = product_map.get(("code", str(code or "").strip())) or product_map.get(("id", str(pid or "").strip()))
+        history = db.execute(
+            select(SalesInvoice.issue_date, SalesInvoice.number, SalesInvoiceItem.qty, SalesInvoiceItem.unit_price, SalesInvoiceItem.total)
+            .join(SalesInvoice, SalesInvoice.id == SalesInvoiceItem.sales_invoice_id)
+            .where(
+                SalesInvoice.company_id == company_id, SalesInvoice.customer_id == customer_id,
+                SalesInvoiceItem.product_code == code, SalesInvoiceItem.description == desc,
+            )
+            .order_by(SalesInvoice.issue_date.desc(), SalesInvoice.id.desc()).limit(50)
+        ).all()
+        q=float(qty or 0); v=float(value or 0)
+        out.append({
+            "code": code or (prod.code if prod else "") or "—", "description": (prod.description if prod else "") or desc or "—",
+            "category": (prod.category if prod else None) or "—", "subcategory": (prod.subcategory if prod else None) or "—",
+            "qty": q, "value": v, "avg_price": (v/q if q else 0), "documents": int(nfs or 0),
+            "first_date": first_date or "—", "last_date": last_date or "—", "product_id": prod.id if prod else None,
+            "history": [{"date": d or "—", "document": nf or "—", "qty": float(hq or 0), "unit_price": float(up or 0), "value": float(tv or 0)} for d,nf,hq,up,tv in history],
+        })
+    return out
+
+
+def _supplier_product_relationships(db, company_id: int, supplier_id: int) -> list[dict]:
+    rows = db.execute(
+        select(
+            PurchaseItem.product_code, PurchaseItem.ean, PurchaseItem.description,
+            func.sum(PurchaseItem.qty), func.sum(PurchaseItem.total),
+            func.count(func.distinct(PurchaseInvoice.id)), func.min(PurchaseInvoice.issue_date), func.max(PurchaseInvoice.issue_date),
+        )
+        .join(PurchaseInvoice, PurchaseInvoice.id == PurchaseItem.purchase_invoice_id)
+        .where(PurchaseInvoice.company_id == company_id, PurchaseInvoice.supplier_id == supplier_id)
+        .group_by(PurchaseItem.product_code, PurchaseItem.ean, PurchaseItem.description)
+        .order_by(func.sum(PurchaseItem.total).desc())
+    ).all()
+    product_map = {}
+    products = db.scalars(select(Product).where(Product.company_id == company_id)).all()
+    for p in products:
+        if p.code: product_map[("code", str(p.code).strip())] = p
+        if p.ean: product_map[("ean", str(p.ean).strip())] = p
+    out=[]
+    for code, ean, desc, qty, value, nfs, first_date, last_date in rows:
+        prod = product_map.get(("code", str(code or "").strip())) or product_map.get(("ean", str(ean or "").strip()))
+        history = db.execute(
+            select(PurchaseInvoice.issue_date, PurchaseInvoice.number, PurchaseItem.qty, PurchaseItem.unit_price, PurchaseItem.total)
+            .join(PurchaseInvoice, PurchaseInvoice.id == PurchaseItem.purchase_invoice_id)
+            .where(
+                PurchaseInvoice.company_id == company_id, PurchaseInvoice.supplier_id == supplier_id,
+                PurchaseItem.product_code == code, PurchaseItem.description == desc,
+            )
+            .order_by(PurchaseInvoice.issue_date.desc(), PurchaseInvoice.id.desc()).limit(50)
+        ).all()
+        q=float(qty or 0); v=float(value or 0)
+        unit_prices=[float(x[3] or 0) for x in history if float(x[3] or 0) > 0]
+        out.append({
+            "code": code or (prod.code if prod else "") or "—", "description": (prod.description if prod else "") or desc or "—",
+            "category": (prod.category if prod else None) or "—", "subcategory": (prod.subcategory if prod else None) or "—",
+            "qty": q, "value": v, "avg_price": (v/q if q else 0), "documents": int(nfs or 0),
+            "first_date": first_date or "—", "last_date": last_date or "—", "product_id": prod.id if prod else None,
+            "min_price": min(unit_prices) if unit_prices else 0, "max_price": max(unit_prices) if unit_prices else 0,
+            "history": [{"date": d or "—", "document": nf or "—", "qty": float(hq or 0), "unit_price": float(up or 0), "value": float(tv or 0)} for d,nf,hq,up,tv in history],
+        })
+    return out
+
+
+def _product_partner_relationships(db, company_id: int, product: Product) -> dict:
+    sales_filters=[]
+    if product.code: sales_filters.append(SalesInvoiceItem.product_code == product.code)
+    if product.erpflex_id: sales_filters.append(SalesInvoiceItem.product_id == product.erpflex_id)
+    purchase_filters=[]
+    if product.code: purchase_filters.append(PurchaseItem.product_code == product.code)
+    if product.ean: purchase_filters.append(PurchaseItem.ean == product.ean)
+    customers=[]; suppliers=[]
+    if sales_filters:
+        rows=db.execute(
+            select(Partner.id, Partner.name, func.sum(SalesInvoiceItem.qty), func.sum(SalesInvoiceItem.total), func.count(func.distinct(SalesInvoice.id)), func.max(SalesInvoice.issue_date))
+            .join(SalesInvoice, SalesInvoice.customer_id == Partner.id)
+            .join(SalesInvoiceItem, SalesInvoiceItem.sales_invoice_id == SalesInvoice.id)
+            .where(Partner.company_id == company_id, or_(*sales_filters))
+            .group_by(Partner.id, Partner.name).order_by(func.sum(SalesInvoiceItem.total).desc())
+        ).all()
+        customers=[{"partner_id":pid,"name":name or "Não identificado","qty":float(q or 0),"value":float(v or 0),"documents":int(n or 0),"last_date":d or "—"} for pid,name,q,v,n,d in rows]
+    if purchase_filters:
+        rows=db.execute(
+            select(Partner.id, Partner.name, func.sum(PurchaseItem.qty), func.sum(PurchaseItem.total), func.count(func.distinct(PurchaseInvoice.id)), func.max(PurchaseInvoice.issue_date))
+            .join(PurchaseInvoice, PurchaseInvoice.supplier_id == Partner.id)
+            .join(PurchaseItem, PurchaseItem.purchase_invoice_id == PurchaseInvoice.id)
+            .where(Partner.company_id == company_id, or_(*purchase_filters))
+            .group_by(Partner.id, Partner.name).order_by(func.sum(PurchaseItem.total).desc())
+        ).all()
+        suppliers=[{"partner_id":pid,"name":name or "Não identificado","qty":float(q or 0),"value":float(v or 0),"documents":int(n or 0),"last_date":d or "—"} for pid,name,q,v,n,d in rows]
+    return {"customers": customers, "suppliers": suppliers}
+
 @app.get("/cadastros/{tipo}/{record_id}", response_class=HTMLResponse)
 def cadastro_detalhe(request: Request, tipo: str, record_id: int):
     tipo = tipo if tipo in CADASTRO_COLUMN_DEFS else "produtos"
@@ -4428,13 +4745,15 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
         summary = []
         detail_sections = []
         raw_rows = []
+        relationships = {}
         title = "Detalhe"
         if tipo == "produtos":
             row = db.get(Product, record_id)
             if not row or row.company_id != cid:
                 return HTMLResponse("Registro não encontrado.", status_code=404)
             title = row.description or row.code or f"Produto {row.id}"
-            summary = [("Código", row.code), ("Descrição", row.description), ("EAN", row.ean), ("NCM", row.ncm), ("Unidade", row.unit), ("Categoria", row.category), ("ID ERPFlex", row.erpflex_id)]
+            summary = [("Código", row.code), ("Descrição", row.description), ("EAN", row.ean), ("NCM", row.ncm), ("Unidade", row.unit), ("Categoria", row.category), ("Subcategoria", row.subcategory), ("ID ERPFlex", row.erpflex_id)]
+            relationships = {"kind":"product", **_product_partner_relationships(db, cid, row)}
             if row.erpflex_id:
                 raw_rows = db.scalars(select(RawRecord).where(RawRecord.company_id == cid, RawRecord.source == "ERPFLEX", RawRecord.module == "products", RawRecord.external_id == row.erpflex_id).order_by(RawRecord.id.desc()).limit(5)).all()
         elif tipo in {"clientes", "fornecedores", "parceiros"}:
@@ -4464,9 +4783,14 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
                 ]
             else:
                 detail_sections = [("Endereço", [("Endereço", _partner_address(row.address, row.address_number, row.address_complement)), ("Bairro", row.district), ("Cidade", row.city), ("UF", row.state), ("CEP", row.zip_code)])]
+            if tipo == "clientes":
+                relationships = {"kind":"customer", "products": _customer_product_relationships(db, cid, row.id)}
+            elif tipo == "fornecedores":
+                relationships = {"kind":"supplier", "products": _supplier_product_relationships(db, cid, row.id)}
             conditions = []
             if row.erpflex_id:
-                conditions.append(and_(RawRecord.module == "clientes", RawRecord.external_id == row.erpflex_id))
+                raw_module = "fornecedores" if tipo == "fornecedores" else "clientes"
+                conditions.append(and_(RawRecord.module == raw_module, RawRecord.external_id == row.erpflex_id))
             if row.cnpj_cpf:
                 conditions.append(RawRecord.payload_json.ilike(f"%{row.cnpj_cpf}%"))
             if conditions:
@@ -4486,7 +4810,7 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
             try: data = json.loads(raw.payload_json or "{}")
             except Exception: data = {"raw": raw.payload_json}
             payloads.append({"module": raw.module, "external_id": raw.external_id, "updated_at": _format_dt(raw.updated_at), "data": data, "pretty": json.dumps(data, ensure_ascii=False, indent=2, default=str)})
-    return render(request, "cadastro_detalhe.html", company=company, tipo=tipo, title=title, summary=summary, detail_sections=detail_sections, payloads=payloads)
+    return render(request, "cadastro_detalhe.html", company=company, tipo=tipo, title=title, summary=summary, detail_sections=detail_sections, payloads=payloads, relationships=relationships)
 
 
 @app.get("/diagnostico", response_class=HTMLResponse)

@@ -2,7 +2,7 @@
 {% block title %}Integrações · {{ app_name }}{% endblock %}
 {% block content %}
 <section class="hero"><div><h1>Integrações</h1><p>Credenciais e parâmetros ficam vinculados à empresa atual e são usados pela sincronização.</p></div><div class="actions"><a class="btn" href="/sincronizacao">Ir para Sincronização</a></div></section>
-{% if saved %}<div class="alert success">Configuração de {{ 'ERPFlex' if saved=='erpflex' else ('NF Stock' if saved=='nfstock' else 'SMTP') }} salva com sucesso.</div>{% endif %}
+{% if saved %}<div class="alert success">Configuração de {{ 'ERPFlex' if saved=='erpflex' else ('ERPFlex Cadastros v1' if saved=='erpflex-v1' else ('NF Stock' if saved=='nfstock' else 'SMTP')) }} salva com sucesso.</div>{% endif %}
 {% if tested=='backup-ok' %}<div class="alert success">Backup SQLite criado com sucesso.</div>{% elif tested=='backup-nao-aplicavel' %}<div class="alert">Backup manual pelo aplicativo é aplicável somente ao SQLite local. Em PostgreSQL, use o mecanismo de backup/snapshot do serviço.</div>{% endif %}
 {% if db_status.persistence_warning %}<div class="alert error"><b>Persistência:</b> {{ db_status.persistence_warning }}</div>{% endif %}
 {% if encryption_default %}<div class="alert error"><b>Atenção:</b> a aplicação está usando a chave de desenvolvimento padrão. Defina uma <code>INTEGRATION_SECRET_KEY</code> ou <code>SECRET_KEY</code> estável antes de gravar credenciais reais neste ambiente remoto.</div>{% endif %}
@@ -18,6 +18,19 @@
     <div class="actions span-2"><button class="btn primary" type="submit">Salvar ERPFlex</button><button class="btn" type="button" onclick="testConn('erpflex')">Testar conexão salva</button></div>
   </form>
   <div class="integration-meta">Origem atual: <b>{{ 'Banco central' if integrations.erpflex.source=='database' else 'Variáveis de ambiente' }}</b>{% if integrations.erpflex.last_test_at %} · último teste {{ integrations.erpflex.last_test_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
+</section>
+
+<section class="panel integration-panel">
+  <div class="panel-title"><div><h2>ERPFlex · Cadastros v1</h2><p class="hint">Conexão independente para cadastros mestres, inicialmente Fornecedores.</p></div><span class="badge {{ 'ok' if integrations.erpflex_v1.configured else 'erro' }}">{{ 'Pronto para teste' if integrations.erpflex_v1.configured else 'Configuração incompleta' }}</span></div>
+  <form method="post" action="/integracoes/erpflex-v1" class="form-grid">
+    <label class="span-2">URL base v1<input name="base_url" value="{{ integrations.erpflex_v1.base_url }}" required></label>
+    <label>Usuário<input name="username" value="{{ integrations.erpflex_v1.username }}" autocomplete="off" required></label>
+    <label>Senha<input type="password" name="password" autocomplete="new-password" placeholder="{{ 'Senha v1 já gravada — deixe vazio para manter' if integrations.erpflex_v1.secret_stored else ('Usando senha do ERPFlex principal — deixe vazio para herdar' if integrations.erpflex_v1.inheriting_credentials else 'Informe a senha da API v1') }}"></label>
+    <label class="check span-2"><input type="checkbox" name="active" value="1" {% if integrations.erpflex_v1.active %}checked{% endif %}><span>Integração v1 ativa<small>Usada somente pelos módulos que exigem sessão/token v1.x. Não altera o motor V7.8.</small></span></label>
+    <div class="actions span-2"><button class="btn primary" type="submit">Salvar API v1</button><button class="btn" type="button" onclick="testConn('erpflex-v1')">Testar autenticação e fornecedores</button></div>
+  </form>
+  <div class="integration-meta">Origem: <b>{{ 'Banco central' if integrations.erpflex_v1.source=='database' else ('Variáveis de ambiente' if integrations.erpflex_v1.source=='environment' else 'Fallback das credenciais principais') }}</b>{% if integrations.erpflex_v1.last_test_at %} · último teste {{ integrations.erpflex_v1.last_test_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
+  <p class="hint"><b>Importante:</b> a URL v1 é configurável. O valor padrão acompanha o servidor indicado na documentação fornecida; se sua conta utilizar outro host v1 de produção, informe-o aqui e valide pelo botão de teste antes de sincronizar Fornecedores.</p>
 </section>
 
 <section class="panel integration-panel">

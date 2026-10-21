@@ -28,6 +28,7 @@ DEFAULT_INTERVALS = {
     "products": 360,
     "banks": 720,
     "clientes": 120,
+    "fornecedores": 360,
     "orders": 15,
     "faturamento": 15,
     "receber": 15,

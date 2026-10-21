@@ -36,6 +36,7 @@
   <label>Banco<select name="bank"><option value="">Todos</option>{% for o in data.meta.options.banks %}<option value="{{ o }}" {% if filters.bank==o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></label>
   <label>Carteira<select name="wallet"><option value="">Todas</option>{% for o in data.meta.options.wallets %}<option value="{{ o }}" {% if filters.wallet==o %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></label>
   <label>Situação<select name="situation"><option value="">Todas</option><option value="aberto" {% if filters.situation=='aberto' %}selected{% endif %}>Em aberto</option><option value="vencido" {% if filters.situation=='vencido' %}selected{% endif %}>Vencido</option><option value="parcial" {% if filters.situation=='parcial' %}selected{% endif %}>Parcial</option><option value="pago" {% if filters.situation=='pago' %}selected{% endif %}>Pago</option></select></label>
+  {% if section == 'faturamento' %}<input type="hidden" name="compare_mode" value="{{ data.sales_dashboard.compare_mode }}"><input type="hidden" name="compare_from" value="{{ data.sales_dashboard.compare_start.isoformat() }}"><input type="hidden" name="compare_to" value="{{ data.sales_dashboard.compare_end.isoformat() }}">{% endif %}
   <input type="hidden" name="period" value="custom">
   <button class="btn primary" type="submit">Aplicar filtros</button>
   <a class="btn" href="/bi/{{ section }}">Limpar</a>
@@ -43,9 +44,24 @@
 <div class="bi-period">Período: <b>{{ data.meta.start.strftime('%d/%m/%Y') }}</b> a <b>{{ data.meta.end.strftime('%d/%m/%Y') }}</b>. Carteiras em aberto e aging usam a posição atual.</div>
 </section>
 
-{% macro money(v) %}<span data-money="{{ v or 0 }}"></span>{% endmacro %}
+{% macro money(v) %}{% if v is none %}<span class="data-unavailable">Dados indisponíveis</span>{% else %}<span data-money="{{ v }}"></span>{% endif %}{% endmacro %}
 {% macro variation(v) %}{% if v is none %}<span class="muted">—</span>{% elif v >= 0 %}<span class="trend up">▲ {{ '%.1f'|format(v) }}%</span>{% else %}<span class="trend down">▼ {{ '%.1f'|format(v|abs) }}%</span>{% endif %}{% endmacro %}
 {% macro kpi(label,value,sub='',tone='') %}<article class="bi-kpi {{ tone }}"><span>{{ label }}</span><strong>{{ value|safe }}</strong>{% if sub %}<small>{{ sub|safe }}</small>{% endif %}</article>{% endmacro %}
+{% macro ar_table(rows) %}
+<div class="table-wrap bi-drill-table"><table><thead><tr><th>Documento</th><th>Cliente</th><th>Vendedor</th><th>NF-e</th><th>Emissão</th><th>Vencimento</th><th>Valor</th><th>Recebido</th><th>Saldo</th><th>Banco</th><th>Carteira</th></tr></thead><tbody>{% for t in rows %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.partner }}</td><td>{{ t.seller }}</td><td>{% if t.invoice_id %}<a href="/faturamento/{{ t.invoice_id }}">{{ t.nf_number or 'Abrir NF' }}</a>{% else %}{{ t.nf_number or '—' }}{% endif %}</td><td>{{ t.issue or '—' }}</td><td>{{ t.due or '—' }}</td><td>{{ money(t.value) }}</td><td>{{ money(t.paid) }}</td><td>{{ money(t.balance) }}</td><td>{{ t.bank }}</td><td>{{ t.wallet }}</td></tr>{% else %}<tr><td colspan="11">Sem títulos para este detalhe.</td></tr>{% endfor %}</tbody></table></div>
+{% endmacro %}
+{% macro ap_table(rows) %}
+<div class="table-wrap bi-drill-table"><table><thead><tr><th>Documento</th><th>Fornecedor</th><th>Emissão</th><th>Vencimento</th><th>Pagamento</th><th>Status</th><th>Dias atraso</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>{% for t in rows %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.partner }}</td><td>{{ t.issue or '—' }}</td><td>{{ t.due or '—' }}</td><td>{{ t.paid_date or '—' }}</td><td class="{% if t.status=='Vencido' %}negative{% endif %}">{{ t.status }}</td><td>{{ t.days_overdue if t.days_overdue else '—' }}</td><td>{{ money(t.value) }}</td><td>{{ money(t.paid) }}</td><td>{{ money(t.balance) }}</td></tr>{% else %}<tr><td colspan="10">Sem títulos para este detalhe.</td></tr>{% endfor %}</tbody></table></div>
+{% endmacro %}
+{% macro invoice_table(rows) %}
+<div class="table-wrap bi-drill-table"><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for n in rows %}<tr><td><a href="/faturamento/{{ n.id }}">{{ n.number }}</a></td><td>{{ n.date or '—' }}</td><td>{{ n.partner }}</td><td>{{ money(n.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem NF-e para este detalhe.</td></tr>{% endfor %}</tbody></table></div>
+{% endmacro %}
+{% macro purchase_docs(rows) %}
+<div class="table-wrap bi-drill-table"><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Fornecedor</th><th>Valor</th><th>Conciliação</th></tr></thead><tbody>{% for n in rows %}<tr><td><a href="/compras/{{ n.id }}">{{ n.number }}</a></td><td>{{ n.date or '—' }}</td><td>{{ n.partner }}</td><td>{{ money(n.value) }}</td><td>{{ n.reconciliation }}</td></tr>{% else %}<tr><td colspan="5">Sem documentos de compra.</td></tr>{% endfor %}</tbody></table></div>
+{% endmacro %}
+{% macro delivery_table(rows) %}
+<div class="table-wrap bi-drill-table"><table><thead><tr><th>Entrega</th><th>NF-e</th><th>Cliente</th><th>Status</th><th>Região</th><th>Motorista</th><th>Volumes</th><th>Frete</th></tr></thead><tbody>{% for d in rows %}<tr><td><a href="/entregas/{{ d.id }}">#{{ d.id }}</a></td><td>{% if d.invoice_id %}<a href="/faturamento/{{ d.invoice_id }}">{{ d.nf }}</a>{% else %}{{ d.nf }}{% endif %}</td><td>{{ d.customer }}</td><td>{{ d.status }}</td><td>{{ d.region }}</td><td>{{ d.responsible }}</td><td>{{ d.volumes }}</td><td>{{ money(d.freight) }}</td></tr>{% else %}<tr><td colspan="8">Sem entregas para este detalhe.</td></tr>{% endfor %}</tbody></table></div>
+{% endmacro %}
 
 {% if section == 'visao-geral' %}
 <section class="bi-section">
@@ -61,8 +77,19 @@
     {{ kpi('Clientes que compraram', data.overview.customers_bought, data.overview.new_customers|string+' novos no período') }}
     {{ kpi('Clientes sem compra > 60 dias', data.overview.inactive_60, 'Base fiscal de clientes', 'warning') }}
     {{ kpi('Despesas operacionais', money(data.overview.operating_expenses), 'Lançadas no período') }}
-    {{ kpi('Fluxo líquido projetado 30 dias', money(data.overview.projected_30_net), 'Recebimentos previstos − pagamentos previstos', 'danger' if data.overview.projected_30_net < 0 else '') }}
+    {{ kpi('Fluxo líquido projetado 30 dias', money(data.overview.projected_30_net), 'Recebimentos previstos − pagamentos previstos', 'danger' if data.overview.projected_30_net is not none and data.overview.projected_30_net < 0 else '') }}
   </div>
+  <article class="bi-card bi-drill-nav-card">
+    <h3>Detalhar indicadores</h3>
+    <div class="bi-drill-nav">
+      <a href="/bi/faturamento?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Faturamento → NF-e / produtos / clientes</a>
+      <a href="/bi/contas-receber?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Contas a Receber → títulos / vendedores / aging</a>
+      <a href="/bi/contas-pagar?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Contas a Pagar → títulos / fornecedores / vencimentos</a>
+      <a href="/bi/fluxo-caixa?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Fluxo de Caixa → entradas / saídas / projeções</a>
+      <a href="/bi/clientes?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Clientes → compras / categorias / NF-e</a>
+      <a href="/bi/compras?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Compras → fornecedores / itens / NF-e</a>
+    </div>
+  </article>
   <article class="bi-executive-note">
     <h3>Resumo executivo automático</h3>
     <p>O faturamento do período é <b>{{ money(data.overview.sales) }}</b>{% if data.overview.sales_var is not none %}, com variação de <b>{{ '%.1f'|format(data.overview.sales_var) }}%</b> frente ao período imediatamente anterior{% endif %}. A carteira a receber possui <b>{{ money(data.overview.overdue) }}</b> vencidos, equivalentes a <b>{{ '%.1f'|format(data.overview.overdue_pct) }}%</b> do saldo em aberto. Foram identificados <b>{{ data.overview.inactive_60 }}</b> clientes sem compra fiscal recente acima de 60 dias.</p>
@@ -71,49 +98,240 @@
 {% endif %}
 
 {% if section == 'faturamento' %}
-<section class="bi-section">
-<div class="bi-kpi-grid compact">
-  {{ kpi('Faturamento bruto', money(data.sales.total), 'NF-e válidas do período') }}
-  {{ kpi('Variação período anterior', variation(data.sales.variation), 'Anterior: '+money(data.sales.previous)|string) }}
-  {{ kpi('Variação anual', variation(data.sales.yoy), 'Mesmo período do ano anterior: '+money(data.sales.year_ago)|string) }}
-  {{ kpi('NF-e emitidas', data.sales.docs, 'Número fiscal > 0') }}
-  {{ kpi('Ticket médio por NF-e', money(data.sales.ticket)) }}
-  {{ kpi('Quantidade vendida', '%.3f'|format(data.sales.qty), 'Soma dos itens localizados') }}
-  {{ kpi('Preço médio ponderado', money(data.sales.avg_unit_price), 'Receita dos itens ÷ quantidade') }}
-</div>
-<div class="bi-two">
-  <article class="bi-card"><h3>Clientes por faturamento</h3><table><thead><tr><th>#</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in data.sales.customers[:15] %}<tr><td>{{ loop.index }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="3">Sem dados.</td></tr>{% endfor %}</tbody></table></article>
-  <article class="bi-card"><h3>Produtos por faturamento</h3><table><thead><tr><th>#</th><th>Código</th><th>Produto</th><th>Valor</th></tr></thead><tbody>{% for r in data.sales.products_revenue[:15] %}<tr><td>{{ loop.index }}</td><td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem itens.</td></tr>{% endfor %}</tbody></table></article>
-</div>
-<div class="bi-two">
-  <article class="bi-card"><h3>Faturamento por UF</h3><table><tbody>{% for r in data.sales.states[:15] %}<tr><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td>Dados indisponíveis.</td></tr>{% endfor %}</tbody></table></article>
-  <article class="bi-card"><h3>Faturamento por canal</h3><table><tbody>{% for r in data.sales.channels[:15] %}<tr><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td>Canal não localizado nos registros filtrados.</td></tr>{% endfor %}</tbody></table></article>
-</div>
-<article class="bi-card"><h3>Documentos que compõem o faturamento</h3><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in data.sales.documents %}<tr><td><a href="/faturamento/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date or '—' }}</td><td>{{ r.partner }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem NF-e no período.</td></tr>{% endfor %}</tbody></table></article>
+<section class="bi-section sales-dashboard">
+  <div class="sales-dashboard-head">
+    <div>
+      <span>Dashboard de Faturamento</span>
+      <h2>{{ data.sales_dashboard.period_label }}</h2>
+      <p>{{ data.meta.start.strftime('%d/%m/%Y') }}{% if data.meta.end != data.meta.start %} a {{ data.meta.end.strftime('%d/%m/%Y') }}{% endif %} · somente NF-e fiscal válida, número &gt; 0 e não cancelada.</p>
+    </div>
+    <form method="get" action="/bi/faturamento" class="sales-compare-form">
+      <input type="hidden" name="period" value="custom">
+      <input type="hidden" name="date_from" value="{{ data.meta.start.isoformat() }}">
+      <input type="hidden" name="date_to" value="{{ data.meta.end.isoformat() }}">
+      {% for key in ['customer_id','supplier_id','state','city','bank','wallet','situation','product','seller'] %}{% if filters[key] %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endif %}{% endfor %}
+      <label>Comparar com
+        <select name="compare_mode" id="compare-mode">
+          <option value="prev_month" {% if data.sales_dashboard.compare_mode=='prev_month' %}selected{% endif %}>Mês anterior equivalente</option>
+          <option value="previous_period" {% if data.sales_dashboard.compare_mode=='previous_period' %}selected{% endif %}>Período anterior equivalente</option>
+          <option value="custom" {% if data.sales_dashboard.compare_mode=='custom' %}selected{% endif %}>Período específico</option>
+        </select>
+      </label>
+      <label class="compare-custom">De<input type="date" name="compare_from" value="{{ data.sales_dashboard.compare_start.isoformat() }}"></label>
+      <label class="compare-custom">Até<input type="date" name="compare_to" value="{{ data.sales_dashboard.compare_end.isoformat() }}"></label>
+      <button class="btn primary" type="submit">Comparar</button>
+    </form>
+  </div>
+
+  <div class="bi-kpi-grid sales-kpis">
+    {{ kpi(data.sales_dashboard.period_label, money(data.sales_dashboard.current), data.sales.docs|string+' NF-e') }}
+    {{ kpi(data.sales_dashboard.compare_label, money(data.sales_dashboard.compare), data.sales_dashboard.compare_start.strftime('%d/%m/%Y')+' a '+data.sales_dashboard.compare_end.strftime('%d/%m/%Y')) }}
+    {{ kpi('Variação', variation(data.sales_dashboard.variation), 'Período atual × comparação') }}
+    {{ kpi('Ticket médio por NF-e', money(data.sales.ticket), data.sales.docs|string+' documento(s)') }}
+    {{ kpi('Clientes atendidos', data.sales_dashboard.customers|length, 'Clientes com NF-e no período') }}
+    {{ kpi('Quantidade vendida', '%.3f'|format(data.sales.qty), 'Itens identificados nas NF-e') }}
+  </div>
+
+  <div class="bi-two sales-main-grid">
+    <article class="bi-card">
+      <div class="sales-card-title"><div><h3>Produtos mais vendidos</h3><p class="bi-note">Ordenado pela quantidade. Clique no produto para abrir as NF-e do período.</p></div><span class="sales-count">{{ data.sales_dashboard.products|length }}</span></div>
+      <div class="bi-branch-list sales-list">
+      {% for r in data.sales_dashboard.products %}
+        <details class="bi-branch sales-drill">
+          <summary><span class="sales-summary-main"><b>#{{ loop.index }} · {{ r.code }} · {{ r.name }}</b><small>{{ r.category }}{% if r.subcategory %} › {{ r.subcategory }}{% endif %}</small></span><span class="sales-summary-metrics"><b>{{ '%.3f'|format(r.qty) }}</b><small>{{ r.invoice_count }} NF-e · {{ money(r.value) }}</small></span></summary>
+          <div class="bi-branch-body table-wrap"><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Qtd.</th><th>Valor do item</th><th>Valor da NF-e</th></tr></thead><tbody>{% for n in r.invoices %}<tr><td><a href="/faturamento/{{ n.id }}">{{ n.number }}</a></td><td>{{ n.date or '—' }}</td><td>{{ n.partner }}</td><td>{{ '%.3f'|format(n.qty) }}</td><td>{{ money(n.item_value) }}</td><td>{{ money(n.value) }}</td></tr>{% else %}<tr><td colspan="6">Sem NF-e vinculada.</td></tr>{% endfor %}</tbody></table></div>
+        </details>
+      {% else %}<div class="bi-unavailable">Nenhum item de faturamento identificado no período.</div>{% endfor %}
+      </div>
+    </article>
+
+    <article class="bi-card">
+      <div class="sales-card-title"><div><h3>Venda por categoria e subcategoria</h3><p class="bi-note">Abra uma categoria e depois a subcategoria para ver os produtos que compõem o resultado.</p></div></div>
+      <div class="bi-branch-list sales-list">
+      {% for cat in data.sales_dashboard.categories %}
+        <details class="bi-branch sales-drill">
+          <summary><span><b>{{ cat.name }}</b><small>{{ cat.subcategories|length }} subcategoria(s)</small></span><strong>{{ money(cat.value) }}</strong></summary>
+          <div class="bi-branch-body category-drill">
+          {% for sub in cat.subcategories %}
+            <details class="sales-subbranch">
+              <summary><span><b>{{ sub.name }}</b><small>{{ sub.products|length }} produto(s)</small></span><strong>{{ money(sub.value) }}</strong></summary>
+              <div class="table-wrap"><table><thead><tr><th>Código</th><th>Produto</th><th>Quantidade</th><th>Faturamento dos itens</th></tr></thead><tbody>{% for pr in sub.products %}<tr><td>{{ pr.code }}</td><td>{{ pr.name }}</td><td>{{ '%.3f'|format(pr.qty) }}</td><td>{{ money(pr.value) }}</td></tr>{% endfor %}</tbody></table></div>
+            </details>
+          {% endfor %}
+          </div>
+        </details>
+      {% else %}<div class="bi-unavailable">Categoria/subcategoria não localizada nos itens do período.</div>{% endfor %}
+      </div>
+    </article>
+  </div>
+
+  <div class="bi-two">
+    <article class="bi-card">
+      <div class="sales-card-title"><div><h3>Venda por vendedor</h3><p class="bi-note">Faturamento das NF-e cujo vendedor foi identificado no retorno do ERPFlex ou no pedido vinculado.</p></div></div>
+      <div class="bi-branch-list sales-list">{% for r in data.sales_dashboard.sellers %}<details class="bi-branch sales-drill"><summary><span><b>#{{ loop.index }} · {{ r.name }}</b><small>{{ r.invoice_count }} NF-e · ticket {{ money(r.ticket) }}</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ invoice_table(r.invoices) }}</div></details>{% else %}<div class="bi-unavailable">Nenhum vendedor identificado no período.</div>{% endfor %}</div>
+    </article>
+
+    <article class="bi-card">
+      <div class="sales-card-title"><div><h3>Venda por estado</h3><p class="bi-note">Clique no estado para detalhar o faturamento por cidade.</p></div></div>
+      <div class="bi-branch-list sales-list">
+      {% for r in data.sales_dashboard.states %}
+        <details class="bi-branch sales-drill">
+          <summary><span><b>{{ r.name }}</b><small>{{ r.invoice_count }} NF-e · {{ r.cities|length }} cidade(s)</small></span><strong>{{ money(r.value) }}</strong></summary>
+          <div class="bi-branch-body category-drill">{% for c in r.cities %}<details class="sales-subbranch"><summary><span><b>{{ c.name }}</b><small>{{ c.invoice_count }} NF-e</small></span><strong>{{ money(c.value) }}</strong></summary>{{ invoice_table(c.invoices) }}</details>{% endfor %}</div>
+        </details>
+      {% else %}<div class="bi-unavailable">UF/cidade não identificadas nos clientes do período.</div>{% endfor %}
+      </div>
+    </article>
+  </div>
+
+  <article class="bi-card sales-customers-card">
+    <div class="sales-card-title"><div><h3>Faturamento por cliente</h3><p class="bi-note">Clique no cliente para exibir as NF-e do período. Clique no número da NF-e para abrir o detalhe completo da nota.</p></div><span class="sales-count">{{ data.sales_dashboard.customers|length }}</span></div>
+    <div class="bi-branch-list sales-list customer-sales-list">
+    {% for r in data.sales_dashboard.customers %}
+      <details class="bi-branch sales-drill">
+        <summary><span><b>#{{ loop.index }} · {{ r.name }}</b><small>{{ r.invoice_count }} NF-e · ticket {{ money(r.ticket) }}</small></span><strong>{{ money(r.value) }}</strong></summary>
+        <div class="bi-branch-body table-wrap"><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for n in r.invoices %}<tr><td><a href="/faturamento/{{ n.id }}">{{ n.number }}</a></td><td>{{ n.date or '—' }}</td><td>{{ n.partner }}</td><td>{{ money(n.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem notas no período.</td></tr>{% endfor %}</tbody></table></div>
+      </details>
+    {% else %}<div class="bi-unavailable">Sem faturamento por cliente no período.</div>{% endfor %}
+    </div>
+  </article>
+
+  <article class="bi-card">
+    <h3>NF-e que compõem o faturamento</h3>
+    <div class="table-wrap"><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in data.sales_dashboard.documents %}<tr><td><a href="/faturamento/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date or '—' }}</td><td>{{ r.partner }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem NF-e no período.</td></tr>{% endfor %}</tbody></table></div>
+  </article>
 </section>
 {% endif %}
 
 {% if section == 'contas-receber' %}
-<section class="bi-section">
+<section class="bi-section receivables-dashboard">
+<div class="bi-heading"><div><span>Gestão da carteira</span><h2>Contas a Receber</h2></div></div>
 <div class="bi-kpi-grid compact">
- {{ kpi('Total em aberto', money(data.receivables.open)) }}{{ kpi('Total vencido', money(data.receivables.overdue),'','danger') }}{{ kpi('Total a vencer', money(data.receivables.due)) }}{{ kpi('Recebido no período', money(data.receivables.received)) }}{{ kpi('Recebido com atraso', money(data.receivables.received_late),'','warning') }}{{ kpi('Índice de inadimplência', '%.1f%%'|format(data.receivables.overdue_pct)) }}{{ kpi('Recebido no prazo', ('%.1f%%'|format(data.receivables.on_time_pct)) if data.receivables.on_time_pct is not none else 'Dados indisponíveis') }}
+ {{ kpi('Total em aberto', money(data.receivables.open), data.receivables.quality.total|string+' título(s) sincronizados') }}
+ {{ kpi('Total vencido', money(data.receivables.overdue), ('%.1f%% da carteira'|format(data.receivables.overdue_pct)),'danger') }}
+ {{ kpi('Total a vencer', money(data.receivables.due), (data.receivables.future_open_count|string+' título(s) com vencimento futuro') if data.receivables.future_open_count else 'Nenhum título futuro em aberto') }}
+ {{ kpi('Emitido no período', money(data.receivables.issued), 'Baseado na data de emissão reconhecida') }}
+ {{ kpi('Recebido no período', money(data.receivables.received), 'Baixas com data no período') }}
+ {{ kpi('Recebido com atraso', money(data.receivables.received_late),'','warning') }}
+ {{ kpi('Índice de inadimplência', '%.1f%%'|format(data.receivables.overdue_pct), 'Sobre o saldo atual em aberto') }}
+ {{ kpi('Recebido no prazo', ('%.1f%%'|format(data.receivables.on_time_pct)) if data.receivables.on_time_pct is not none else 'Dados indisponíveis', 'Entre baixas com vencimento e pagamento reconhecidos') }}
 </div>
-<div class="bi-two"><article class="bi-card"><h3>Aging de contas a receber</h3><table><thead><tr><th>Faixa</th><th>Títulos</th><th>Valor</th><th>%</th></tr></thead><tbody>{% for r in data.receivables.aging %}<tr><td>{{ r.name }}</td><td>{{ r.count }}</td><td>{{ money(r.value) }}</td><td>{{ '%.1f'|format(r.share) }}%</td></tr>{% endfor %}</tbody></table></article><article class="bi-card"><h3>Previsão de recebimentos</h3><table><thead><tr><th>Horizonte</th><th>Títulos</th><th>Valor</th></tr></thead><tbody>{% for r in data.receivables.forecast %}<tr><td>{{ r.days }} dias</td><td>{{ r.count }}</td><td>{{ money(r.value) }}</td></tr>{% endfor %}</tbody></table></article></div>
-<article class="bi-card"><h3>Resultado por carteira</h3><p class="bi-note">A descrição é priorizada a partir do detalhe do título, catálogo de bancos e opções de boleto já sincronizadas. Quando a API fornecer somente o ID, ele permanece identificado como carteira numérica.</p><table><thead><tr><th>Carteira / descrição</th><th>Emitido no período</th><th>Recebido no período</th><th>Em aberto</th><th>Vencido</th><th>Títulos em aberto</th><th>% vencido</th></tr></thead><tbody>{% for r in data.receivables.wallet_results %}<tr><td><b>{{ r.name }}</b></td><td>{{ money(r.issued) }}</td><td>{{ money(r.received) }}</td><td>{{ money(r.open) }}</td><td>{{ money(r.overdue) }}</td><td>{{ r.open_count }}</td><td>{{ '%.1f'|format(r.overdue_pct) }}%</td></tr>{% else %}<tr><td colspan="7">Sem carteiras identificadas.</td></tr>{% endfor %}</tbody></table></article>
-<div class="bi-two"><article class="bi-card"><h3>Maiores saldos devedores</h3><table><tbody>{% for r in data.receivables.top_balance[:15] %}<tr><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% endfor %}</tbody></table></article><article class="bi-card"><h3>Maiores valores vencidos</h3><table><tbody>{% for r in data.receivables.top_overdue[:15] %}<tr><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% endfor %}</tbody></table></article></div>
-<article class="bi-card"><h3>Títulos em aberto</h3><table><thead><tr><th>Documento</th><th>Cliente</th><th>Vencimento</th><th>Valor</th><th>Recebido</th><th>Saldo</th><th>Banco</th><th>Carteira</th></tr></thead><tbody>{% for r in data.receivables.titles %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document or '—' }}</a></td><td>{{ r.partner }}</td><td>{{ r.due or '—' }}</td><td>{{ money(r.value) }}</td><td>{{ money(r.paid) }}</td><td>{{ money(r.balance) }}</td><td>{{ r.bank or '—' }}</td><td>{{ r.wallet or '—' }}</td></tr>{% endfor %}</tbody></table></article>
+
+{% if data.receivables.issued is none or data.receivables.quality.issue_pct < 100 or data.receivables.quality.partner_pct < 100 %}
+<div class="bi-data-warning">⚠ Parte do financeiro ainda está incompleta. A tela agora diferencia <b>zero real</b> de <b>dado ausente</b> e tenta recuperar cliente/vendedor pelos vínculos exatos com NF-e e pedido. Use o enriquecimento do Financeiro para títulos que ainda permanecerem sem identificação.</div>
+{% endif %}
+
+<article class="bi-card ar-quality-card">
+  <div class="sales-card-title"><div><h3>Qualidade dos dados de Contas a Receber</h3><p class="bi-note">Cobertura dos campos utilizados nos indicadores. Percentuais baixos explicam resultados “Sem identificação” ou indicadores indisponíveis.</p></div><span class="sales-count">{{ data.receivables.quality.total }}</span></div>
+  <div class="ar-quality-grid">
+    {% for label,value,pct in [
+      ('Cliente',data.receivables.quality.partner,data.receivables.quality.partner_pct),
+      ('Vendedor',data.receivables.quality.seller,data.receivables.quality.seller_pct),
+      ('Banco',data.receivables.quality.bank,data.receivables.quality.bank_pct),
+      ('Carteira',data.receivables.quality.wallet,data.receivables.quality.wallet_pct),
+      ('Emissão',data.receivables.quality.issue,data.receivables.quality.issue_pct),
+      ('Vencimento',data.receivables.quality.due,data.receivables.quality.due_pct)
+    ] %}
+    <div class="ar-quality-item"><span>{{ label }}</span><b>{{ '%.1f'|format(pct) }}%</b><small>{{ value }} de {{ data.receivables.quality.total }}</small><div><i style="width:{{ pct }}%"></i></div></div>
+    {% endfor %}
+  </div>
+</article>
+
+<div class="bi-two">
+  <article class="bi-card"><h3>Aging de contas a receber</h3><p class="bi-note">Abra uma faixa para visualizar os títulos que formam o valor.</p><div class="bi-branch-list">{% for r in data.receivables.aging %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.count if r.count is not none else '—' }} título(s) · {{ '%.1f'|format(r.share) }}%</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ar_table(r.titles) }}</div></details>{% endfor %}</div></article>
+  <article class="bi-card"><h3>Previsão de recebimentos</h3>{% if data.receivables.future_open_count %}<p class="bi-note">Abra o horizonte para conferir os títulos previstos.</p><div class="bi-branch-list">{% for r in data.receivables.forecast %}<details class="bi-branch"><summary><span><b>Próximos {{ r.days }} dias</b><small>{{ r.count if r.count is not none else '—' }} título(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ar_table(r.titles) }}</div></details>{% endfor %}</div>{% else %}<div class="bi-empty"><b>Não há títulos em aberto com vencimento futuro.</b><br>Por isso a previsão de 7/15/30/60/90 dias é realmente zero; os títulos atuais estão vencidos ou sem vencimento reconhecido.</div>{% endif %}</article>
+</div>
+
+<article class="bi-card ar-seller-card">
+  <div class="sales-card-title"><div><h3>Contas a receber por vendedor</h3><p class="bi-note">Prioridade de vínculo: vendedor do título → NF-e/pedido → vendedor atual do cadastro do cliente. O fallback pelo cadastro é usado somente para gestão operacional da carteira, não para reescrever o histórico de vendas.</p></div></div>
+  <div class="sales-list">
+  {% for r in data.receivables.sellers %}
+    <details class="sales-drill ar-seller-drill" {% if loop.first %}open{% endif %}>
+      <summary><span><b>{{ r.name }}</b><small>{{ r.open_count }} título(s) em aberto · {{ r.title_count }} título(s) vinculados</small></span><span class="sales-summary-metrics"><b>{{ money(r.open) }}</b><small>Vencido {{ money(r.overdue) }} · {{ '%.1f'|format(r.overdue_pct or 0) }}%</small></span></summary>
+      <div class="bi-branch-body"><table><thead><tr><th>Documento</th><th>Cliente</th><th>NF-e</th><th>Vencimento</th><th>Banco</th><th>Carteira</th><th>Saldo</th></tr></thead><tbody>{% for t in r.titles %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.partner }}</td><td>{% if t.invoice_id %}<a href="/faturamento/{{ t.invoice_id }}">{{ t.nf_number or 'Abrir NF' }}</a>{% else %}{{ t.nf_number or '—' }}{% endif %}</td><td>{{ t.due or '—' }}</td><td>{{ t.bank or '—' }}</td><td>{{ t.wallet or '—' }}</td><td>{{ money(t.balance) }}</td></tr>{% else %}<tr><td colspan="7">Nenhum título em aberto para este vendedor.</td></tr>{% endfor %}</tbody></table></div>
+    </details>
+  {% else %}<div class="bi-empty">Nenhum vendedor pôde ser vinculado aos títulos atuais. Sincronize Pedidos/Faturamento e enriqueça os títulos a receber para ampliar a identificação.</div>{% endfor %}
+  </div>
+</article>
+
+<article class="bi-card"><h3>Resultado por carteira</h3><p class="bi-note">Abra uma carteira para visualizar os títulos em aberto. A descrição é priorizada a partir do detalhe do título, catálogo de bancos e opções de boleto sincronizadas.</p><div class="bi-branch-list">{% for r in data.receivables.wallet_results %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>Emitido {{ money(r.issued) }} · recebido {{ money(r.received) }} · {{ r.open_count }} título(s)</small></span><span class="sales-summary-metrics"><b>{{ money(r.open) }}</b><small>Vencido {{ money(r.overdue) }} · {{ '%.1f'|format(r.overdue_pct) }}%</small></span></summary><div class="bi-branch-body">{{ ar_table(r.titles) }}</div></details>{% else %}<div class="bi-empty">Sem carteiras identificadas.</div>{% endfor %}</div></article>
+<article class="bi-card"><h3>Resultado por banco</h3><p class="bi-note">Abra um banco para visualizar os títulos que compõem o saldo.</p><div class="bi-branch-list">{% for r in data.receivables.banks %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.count }} título(s) em aberto</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ar_table(r.titles) }}</div></details>{% else %}<div class="bi-empty">Sem bancos identificados.</div>{% endfor %}</div></article>
+
+<div class="bi-two"><article class="bi-card"><h3>Maiores saldos devedores</h3><div class="bi-branch-list">{% for r in data.receivables.top_balance[:15] %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.titles|length }} título(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ar_table(r.titles) }}</div></details>{% else %}<div class="bi-empty">Sem saldos em aberto.</div>{% endfor %}</div></article><article class="bi-card"><h3>Maiores valores vencidos</h3><div class="bi-branch-list">{% for r in data.receivables.top_overdue[:15] %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.titles|length }} título(s) vencido(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ar_table(r.titles) }}</div></details>{% else %}<div class="bi-empty">Sem valores vencidos.</div>{% endfor %}</div></article></div>
+
+<article class="bi-card"><h3>Títulos em aberto</h3><table><thead><tr><th>Documento</th><th>Cliente</th><th>Vendedor</th><th>NF-e</th><th>Vencimento</th><th>Valor</th><th>Recebido</th><th>Saldo</th><th>Banco</th><th>Carteira</th></tr></thead><tbody>{% for r in data.receivables.titles %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document or '—' }}</a></td><td><b>{{ r.partner }}</b>{% if r.partner_source %}<small>{{ r.partner_source }}</small>{% endif %}</td><td>{{ r.seller }}{% if r.seller_source %}<small>{{ r.seller_source }}</small>{% endif %}</td><td>{% if r.invoice_id %}<a href="/faturamento/{{ r.invoice_id }}">{{ r.nf_number or 'Abrir NF' }}</a>{% else %}{{ r.nf_number or '—' }}{% endif %}</td><td>{{ r.due or '—' }}</td><td>{{ money(r.value) }}</td><td>{{ money(r.paid) }}</td><td>{{ money(r.balance) }}</td><td>{{ r.bank or '—' }}</td><td>{{ r.wallet or '—' }}</td></tr>{% endfor %}</tbody></table></article>
 </section>
 {% endif %}
 
 {% if section == 'contas-pagar' %}
-<section class="bi-section"><div class="bi-kpi-grid compact">{{ kpi('Total a pagar', money(data.payables.open)) }}{{ kpi('Total vencido', money(data.payables.overdue),'','danger') }}{{ kpi('Total a vencer', money(data.payables.due)) }}{{ kpi('Lançado no período', money(data.payables.period)) }}{{ kpi('Pago no período', money(data.payables.paid)) }}{{ kpi('Despesas operacionais', money(data.payables.expenses_total)) }}</div>
-<div class="bi-two"><article class="bi-card"><h3>Previsão de pagamentos</h3><table><thead><tr><th>Horizonte</th><th>Títulos</th><th>Valor</th></tr></thead><tbody>{% for r in data.payables.forecast %}<tr><td>{{ r.days }} dias</td><td>{{ r.count }}</td><td>{{ money(r.value) }}</td></tr>{% endfor %}</tbody></table></article><article class="bi-card"><h3>Fornecedores com maior saldo a pagar</h3><table><tbody>{% for r in data.payables.suppliers[:15] %}<tr><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% endfor %}</tbody></table></article></div>
-<article class="bi-card"><h3>Próximos vencimentos</h3><table><thead><tr><th>Documento</th><th>Fornecedor</th><th>Vencimento</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>{% for r in data.payables.titles %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document or '—' }}</a></td><td>{{ r.partner }}</td><td>{{ r.due or '—' }}</td><td>{{ money(r.value) }}</td><td>{{ money(r.paid) }}</td><td>{{ money(r.balance) }}</td></tr>{% endfor %}</tbody></table></article></section>
+<section class="bi-section payable-dashboard">
+  <div class="bi-heading"><div><span>Gestão financeira</span><h2>Contas a Pagar</h2></div></div>
+
+  <div class="bi-kpi-grid compact">
+    {{ kpi('Previsto no período', money(data.payables.planned), (data.payables.planned_count|string+' título(s) por vencimento') if data.payables.planned_count is not none else 'Data de vencimento indisponível') }}
+    {{ kpi('Realizado no período', money(data.payables.realized), (data.payables.realized_count|string+' pagamento(s) por data de baixa') if data.payables.realized_count is not none else 'Data de pagamento indisponível') }}
+    {{ kpi('Desvio realizado × previsto', money(data.payables.variance), 'Positivo = saiu mais caixa que o previsto', 'danger' if data.payables.variance is not none and data.payables.variance > 0 else '') }}
+    {{ kpi('Execução do previsto', ('%.1f%%'|format(data.payables.execution_pct)) if data.payables.execution_pct is not none else 'Dados indisponíveis', 'Realizado ÷ previsto') }}
+    {{ kpi('Vencido em aberto', money(data.payables.overdue), data.payables.overdue_count|string+' título(s) vencido(s)', 'danger') }}
+    {{ kpi('Pago em atraso no período', money(data.payables.paid_late), (data.payables.paid_late_count|string+' título(s)') if data.payables.paid_late_count is not none else 'Data de pagamento/vencimento indisponível', 'warning') }}
+    {{ kpi('Total em aberto', money(data.payables.open), 'Posição atual da carteira') }}
+    {{ kpi('Total a vencer', money(data.payables.due), 'Saldo ainda não vencido') }}
+  </div>
+
+  <article class="bi-executive-note payable-note">
+    <h3>Como ler previsto × realizado</h3>
+    <p><b>Previsto</b> soma os títulos de Contas a Pagar cujo vencimento cai no período selecionado. <b>Realizado</b> soma as baixas/pagamentos cuja data de pagamento cai no mesmo período. O desvio não é “saldo restante”: ele evidencia a diferença de caixa, pois o realizado pode incluir títulos antigos pagos em atraso ou títulos futuros pagos antecipadamente.</p>
+  </article>
+
+  <article class="bi-card"><h3>Detalhar previsto × realizado</h3><div class="bi-branch-list">
+    <details class="bi-branch"><summary><span><b>Previsto no período</b><small>{{ data.payables.planned_count if data.payables.planned_count is not none else '—' }} título(s) por vencimento</small></span><strong>{{ money(data.payables.planned) }}</strong></summary><div class="bi-branch-body">{{ ap_table(data.payables.planned_titles) }}</div></details>
+    <details class="bi-branch"><summary><span><b>Realizado no período</b><small>{{ data.payables.realized_count if data.payables.realized_count is not none else '—' }} pagamento(s) por baixa</small></span><strong>{{ money(data.payables.realized) }}</strong></summary><div class="bi-branch-body">{{ ap_table(data.payables.realized_titles) }}</div></details>
+    <details class="bi-branch"><summary><span><b>Pagos em atraso</b><small>{{ data.payables.paid_late_count if data.payables.paid_late_count is not none else '—' }} título(s)</small></span><strong>{{ money(data.payables.paid_late) }}</strong></summary><div class="bi-branch-body">{{ ap_table(data.payables.paid_late_titles) }}</div></details>
+  </div></article>
+
+  {% if data.payables.due_coverage_pct < 100 or data.payables.paid_date_coverage_pct < 100 %}
+  <div class="bi-data-warning">⚠ Qualidade das datas — vencimento identificado em <b>{{ '%.1f'|format(data.payables.due_coverage_pct) }}%</b> dos títulos a pagar e data de pagamento identificada em <b>{{ '%.1f'|format(data.payables.paid_date_coverage_pct) }}%</b> dos títulos com baixa. Totais dependentes dessas datas podem ficar parciais.</div>
+  {% endif %}
+
+  <div class="bi-two">
+    <article class="bi-card">
+      <h3>Contas vencidas e em atraso</h3>
+      <div class="bi-branch-list">{% for r in data.payables.overdue_aging %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.count }} título(s) · {{ '%.1f'|format(r.share) }}%</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ap_table(r.titles) }}</div></details>{% endfor %}</div>
+      {% if data.payables.overdue_count == 0 %}<p class="bi-note">Não há títulos vencidos em aberto na posição atual.</p>{% endif %}
+    </article>
+
+    <article class="bi-card">
+      <h3>Fornecedores com maior saldo vencido</h3>
+      <div class="bi-branch-list">{% for r in data.payables.overdue_suppliers[:15] %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.titles|length }} título(s) vencido(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ap_table(r.titles) }}</div></details>{% else %}<div class="bi-empty">Sem fornecedores com saldo vencido.</div>{% endfor %}</div>
+    </article>
+  </div>
+
+  <article class="bi-card">
+    <h3>Fluxo de caixa de curto prazo</h3>
+    <p class="bi-note">Projeção acumulada somente com títulos em aberto e vencimentos conhecidos. Não representa saldo bancário.</p>
+    <div class="bi-branch-list">{% for r in data.payables.short_cashflow %}<details class="bi-branch"><summary><span><b>Próximos {{ r.days }} dias</b><small>{{ r.payables_count if r.payables_count is not none else '—' }} pagamentos · {{ r.receivables_count if r.receivables_count is not none else '—' }} recebimentos</small></span><span class="sales-summary-metrics"><b class="{% if r.net is not none and r.net < 0 %}negative{% endif %}">{{ money(r.net) }}</b><small>Saídas {{ money(r.payables) }} · Entradas {{ money(r.receivables) }} · Cobertura {% if r.coverage_pct is none %}—{% else %}{{ '%.1f'|format(r.coverage_pct) }}%{% endif %}</small></span></summary><div class="bi-branch-body"><h4>Pagamentos previstos</h4>{{ ap_table(r.payable_titles) }}<h4>Recebimentos conhecidos</h4>{{ ar_table(r.receivable_titles) }}</div></details>{% endfor %}</div>
+  </article>
+
+  <div class="bi-two">
+    <article class="bi-card"><h3>Fornecedores com maior saldo a pagar</h3><div class="bi-branch-list">{% for r in data.payables.suppliers[:15] %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.titles|length }} título(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ ap_table(r.titles) }}</div></details>{% else %}<div class="bi-empty">Sem títulos a pagar em aberto.</div>{% endfor %}</div></article>
+    <article class="bi-card"><h3>Indicadores complementares</h3><table><tbody>
+      <tr><td>Lançado no período</td><td>{{ money(data.payables.period) }}</td></tr>
+      <tr><td>Despesas operacionais lançadas</td><td>{{ money(data.payables.expenses_total) }}</td></tr>
+      <tr><td>Cobertura de vencimentos</td><td>{{ '%.1f'|format(data.payables.due_coverage_pct) }}%</td></tr>
+      <tr><td>Cobertura de datas de pagamento</td><td>{{ '%.1f'|format(data.payables.paid_date_coverage_pct) }}%</td></tr>
+    </tbody></table></article>
+  </div>
+
+  <article class="bi-card"><h3>Títulos em aberto por vencimento</h3><table><thead><tr><th>Documento</th><th>Fornecedor</th><th>Vencimento</th><th>Status</th><th>Dias em atraso</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
+  {% for r in data.payables.titles %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document or '—' }}</a></td><td>{{ r.partner }}</td><td>{{ r.due or '—' }}</td><td><b class="{% if r.status=='Vencido' %}negative{% endif %}">{{ r.status }}</b></td><td>{{ r.days_overdue if r.days_overdue else '—' }}</td><td>{{ money(r.value) }}</td><td>{{ money(r.paid) }}</td><td>{{ money(r.balance) }}</td></tr>{% endfor %}
+  </tbody></table></article>
+</section>
 {% endif %}
 
 {% if section == 'fluxo-caixa' %}
 <section class="bi-section"><div class="bi-kpi-grid compact">{{ kpi('Entradas realizadas', money(data.cashflow.received)) }}{{ kpi('Saídas realizadas', money(data.cashflow.paid)) }}{{ kpi('Saldo realizado do período', money(data.cashflow.realized_net),'Entradas − saídas','danger' if data.cashflow.realized_net < 0 else '') }}{{ kpi('Saldo bancário real', 'Dados indisponíveis', 'Não há integração de extrato/saldo bancário') }}</div>
-<article class="bi-card"><h3>Fluxo projetado com títulos conhecidos</h3><table><thead><tr><th>Horizonte</th><th>Entradas previstas</th><th>Saídas previstas</th><th>Saldo líquido projetado</th></tr></thead><tbody>{% for r in data.cashflow.projection %}<tr><td>{{ r.days }} dias</td><td>{{ money(r['in']) }}</td><td>{{ money(r.out) }}</td><td class="{% if r.net < 0 %}negative{% endif %}">{{ money(r.net) }}</td></tr>{% endfor %}</tbody></table><p class="bi-note">O saldo projetado não representa saldo bancário. Considera somente recebíveis e pagamentos em aberto com vencimento conhecido.</p></article></section>
+<div class="bi-two"><article class="bi-card"><h3>Entradas realizadas</h3><details class="bi-branch"><summary><span><b>Baixas de recebíveis</b><small>{{ data.cashflow.received_details|length }} título(s) detalhados</small></span><strong>{{ money(data.cashflow.received) }}</strong></summary><div class="bi-branch-body">{{ ar_table(data.cashflow.received_details) }}</div></details></article><article class="bi-card"><h3>Saídas realizadas</h3><details class="bi-branch"><summary><span><b>Pagamentos/baixas</b><small>{{ data.cashflow.paid_details|length }} título(s) detalhados</small></span><strong>{{ money(data.cashflow.paid) }}</strong></summary><div class="bi-branch-body">{{ ap_table(data.cashflow.paid_details) }}</div></details></article></div>
+<article class="bi-card"><h3>Fluxo projetado com títulos conhecidos</h3><p class="bi-note">Abra o horizonte para visualizar os títulos que formam a projeção. O saldo projetado não representa saldo bancário.</p><div class="bi-branch-list">{% for r in data.cashflow.projection %}<details class="bi-branch"><summary><span><b>Próximos {{ r.days }} dias</b><small>Entradas {{ money(r['in']) }} · Saídas {{ money(r.out) }}</small></span><strong class="{% if r.net is not none and r.net < 0 %}negative{% endif %}">{{ money(r.net) }}</strong></summary><div class="bi-branch-body"><h4>Entradas previstas</h4>{{ ar_table(r.receivable_titles) }}<h4>Saídas previstas</h4>{{ ap_table(r.payable_titles) }}</div></details>{% endfor %}</div></article></section>
 {% endif %}
 
 {% if section == 'dre' %}
@@ -126,8 +344,8 @@
   <div class="bi-kpi-grid compact">
     {{ kpi('Receita bruta', money(data.dre.sales), 'NF-e de saída válidas') }}
     {{ kpi('Despesas conhecidas', money(data.dre.expenses), 'Somente módulo Despesas') }}
-    {{ kpi('Resultado gerencial parcial', money(data.dre.partial_result), 'Antes de deduções, impostos e CMV', 'danger' if data.dre.partial_result < 0 else '') }}
-    {{ kpi('Despesas não classificadas', money(data.dre.unclassified), ('%.1f%% das despesas'|format(data.dre.unclassified_pct)), 'warning' if data.dre.unclassified > 0 else '') }}
+    {{ kpi('Resultado gerencial parcial', money(data.dre.partial_result), 'Antes de deduções, impostos e CMV', 'danger' if data.dre.partial_result is not none and data.dre.partial_result < 0 else '') }}
+    {{ kpi('Despesas não classificadas', money(data.dre.unclassified), (('%.1f%% das despesas'|format(data.dre.unclassified_pct)) if data.dre.unclassified_pct is not none else 'Classificação indisponível'), 'warning' if data.dre.unclassified is not none and data.dre.unclassified > 0 else '') }}
   </div>
 
   <article class="bi-card dre-card">
@@ -146,17 +364,15 @@
   </article>
 
   <article class="bi-card">
-    <h3>Despesas por grupo da DRE</h3>
-    <table><thead><tr><th>Grupo</th><th>Período atual</th><th>Período anterior</th><th>Variação</th><th>% da receita bruta</th></tr></thead><tbody>
-    {% for r in data.dre.groups %}<tr class="{% if r.code=='NAO_CLASSIFICADO' and r.value %}dre-warning-row{% endif %}"><td>{{ r.name }}</td><td>{{ money(r.value) }}</td><td>{{ money(r.previous) }}</td><td>{{ variation(r.variation) }}</td><td>{% if r.share_revenue is not none %}{{ '%.1f'|format(r.share_revenue) }}%{% else %}—{% endif %}</td></tr>{% endfor %}
-    </tbody></table>
+    <h3>Despesas por grupo da DRE</h3><p class="bi-note">Abra um grupo para conferir os lançamentos que formam o valor.</p>
+    <div class="bi-branch-list">{% for r in data.dre.groups %}<details class="bi-branch {% if r.code=='NAO_CLASSIFICADO' and r.value %}dre-warning-row{% endif %}"><summary><span><b>{{ r.name }}</b><small>Anterior {{ money(r.previous) }} · {{ variation(r.variation) }} · {% if r.share_revenue is not none %}{{ '%.1f'|format(r.share_revenue) }}% da receita{% else %}participação indisponível{% endif %}</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body"><div class="table-wrap"><table><thead><tr><th>Emissão</th><th>Documento</th><th>Fornecedor/favorecido</th><th>Categoria</th><th>Status</th><th>Valor</th></tr></thead><tbody>{% for d in r.details %}<tr><td>{{ d.date or '—' }}</td><td><a href="/financeiro/{{ d.id }}">{{ d.document }}</a></td><td>{{ d.partner }}</td><td>{{ d.category }}</td><td>{{ d.status }}</td><td>{{ money(d.value) }}</td></tr>{% else %}<tr><td colspan="6">Sem lançamentos neste grupo.</td></tr>{% endfor %}</tbody></table></div></div></details>{% endfor %}</div>
   </article>
 
   <article class="bi-card dre-monthly-card">
     <h3>DRE mensal resumida · {{ data.dre.year }}</h3>
     <p class="bi-note">Resultado parcial = Receita bruta − despesas conhecidas. Não inclui CMV nem deduções/tributos indisponíveis.</p>
     <table><thead><tr><th>Mês</th><th>Receita bruta</th><th>Comerciais</th><th>Administrativas</th><th>Logísticas</th><th>Outras operacionais</th><th>Financeiras</th><th>Não classificadas</th><th>Total despesas</th><th>Resultado parcial</th></tr></thead><tbody>
-    {% for r in data.dre.monthly %}<tr><td><b>{{ r.label }}</b></td><td>{{ money(r.sales) }}</td><td>{{ money(r.groups.COMERCIAL) }}</td><td>{{ money(r.groups.ADMINISTRATIVA) }}</td><td>{{ money(r.groups.LOGISTICA) }}</td><td>{{ money(r.groups.OUTRAS_OPERACIONAIS) }}</td><td>{{ money(r.groups.FINANCEIRA) }}</td><td>{{ money(r.groups.NAO_CLASSIFICADO) }}</td><td>{{ money(r.expenses) }}</td><td class="{% if r.partial < 0 %}negative{% endif %}">{{ money(r.partial) }}</td></tr>{% endfor %}
+    {% for r in data.dre.monthly %}<tr><td><b>{{ r.label }}</b></td><td>{{ money(r.sales) }}</td><td>{{ money(r.groups.COMERCIAL) }}</td><td>{{ money(r.groups.ADMINISTRATIVA) }}</td><td>{{ money(r.groups.LOGISTICA) }}</td><td>{{ money(r.groups.OUTRAS_OPERACIONAIS) }}</td><td>{{ money(r.groups.FINANCEIRA) }}</td><td>{{ money(r.groups.NAO_CLASSIFICADO) }}</td><td>{{ money(r.expenses) }}</td><td class="{% if r.partial is not none and r.partial < 0 %}negative{% endif %}">{{ money(r.partial) }}</td></tr>{% endfor %}
     </tbody></table>
   </article>
 
@@ -167,7 +383,7 @@
       <input type="hidden" name="period" value="custom"><input type="hidden" name="date_from" value="{{ data.meta.start.isoformat() }}"><input type="hidden" name="date_to" value="{{ data.meta.end.isoformat() }}">
       {% for key in ['customer_id','supplier_id','state','city','bank','wallet','situation','product','seller'] %}{% if filters[key] %}<input type="hidden" name="{{ key }}" value="{{ filters[key] }}">{% endif %}{% endfor %}
       <table><thead><tr><th>Categoria encontrada</th><th>Lançamentos no período</th><th>Valor no período</th><th>Grupo na DRE</th></tr></thead><tbody>
-      {% for r in data.dre.categories %}<tr><td><input type="hidden" name="source_category" value="{{ r.category }}"><b>{{ r.category }}</b></td><td>{{ r.count }}</td><td>{{ money(r.value) }}</td><td><select name="dre_group">{% for o in data.dre.groups_options %}<option value="{{ o.code }}" {% if r.group==o.code %}selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></td></tr>{% endfor %}
+      {% for r in data.dre.categories %}<tr><td><input type="hidden" name="source_category" value="{{ r.category }}"><b>{{ r.category }}</b></td><td>{{ r.count if r.count is not none else '—' }}</td><td>{{ money(r.value) }}</td><td><select name="dre_group">{% for o in data.dre.groups_options %}<option value="{{ o.code }}" {% if r.group==o.code %}selected{% endif %}>{{ o.name }}</option>{% endfor %}</select></td></tr>{% endfor %}
       </tbody></table>
       <div class="dre-map-actions"><button class="btn primary" type="submit">Salvar classificação</button><span>A alteração recalcula a DRE imediatamente; não altera o lançamento original do ERP.</span></div>
     </form>
@@ -195,29 +411,26 @@
   {{ kpi('Pedidos comerciais', data.commercial.orders) }}
   {{ kpi('Clientes que compraram', data.commercial.customers_bought) }}
 </div>
-<article class="bi-card"><div class="bi-card-title-row"><div><h3>Resultado de vendas por vendedor</h3><p class="bi-note">O BI procura o vendedor primeiro no retorno do faturamento/pedido detalhado e, se necessário, usa vínculo exato com o pedido sincronizado por ID ou número.</p></div><div class="bi-source-summary"><span><b>{{ data.commercial.seller_diagnostics.identified }}</b> NF-e identificadas</span><span class="{% if data.commercial.seller_diagnostics.unidentified %}warning-text{% endif %}"><b>{{ data.commercial.seller_diagnostics.unidentified }}</b> sem vendedor</span></div></div>{% if data.commercial.sellers %}<table><thead><tr><th>#</th><th>Vendedor</th><th>Faturamento</th><th>Mês anterior</th><th>Crescimento</th></tr></thead><tbody>{% for r in data.commercial.sellers %}<tr><td>{{ loop.index }}</td><td><b>{{ r.name }}</b></td><td>{{ money(r.value) }}</td><td>{{ money(r.previous_month) }}</td><td>{{ variation(r.growth) }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="bi-unavailable">Nenhum vendedor foi identificado. Sincronize Pedidos e Faturamento (com enriquecimento de detalhes) para verificar os campos reais retornados pela API.</div>{% endif %}</article>
+<article class="bi-card"><div class="bi-card-title-row"><div><h3>Resultado de vendas por vendedor</h3><p class="bi-note">Abra o vendedor para visualizar as NF-e que compõem o resultado.</p></div><div class="bi-source-summary"><span><b>{{ data.commercial.seller_diagnostics.identified }}</b> NF-e identificadas</span><span class="{% if data.commercial.seller_diagnostics.unidentified %}warning-text{% endif %}"><b>{{ data.commercial.seller_diagnostics.unidentified }}</b> sem vendedor</span></div></div>{% if data.commercial.sellers %}<div class="bi-branch-list">{% for r in data.commercial.sellers %}<details class="bi-branch"><summary><span><b>#{{ loop.index }} · {{ r.name }}</b><small>Mês anterior {{ money(r.previous_month) }} · {{ variation(r.growth) }} · {{ r.invoice_count }} NF-e</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ invoice_table(r.invoices) }}</div></details>{% endfor %}</div>{% else %}<div class="bi-unavailable">Nenhum vendedor foi identificado. Sincronize Pedidos e Faturamento (com enriquecimento de detalhes) para verificar os campos reais retornados pela API.</div>{% endif %}</article>
 <article class="bi-card compact-source-card"><h3>Origem da identificação do vendedor</h3><div class="bi-source-list">{% for r in data.commercial.seller_diagnostics.sources %}<div><span>{{ r.name }}</span><b>{{ r.count }} NF-e</b></div>{% else %}<div><span>Sem documentos no período</span><b>0</b></div>{% endfor %}</div></article>
 <div class="bi-two">
-  <article class="bi-card"><h3>Vendedor × categoria</h3><table><thead><tr><th>Vendedor</th><th>Categoria</th><th>Faturamento dos itens</th></tr></thead><tbody>{% for r in data.commercial.seller_categories[:50] %}<tr><td>{{ r.seller }}</td><td>{{ r.category }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="3">Sem combinação vendedor/categoria disponível.</td></tr>{% endfor %}</tbody></table></article>
-  <article class="bi-card"><h3>Vendas por região</h3><table><tbody>{% for r in data.commercial.states %}<tr><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td>Sem dados por região.</td></tr>{% endfor %}</tbody></table></article>
+  <article class="bi-card"><h3>Vendedor × categoria</h3><p class="bi-note">Abra vendedor → categoria → produto; no produto aparecem as NF-e relacionadas.</p><div class="bi-branch-list">{% for r in data.commercial.seller_category_groups %}<details class="bi-branch" {% if loop.first %}open{% endif %}><summary><span><b>{{ r.name }}</b><small>{{ r.categories|length }} categoria(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{% for c in r.categories %}<details class="sales-subbranch"><summary><span><b>{{ c.name }}</b><small>{{ c.products|length }} produto(s)</small></span><strong>{{ money(c.value) }}</strong></summary><div>{% for p in c.products %}<details class="sales-subbranch product-subbranch"><summary><span><b>{{ p.code }} · {{ p.name }}</b><small>Qtd. {{ '%.3f'|format(p.qty) }}</small></span><strong>{{ money(p.value) }}</strong></summary>{{ invoice_table(p.invoices) }}</details>{% else %}<div class="bi-empty">Sem produtos identificados.</div>{% endfor %}</div></details>{% else %}<div class="bi-empty">Itens/categorias não identificados para este vendedor.</div>{% endfor %}</div></details>{% else %}<div class="bi-unavailable">Sem combinação vendedor/categoria disponível.</div>{% endfor %}</div></article>
+  <article class="bi-card"><h3>Vendas por região</h3><p class="bi-note">Abra UF → cidade → NF-e.</p><div class="bi-branch-list">{% for r in data.sales_dashboard.states %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.invoice_count }} NF-e · {{ r.cities|length }} cidade(s)</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{% for c in r.cities %}<details class="sales-subbranch"><summary><span><b>{{ c.name }}</b><small>{{ c.invoice_count }} NF-e</small></span><strong>{{ money(c.value) }}</strong></summary>{{ invoice_table(c.invoices) }}</details>{% endfor %}</div></details>{% else %}<div class="bi-empty">Sem dados por região.</div>{% endfor %}</div></article>
 </div>
 </section>
 {% endif %}
 
 {% if section == 'clientes' %}
 <section class="bi-section"><div class="bi-kpi-grid compact">{{ kpi('Clientes cadastrados', data.customers.total) }}{{ kpi('Compraram no período', data.customers.bought) }}{{ kpi('Clientes novos', data.customers.new) }}{{ kpi('Clientes recuperados', data.customers.recovered) }}{{ kpi('Sem compra > 30 dias', data.customers.inactive_30) }}{{ kpi('Sem compra > 60 dias', data.customers.inactive_60,'','warning') }}{{ kpi('Sem compra > 90 dias', data.customers.inactive_90,'','danger') }}</div>
-<div class="bi-two"><article class="bi-card"><h3>Curva ABC de clientes</h3><table><thead><tr><th>Classe</th><th>Cliente</th><th>Faturamento</th><th>Participação</th></tr></thead><tbody>{% for r in data.customers.abc[:30] %}<tr><td><span class="abc abc-{{ r.class|lower }}">{{ r.class }}</span></td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td><td>{{ '%.1f'|format(r.share) }}%</td></tr>{% endfor %}</tbody></table></article><article class="bi-card"><h3>Concentração do faturamento</h3><div class="bi-stat-list"><div><span>Top 5 clientes</span><b>{{ '%.1f'|format(data.customers.concentration.top5) }}%</b></div><div><span>Top 10 clientes</span><b>{{ '%.1f'|format(data.customers.concentration.top10) }}%</b></div><div><span>Top 20 clientes</span><b>{{ '%.1f'|format(data.customers.concentration.top20) }}%</b></div></div><p class="bi-note">Curva ABC calculada sobre faturamento fiscal válido do período selecionado.</p></article></div></section>
+<div class="bi-two"><article class="bi-card"><h3>Curva ABC de clientes</h3><table><thead><tr><th>Classe</th><th>Cliente</th><th>Faturamento</th><th>Participação</th></tr></thead><tbody>{% for r in data.customers.abc[:30] %}<tr><td><span class="abc abc-{{ r.class|lower }}">{{ r.class }}</span></td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td><td>{{ '%.1f'|format(r.share) }}%</td></tr>{% endfor %}</tbody></table></article><article class="bi-card"><h3>Concentração do faturamento</h3><div class="bi-stat-list"><div><span>Top 5 clientes</span><b>{{ '%.1f'|format(data.customers.concentration.top5) }}%</b></div><div><span>Top 10 clientes</span><b>{{ '%.1f'|format(data.customers.concentration.top10) }}%</b></div><div><span>Top 20 clientes</span><b>{{ '%.1f'|format(data.customers.concentration.top20) }}%</b></div></div><p class="bi-note">Curva ABC calculada sobre faturamento fiscal válido do período selecionado.</p></article></div>
+<article class="bi-card"><h3>Clientes que mais compram × categoria</h3><p class="bi-note">Abra cliente → categoria → produto → NF-e. Também há uma visão direta das notas do cliente.</p><div class="bi-branch-list">{% for r in data.customers.customer_category_groups[:30] %}<details class="bi-branch" {% if loop.first %}open{% endif %}><summary><span><b>#{{ loop.index }} · {{ r.name }}</b><small>{{ r.categories|length }} categoria(s) · {{ r.invoices|length }} NF-e</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body"><details class="sales-subbranch"><summary><span><b>NF-e do cliente no período</b><small>{{ r.invoices|length }} documento(s)</small></span></summary>{{ invoice_table(r.invoices) }}</details>{% for c in r.categories %}<details class="sales-subbranch"><summary><span><b>{{ c.name }}</b><small>{{ c.products|length }} produto(s)</small></span><strong>{{ money(c.value) }}</strong></summary><div>{% for p in c.products %}<details class="sales-subbranch product-subbranch"><summary><span><b>{{ p.code }} · {{ p.name }}</b><small>Qtd. {{ '%.3f'|format(p.qty) }}</small></span><strong>{{ money(p.value) }}</strong></summary>{{ invoice_table(p.invoices) }}</details>{% else %}<div class="bi-empty">Sem produtos identificados.</div>{% endfor %}</div></details>{% else %}<div class="bi-empty">Itens/categorias não identificados para este cliente.</div>{% endfor %}</div></details>{% else %}<div class="bi-unavailable">Sem clientes com faturamento no período.</div>{% endfor %}</div></article></section>
 {% endif %}
 
 {% if section == 'produtos' %}
 <section class="bi-section">
 <div class="bi-two">
-  <article class="bi-card"><h3>Produtos com maior faturamento</h3><table><thead><tr><th>#</th><th>Código</th><th>Produto</th><th>Faturamento</th></tr></thead><tbody>{% for r in data.products.revenue[:25] %}<tr><td>{{ loop.index }}</td><td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem itens.</td></tr>{% endfor %}</tbody></table></article>
-  <article class="bi-card"><h3>Produtos mais vendidos em quantidade</h3><table><thead><tr><th>#</th><th>Código</th><th>Produto</th><th>Quantidade</th></tr></thead><tbody>{% for r in data.products.qty[:25] %}<tr><td>{{ loop.index }}</td><td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ '%.3f'|format(r.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem itens.</td></tr>{% endfor %}</tbody></table></article>
-</div>
-<div class="bi-two">
-  <article class="bi-card"><h3>Resultado por categoria</h3><table><thead><tr><th>#</th><th>Categoria</th><th>Faturamento</th></tr></thead><tbody>{% for r in data.products.categories %}<tr><td>{{ loop.index }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="3">Sem categoria identificada.</td></tr>{% endfor %}</tbody></table></article>
-  <article class="bi-card"><h3>Resultado por subcategoria</h3><table><thead><tr><th>#</th><th>Subcategoria</th><th>Faturamento</th></tr></thead><tbody>{% for r in data.products.subcategories %}<tr><td>{{ loop.index }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="3">Sem subcategoria identificada. Sincronize Produtos após atualizar esta versão.</td></tr>{% endfor %}</tbody></table></article>
+  <article class="bi-card"><h3>Produtos por faturamento e quantidade</h3><p class="bi-note">Abra um produto para visualizar todas as NF-e relacionadas.</p><div class="bi-branch-list">{% for r in data.products.drill_products[:30] %}<details class="bi-branch"><summary><span><b>#{{ loop.index }} · {{ r.code }} · {{ r.name }}</b><small>{{ r.category }} › {{ r.subcategory }} · Qtd. {{ '%.3f'|format(r.qty) }} · {{ r.invoice_count }} NF-e</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ invoice_table(r.invoices) }}</div></details>{% else %}<div class="bi-empty">Sem itens.</div>{% endfor %}</div></article>
+  <article class="bi-card"><h3>Categoria → subcategoria → produto</h3><p class="bi-note">Abra os níveis para chegar ao produto que compõe o faturamento.</p><div class="bi-branch-list">{% for cat in data.products.category_drill %}<details class="bi-branch"><summary><span><b>{{ cat.name }}</b><small>{{ cat.subcategories|length }} subcategoria(s)</small></span><strong>{{ money(cat.value) }}</strong></summary><div class="bi-branch-body">{% for sub in cat.subcategories %}<details class="sales-subbranch"><summary><span><b>{{ sub.name }}</b><small>{{ sub.products|length }} produto(s)</small></span><strong>{{ money(sub.value) }}</strong></summary><div class="bi-branch-list">{% for pr in sub.products %}<details class="sales-subbranch product-subbranch"><summary><span><b>{{ pr.code }} · {{ pr.name }}</b><small>Qtd. {{ '%.3f'|format(pr.qty) }}</small></span><strong>{{ money(pr.value) }}</strong></summary>{{ invoice_table(pr.invoices) }}</details>{% endfor %}</div></details>{% endfor %}</div></details>{% else %}<div class="bi-empty">Sem categoria identificada.</div>{% endfor %}</div></article>
 </div>
 <article class="bi-card"><h3>Rentabilidade e estoque</h3><div class="bi-unavailable">Margem por produto, giro, cobertura, lotes e validade permanecem como <b>Dados indisponíveis</b>, pois a estrutura atual não possui custo efetivo de cada venda nem saldo/lote/validade de estoque normalizados. Nenhum valor estimado foi criado.</div></article>
 </section>
@@ -227,20 +440,20 @@
 <section class="bi-section">
 <div class="bi-kpi-grid compact">{{ kpi('Total comprado', money(data.purchases.total)) }}{{ kpi('NF-e de entrada', data.purchases.docs) }}{{ kpi('Ticket médio', money(data.purchases.ticket)) }}</div>
 <div class="bi-two">
-  <article class="bi-card"><h3>Principais fornecedores</h3><table><thead><tr><th>#</th><th>Fornecedor</th><th>Valor comprado</th></tr></thead><tbody>{% for r in data.purchases.suppliers[:20] %}<tr><td>{{ loop.index }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="3">Sem compras no período.</td></tr>{% endfor %}</tbody></table></article>
-  <article class="bi-card"><h3>Itens com maior valor comprado</h3><table><thead><tr><th>#</th><th>Código</th><th>Item</th><th>Valor</th></tr></thead><tbody>{% for r in data.purchases.products[:20] %}<tr><td>{{ loop.index }}</td><td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ money(r.value) }}</td></tr>{% else %}<tr><td colspan="4">Sem itens de compra.</td></tr>{% endfor %}</tbody></table></article>
+  <article class="bi-card"><h3>Principais fornecedores</h3><p class="bi-note">Abra o fornecedor para ver as NF-e; cada NF-e abre o detalhe completo.</p><div class="bi-branch-list">{% for r in data.purchases.suppliers[:20] %}<details class="bi-branch"><summary><span><b>#{{ loop.index }} · {{ r.name }}</b><small>{{ r.documents|length }} NF-e</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ purchase_docs(r.documents) }}</div></details>{% else %}<div class="bi-empty">Sem compras no período.</div>{% endfor %}</div></article>
+  <article class="bi-card"><h3>Itens com maior valor comprado</h3><p class="bi-note">Abra o produto para visualizar as NF-e de entrada e fornecedores.</p><div class="bi-branch-list">{% for r in data.purchases.products[:20] %}<details class="bi-branch"><summary><span><b>#{{ loop.index }} · {{ r.code }} · {{ r.name }}</b><small>Qtd. {{ '%.3f'|format(r.qty) }} · {{ r.documents|length }} NF-e</small></span><strong>{{ money(r.value) }}</strong></summary><div class="bi-branch-body">{{ purchase_docs(r.documents) }}</div></details>{% else %}<div class="bi-empty">Sem itens de compra.</div>{% endfor %}</div></article>
 </div>
-<article class="bi-card"><h3>Documentos de compra</h3><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Fornecedor</th><th>Valor</th><th>Conciliação</th></tr></thead><tbody>{% for r in data.purchases.documents %}<tr><td><a href="/compras/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date or '—' }}</td><td>{{ r.partner }}</td><td>{{ money(r.value) }}</td><td>{{ r.reconciliation or '—' }}</td></tr>{% else %}<tr><td colspan="5">Sem documentos de compra no período.</td></tr>{% endfor %}</tbody></table></article>
+<article class="bi-card"><h3>Documentos de compra</h3>{{ purchase_docs(data.purchases.documents) }}</article>
 <p class="bi-note">Quando o cabeçalho da compra vier com total zerado, o BI utiliza, nesta ordem, o total ERPFlex, o total NFStock ou a soma dos itens da própria NF-e. Isso corrige o ranking de fornecedores sem criar valores fictícios.</p>
 </section>
 {% endif %}
 
 {% if section == 'estoque-logistica' %}
-<section class="bi-section"><div class="bi-kpi-grid compact">{{ kpi('Entregas no período', data.logistics.deliveries) }}{{ kpi('Volumes', '%.0f'|format(data.logistics.volumes)) }}{{ kpi('Custo de frete', money(data.logistics.freight)) }}{{ kpi('Frete / faturamento', ('%.2f%%'|format(data.logistics.freight_pct)) if data.logistics.freight_pct is not none else '—') }}</div><div class="bi-two"><article class="bi-card"><h3>Entregas por status</h3><table><tbody>{% for r in data.logistics.status %}<tr><td>{{ r.name }}</td><td>{{ r.value }}</td></tr>{% endfor %}</tbody></table></article><article class="bi-card"><h3>Entregas por região</h3><table><tbody>{% for r in data.logistics.regions[:20] %}<tr><td>{{ r.name }}</td><td>{{ r.value }}</td></tr>{% endfor %}</tbody></table></article></div><article class="bi-card"><h3>Estoque e validade</h3><div class="bi-unavailable">Dados indisponíveis: o cadastro atual de produtos não contém saldo de estoque, lote, validade ou perdas por vencimento.</div></article></section>
+<section class="bi-section"><div class="bi-kpi-grid compact">{{ kpi('Entregas no período', data.logistics.deliveries) }}{{ kpi('Volumes', '%.0f'|format(data.logistics.volumes)) }}{{ kpi('Custo de frete', money(data.logistics.freight)) }}{{ kpi('Frete / faturamento', ('%.2f%%'|format(data.logistics.freight_pct)) if data.logistics.freight_pct is not none else '—') }}</div><div class="bi-two"><article class="bi-card"><h3>Entregas por status</h3><div class="bi-branch-list">{% for r in data.logistics.status %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.value }} entrega(s)</small></span><strong>{{ r.value }}</strong></summary><div class="bi-branch-body">{{ delivery_table(r.deliveries) }}</div></details>{% else %}<div class="bi-empty">Sem entregas.</div>{% endfor %}</div></article><article class="bi-card"><h3>Entregas por região</h3><div class="bi-branch-list">{% for r in data.logistics.regions[:20] %}<details class="bi-branch"><summary><span><b>{{ r.name }}</b><small>{{ r.value }} entrega(s)</small></span><strong>{{ r.value }}</strong></summary><div class="bi-branch-body">{{ delivery_table(r.deliveries) }}</div></details>{% else %}<div class="bi-empty">Sem regiões.</div>{% endfor %}</div></article></div><article class="bi-card"><h3>Estoque e validade</h3><div class="bi-unavailable">Dados indisponíveis: o cadastro atual de produtos não contém saldo de estoque, lote, validade ou perdas por vencimento.</div></article></section>
 {% endif %}
 
 {% if section == 'alertas' %}
-<section class="bi-section"><div class="bi-heading"><div><span>Monitoramento</span><h2>Alertas e oportunidades</h2></div></div>{% if data.alerts %}<div class="bi-alert-list">{% for a in data.alerts %}<article class="bi-alert {{ a.level }}"><div><h3>{{ a.title }}</h3><p>{{ a.detail }}</p><small>Ação sugerida: {{ a.action }}</small></div>{% if a.value is not none %}<b>{{ money(a.value) }}</b>{% endif %}</article>{% endfor %}</div>{% else %}<div class="bi-empty">Nenhum alerta automático foi disparado pelos critérios verificáveis atuais.</div>{% endif %}</section>
+<section class="bi-section"><div class="bi-heading"><div><span>Monitoramento</span><h2>Alertas e oportunidades</h2></div></div>{% if data.alerts %}<div class="bi-alert-list">{% for a in data.alerts %}<article class="bi-alert {{ a.level }}"><div><h3>{{ a.title }}</h3><p>{{ a.detail }}</p><small>Ação sugerida: {{ a.action }}</small><div class="alert-drill-action"><a class="btn small" href="{{ a.target_url }}?period=custom&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}">Abrir detalhes</a></div></div>{% if a.value is not none %}<b>{{ money(a.value) }}</b>{% endif %}</article>{% endfor %}</div>{% else %}<div class="bi-empty">Nenhum alerta automático foi disparado pelos critérios verificáveis atuais.</div>{% endif %}</section>
 {% endif %}
 
 <section class="bi-data-quality">
@@ -251,7 +464,11 @@
 
 <style>
 .bi-hero{margin-bottom:12px}.bi-kicker{font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:#2563eb}.bi-sync{margin-top:8px;font-size:.78rem;color:#64748b}.bi-tabs{display:flex;gap:6px;overflow-x:auto;padding:4px 0 12px}.bi-tabs a{white-space:nowrap;padding:8px 11px;border:1px solid #dbe4f0;border-radius:9px;background:#fff;color:#475569;font-size:.78rem;font-weight:700;text-decoration:none}.bi-tabs a.active{background:#0f2745;color:#fff;border-color:#0f2745}.bi-filter-panel{margin-bottom:18px}.bi-filters{display:grid;grid-template-columns:1.5fr repeat(7,minmax(120px,.65fr)) auto auto;gap:8px;align-items:end}.bi-filters label{display:flex;flex-direction:column;gap:4px;font-size:.7rem;font-weight:700;color:#475569}.bi-filters input,.bi-filters select{height:38px;border:1px solid #cbd5e1;border-radius:8px;padding:0 8px;background:#fff;min-width:0}.quick-periods{display:flex;gap:5px;flex-wrap:wrap}.bi-period{margin-top:8px;font-size:.76rem;color:#64748b}.bi-section{margin:18px 0}.bi-heading{display:flex;justify-content:space-between;align-items:end;margin-bottom:10px}.bi-heading span{font-size:.7rem;text-transform:uppercase;color:#2563eb;font-weight:800}.bi-heading h2{margin:2px 0}.bi-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.bi-kpi-grid.compact{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:12px}.bi-kpi{background:#fff;border:1px solid #dbe4f0;border-left:4px solid #2563eb;border-radius:11px;padding:13px}.bi-kpi.warning{border-left-color:#d97706}.bi-kpi.danger{border-left-color:#dc2626}.bi-kpi>span{display:block;font-size:.72rem;color:#64748b;font-weight:800;text-transform:uppercase;letter-spacing:.03em}.bi-kpi strong{display:block;color:#102a43;font-size:1.25rem;margin:5px 0}.bi-kpi small{display:block;color:#64748b;font-size:.72rem;line-height:1.35}.trend{font-size:1.15rem}.trend.up{color:#15803d}.trend.down{color:#b42318}.bi-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}.bi-card,.bi-executive-note,.bi-data-quality{background:#fff;border:1px solid #dbe4f0;border-radius:12px;padding:15px;margin:12px 0;overflow:auto}.bi-card h3,.bi-executive-note h3{margin:0 0 10px;font-size:.92rem;color:#102a43}.bi-card table{width:100%;border-collapse:collapse;font-size:.79rem}.bi-card th,.bi-card td{padding:8px 7px;border-bottom:1px solid #edf2f7;text-align:left}.bi-card th{font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:#64748b}.bi-card td:last-child,.bi-card th:last-child{text-align:right}.bi-card tr:last-child td{border-bottom:0}.bi-card a{font-weight:700}.negative{color:#b42318;font-weight:800}.bi-note{font-size:.74rem;color:#64748b;margin:10px 0 0}.bi-executive-note{border-left:4px solid #0f2745}.bi-executive-note p{margin:0;line-height:1.6}.bi-stat-list>div{display:flex;justify-content:space-between;border-bottom:1px solid #edf2f7;padding:12px 0}.bi-stat-list b{font-size:1.15rem}.abc{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;font-weight:900}.abc-a{background:#dcfce7;color:#166534}.abc-b{background:#fef3c7;color:#92400e}.abc-c{background:#e2e8f0;color:#475569}.bi-unavailable,.bi-empty{padding:14px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:9px;color:#64748b;font-size:.82rem;line-height:1.5}.bi-alert-list{display:grid;gap:10px}.bi-alert{display:flex;justify-content:space-between;gap:14px;align-items:center;background:#fff;border:1px solid #dbe4f0;border-left:5px solid #64748b;border-radius:11px;padding:13px}.bi-alert.warning{border-left-color:#d97706}.bi-alert.danger{border-left-color:#dc2626}.bi-alert.info{border-left-color:#2563eb}.bi-alert h3{margin:0;font-size:.9rem}.bi-alert p{margin:4px 0;font-size:.8rem}.bi-alert small{color:#64748b}.bi-alert>b{white-space:nowrap}.bi-data-quality{background:#f8fafc}.bi-data-quality h2{font-size:.95rem;margin:0 0 5px}.bi-data-quality p{font-size:.78rem;color:#64748b}.bi-data-quality>div{display:grid;gap:6px}.bi-data-quality span{font-size:.75rem;color:#475569}.muted{color:#94a3b8}@media(max-width:1500px){.bi-filters{grid-template-columns:repeat(5,minmax(130px,1fr))}.quick-periods{grid-column:1/-1}.bi-kpi-grid,.bi-kpi-grid.compact{grid-template-columns:repeat(3,1fr)}}@media(max-width:900px){.bi-two{grid-template-columns:1fr}.bi-kpi-grid,.bi-kpi-grid.compact{grid-template-columns:repeat(2,1fr)}.bi-filters{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.bi-kpi-grid,.bi-kpi-grid.compact,.bi-filters{grid-template-columns:1fr}.bi-kpi strong{font-size:1.1rem}}
-.dre-banner{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid #bfdbfe;background:linear-gradient(90deg,#eff6ff,#f8fafc);border-radius:12px;margin-bottom:12px}.dre-banner div{display:flex;flex-direction:column;gap:3px}.dre-banner b{color:#0f2745}.dre-banner span{font-size:.76rem;color:#64748b}.dre-period-badge{white-space:nowrap!important;padding:7px 10px;border-radius:999px;background:#fff;border:1px solid #bfdbfe;color:#1d4ed8!important;font-weight:800}.dre-table .total td{background:#f8fafc;border-top:2px solid #cbd5e1}.dre-table .partial td{background:#eff6ff}.dre-table .unavailable td{color:#64748b}.dre-missing{display:inline-block;padding:4px 8px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:.7rem;font-weight:800}.dre-note{max-width:420px;color:#64748b;font-size:.72rem;line-height:1.35}.dre-warning-row td{background:#fff7ed}.dre-map-form select{width:100%;min-width:210px;height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:0 8px}.dre-map-actions{display:flex;gap:12px;align-items:center;margin-top:12px}.dre-map-actions span{font-size:.74rem;color:#64748b}.dre-limitations{display:grid;gap:8px}.dre-limitations div{padding:9px 10px;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:.78rem}.dre-monthly-card{overflow:auto}.dre-monthly-card table{min-width:1180px}@media(max-width:700px){.dre-banner,.dre-map-actions{align-items:flex-start;flex-direction:column}.dre-period-badge{white-space:normal!important}}@media print{.bi-tabs,.bi-filter-panel,.hero-actions,.module-nav,.topbar{display:none!important}.bi-card,.bi-kpi,.bi-executive-note{break-inside:avoid}}
+.dre-banner{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 15px;border:1px solid #bfdbfe;background:linear-gradient(90deg,#eff6ff,#f8fafc);border-radius:12px;margin-bottom:12px}.dre-banner div{display:flex;flex-direction:column;gap:3px}.dre-banner b{color:#0f2745}.dre-banner span{font-size:.76rem;color:#64748b}.dre-period-badge{white-space:nowrap!important;padding:7px 10px;border-radius:999px;background:#fff;border:1px solid #bfdbfe;color:#1d4ed8!important;font-weight:800}.dre-table .total td{background:#f8fafc;border-top:2px solid #cbd5e1}.dre-table .partial td{background:#eff6ff}.dre-table .unavailable td{color:#64748b}.dre-missing{display:inline-block;padding:4px 8px;border-radius:999px;background:#f1f5f9;color:#64748b;font-size:.7rem;font-weight:800}.dre-note{max-width:420px;color:#64748b;font-size:.72rem;line-height:1.35}.dre-warning-row td{background:#fff7ed}.dre-map-form select{width:100%;min-width:210px;height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:0 8px}.dre-map-actions{display:flex;gap:12px;align-items:center;margin-top:12px}.dre-map-actions span{font-size:.74rem;color:#64748b}.dre-limitations{display:grid;gap:8px}.dre-limitations div{padding:9px 10px;border-radius:8px;background:#fff7ed;color:#9a3412;font-size:.78rem}.dre-monthly-card{overflow:auto}.dre-monthly-card table{min-width:1180px}@media(max-width:700px){.dre-banner,.dre-map-actions{align-items:flex-start;flex-direction:column}.dre-period-badge{white-space:normal!important}}
+.sales-dashboard-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-end;margin-bottom:12px}.sales-dashboard-head>div>span{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;font-weight:900;color:#2563eb}.sales-dashboard-head h2{margin:3px 0;font-size:1.45rem}.sales-dashboard-head p{margin:0;color:#64748b;font-size:.78rem}.sales-compare-form{display:flex;align-items:flex-end;gap:7px;padding:10px;background:#fff;border:1px solid #dbe4f0;border-radius:11px;flex-wrap:wrap}.sales-compare-form label{display:grid;gap:3px;font-size:.68rem;font-weight:800;color:#475569}.sales-compare-form input,.sales-compare-form select{height:36px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:0 8px;min-width:145px}.sales-kpis{margin-bottom:14px}.sales-main-grid{align-items:start}.sales-card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.sales-card-title h3{margin-bottom:3px}.sales-count{display:inline-grid;place-items:center;min-width:32px;height:28px;border-radius:999px;background:#eaf1ff;color:#1d4ed8;font-weight:900;font-size:.72rem}.sales-list{display:grid;gap:7px}.sales-drill{border:1px solid #e2e8f0!important;border-radius:10px!important;padding:0!important;background:#fff;overflow:hidden}.sales-drill>summary,.sales-subbranch>summary{list-style:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px}.sales-drill>summary::-webkit-details-marker,.sales-subbranch>summary::-webkit-details-marker{display:none}.sales-drill>summary:before,.sales-subbranch>summary:before{content:'›';font-size:1.1rem;color:#2563eb;font-weight:900;transition:.15s;flex:0 0 auto}.sales-drill[open]>summary:before,.sales-subbranch[open]>summary:before{transform:rotate(90deg)}.sales-drill>summary>span:first-of-type,.sales-subbranch>summary>span:first-of-type{display:flex;flex:1;flex-direction:column;min-width:0}.sales-drill summary small,.sales-subbranch summary small{font-size:.68rem;color:#64748b;font-weight:600}.sales-summary-metrics{text-align:right!important;flex:0 0 auto!important}.sales-summary-metrics b{font-size:.92rem}.sales-drill>summary>strong,.sales-subbranch>summary>strong{white-space:nowrap;color:#0f2745}.sales-drill[open]>summary{background:#f8fbff;border-bottom:1px solid #e2e8f0}.sales-drill .bi-branch-body{padding:9px 12px;background:#fbfdff}.category-drill{display:grid;gap:7px}.sales-subbranch{border:1px solid #e2e8f0;border-radius:9px;background:#fff;padding:0}.sales-subbranch[open]>summary{background:#f8fafc;border-bottom:1px solid #e2e8f0}.sales-subbranch>.table-wrap{padding:6px 10px 10px}.customer-sales-list{max-height:760px;overflow:auto;padding-right:3px}.sales-customers-card{overflow:visible}@media(max-width:900px){.sales-dashboard-head{align-items:stretch;flex-direction:column}.sales-compare-form{display:grid;grid-template-columns:1fr 1fr}.sales-compare-form label:first-of-type{grid-column:1/-1}.sales-compare-form .btn{grid-column:1/-1}.sales-summary-main b{white-space:normal}}@media(max-width:560px){.sales-compare-form{grid-template-columns:1fr}.sales-compare-form label:first-of-type,.sales-compare-form .btn{grid-column:auto}.sales-compare-form input,.sales-compare-form select{min-width:0;width:100%}.sales-drill>summary{align-items:flex-start}.sales-summary-metrics{min-width:95px}.sales-dashboard .bi-card{padding:11px}.customer-sales-list{max-height:none}}
+.ar-quality-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-top:12px}.ar-quality-item{border:1px solid #e2e8f0;border-radius:10px;padding:10px;background:#fbfdff}.ar-quality-item>span{display:block;font-size:.68rem;font-weight:800;text-transform:uppercase;color:#64748b}.ar-quality-item>b{display:block;font-size:1.05rem;color:#0f2745;margin:4px 0}.ar-quality-item>small{display:block;color:#64748b;font-size:.68rem}.ar-quality-item>div{height:5px;border-radius:999px;background:#e2e8f0;margin-top:8px;overflow:hidden}.ar-quality-item i{display:block;height:100%;background:#2563eb;border-radius:999px}.ar-seller-card{overflow:visible}.ar-seller-drill .bi-branch-body{overflow:auto}.receivables-dashboard td small{display:block;color:#64748b;font-size:.66rem;margin-top:2px}.data-unavailable{color:#64748b;font-size:.82rem;font-weight:700}@media(max-width:1100px){.ar-quality-grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:560px){.ar-quality-grid{grid-template-columns:repeat(2,1fr)}.ar-seller-drill>summary{align-items:flex-start}}
+.bi-drill-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.bi-drill-nav a{display:flex;align-items:center;min-height:42px;padding:9px 11px;border:1px solid #dbe4f0;border-radius:9px;background:#f8fbff;text-decoration:none;color:#184b91;font-size:.76rem;font-weight:800}.bi-drill-nav a:hover{background:#eef5ff;border-color:#9ec1f7}.bi-drill-table{max-height:440px;overflow:auto}.bi-drill-table table{min-width:920px!important}.bi-branch-body h4{margin:12px 0 6px;font-size:.78rem;color:#334155}.product-subbranch{margin:6px 0}.alert-drill-action{margin-top:9px}.dre-warning-row>summary{background:#fff7ed!important}.bi-card>.bi-branch-list{margin-top:8px}@media(max-width:900px){.bi-drill-nav{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){.bi-drill-nav{grid-template-columns:1fr}.bi-drill-table table{min-width:760px!important}}
+@media print{.bi-tabs,.bi-filter-panel,.hero-actions,.module-nav,.topbar,.sales-compare-form{display:none!important}.bi-card,.bi-kpi,.bi-executive-note{break-inside:avoid}}
 </style>
 {% endblock %}
 {% block scripts %}<script>const brl=v=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(v||0));document.querySelectorAll('[data-money]').forEach(el=>el.textContent=brl(el.dataset.money));</script>{% endblock %}

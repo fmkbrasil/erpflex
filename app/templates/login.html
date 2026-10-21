@@ -1,2 +1,23 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Entrar · {{ app_name }}</title><link rel="stylesheet" href="/static/style.css?v=13"></head>
-<body class="login-body"><form method="post" class="login-card"><h1>{{ app_name }}</h1><p>Núcleo central · acesso por usuário e perfil</p>{% if error %}<div class="alert error">{{ error }}</div>{% endif %}<label>Usuário<input name="user" autocomplete="username" required></label><label>Senha<input type="password" name="password" autocomplete="current-password" required></label><button class="btn primary" type="submit">Entrar</button></form></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Entrar · {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css?v=18">
+  <style>:root{--bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};--blue:{{ ui_theme.primary_color }};--nav:{{ ui_theme.nav_color }};--secondary:{{ ui_theme.secondary_color }};--secondary-text:{{ ui_theme.secondary_text_color }};--green:{{ ui_theme.success_color }};--amber:{{ ui_theme.warning_color }};--red:{{ ui_theme.danger_color }};--btn-text:{{ ui_theme.button_text_color }}}</style>
+</head>
+<body class="login-body">
+  <form method="post" class="login-card commercial-login-card">
+    <div class="login-brand-mark">◆</div>
+    <h1>{{ app_name }}</h1>
+    <p>Núcleo central · acesso por usuário e perfil</p>
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    <label>Usuário<input name="user" autocomplete="username" required placeholder="Digite seu usuário"></label>
+    <label>Senha<input type="password" name="password" autocomplete="current-password" required placeholder="Digite sua senha"></label>
+    <button class="btn primary" type="submit">Entrar</button>
+  </form>
+  <script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_CAN_CUSTOMIZE=false;</script>
+  <script src="/static/ui.js?v=18"></script>
+</body>
+</html>

@@ -1,5 +1,8 @@
 {% extends 'base.html' %}
 {% block title %}{{ title }} · Cadastros{% endblock %}
+{% block scripts %}
+<script>document.querySelectorAll('[data-money]').forEach(el=>{el.textContent=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(el.dataset.money||0));});</script>
+{% endblock %}
 {% block content %}
 <section class="hero"><div><h1>{{ title }}</h1><p>Detalhe cadastral e conteúdo integral recebido da integração, quando disponível.</p></div><div class="actions"><a class="btn" href="/cadastros?tipo={{ tipo }}">← Voltar ao cadastro</a></div></section>
 <section class="panel">
@@ -16,6 +19,61 @@
   </div>
 </section>
 {% endfor %}
+
+{% if relationships and relationships.kind in ['customer','supplier'] %}
+<section class="panel">
+  <div class="panel-title"><div>
+    <h2>{% if relationships.kind == 'customer' %}Produtos comprados pelo cliente{% else %}Produtos comprados deste fornecedor{% endif %}</h2>
+    <p class="hint">Histórico consolidado a partir das NF-e e respectivos itens já sincronizados. Clique em um produto para abrir as compras/vendas que formam o total.</p>
+  </div><span>{{ relationships.products|length }} produto(s)</span></div>
+  {% for item in relationships.products %}
+  <details class="raw-detail relationship-detail" {% if loop.first %}open{% endif %}>
+    <summary>
+      <b>{{ item.code }} · {{ item.description }}</b>
+      <span><span data-money="{{ item.value }}"></span> · {{ '%.3f'|format(item.qty) }} un · última {{ item.last_date }}</span>
+    </summary>
+    <div class="detail-grid" style="margin-top:12px">
+      <div class="detail-field"><small>Categoria</small><b>{{ item.category }}</b></div>
+      <div class="detail-field"><small>Subcategoria</small><b>{{ item.subcategory }}</b></div>
+      <div class="detail-field"><small>Documentos</small><b>{{ item.documents }}</b></div>
+      <div class="detail-field"><small>Quantidade acumulada</small><b>{{ '%.3f'|format(item.qty) }}</b></div>
+      <div class="detail-field"><small>Valor acumulado</small><b data-money="{{ item.value }}"></b></div>
+      <div class="detail-field"><small>Preço médio ponderado</small><b data-money="{{ item.avg_price }}"></b></div>
+      <div class="detail-field"><small>Primeira movimentação</small><b>{{ item.first_date }}</b></div>
+      <div class="detail-field"><small>Última movimentação</small><b>{{ item.last_date }}</b></div>
+      {% if relationships.kind == 'supplier' %}
+      <div class="detail-field"><small>Menor preço histórico</small><b data-money="{{ item.min_price }}"></b></div>
+      <div class="detail-field"><small>Maior preço histórico</small><b data-money="{{ item.max_price }}"></b></div>
+      {% endif %}
+      {% if item.product_id %}<div class="detail-field"><small>Cadastro do produto</small><b><a href="/cadastros/produtos/{{ item.product_id }}">Abrir produto</a></b></div>{% endif %}
+    </div>
+    <div class="table-wrap" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Data</th><th>{% if relationships.kind == 'customer' %}NF-e de saída{% else %}NF-e de entrada{% endif %}</th><th>Quantidade</th><th>Preço unitário</th><th>Valor</th></tr></thead>
+        <tbody>
+        {% for h in item.history %}<tr><td>{{ h.date }}</td><td>{{ h.document }}</td><td>{{ '%.3f'|format(h.qty) }}</td><td data-money="{{ h.unit_price }}"></td><td data-money="{{ h.value }}"></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% else %}<div class="empty">Ainda não existem itens históricos vinculados a este cadastro.</div>{% endfor %}
+</section>
+{% elif relationships and relationships.kind == 'product' %}
+<section class="panel">
+  <div class="panel-title"><div><h2>Clientes que compraram este produto</h2><p class="hint">Histórico obtido das NF-e de saída e itens sincronizados.</p></div><span>{{ relationships.customers|length }} cliente(s)</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Cliente</th><th>NF-e</th><th>Quantidade</th><th>Faturamento</th><th>Última compra</th></tr></thead><tbody>
+  {% for r in relationships.customers %}<tr><td><a href="/cadastros/clientes/{{ r.partner_id }}"><b>{{ r.name }}</b></a></td><td>{{ r.documents }}</td><td>{{ '%.3f'|format(r.qty) }}</td><td data-money="{{ r.value }}"></td><td>{{ r.last_date }}</td></tr>
+  {% else %}<tr><td colspan="5">Nenhuma venda deste produto encontrada no histórico sincronizado.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="panel">
+  <div class="panel-title"><div><h2>Fornecedores deste produto</h2><p class="hint">Vínculo calculado pelas NF-e de entrada e itens de compras já sincronizados.</p></div><span>{{ relationships.suppliers|length }} fornecedor(es)</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Fornecedor</th><th>NF-e</th><th>Quantidade</th><th>Valor comprado</th><th>Última compra</th></tr></thead><tbody>
+  {% for r in relationships.suppliers %}<tr><td><a href="/cadastros/fornecedores/{{ r.partner_id }}"><b>{{ r.name }}</b></a></td><td>{{ r.documents }}</td><td>{{ '%.3f'|format(r.qty) }}</td><td data-money="{{ r.value }}"></td><td>{{ r.last_date }}</td></tr>
+  {% else %}<tr><td colspan="5">Nenhuma compra deste produto encontrada no histórico sincronizado.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endif %}
 <section class="panel">
   <div class="panel-title"><div><h2>Dados completos da origem</h2><p class="hint">Os campos abaixo são preservados como recebidos da API, sem inventar propriedades ausentes.</p></div><span>{{ payloads|length }} registro(s) de origem</span></div>
   {% for p in payloads %}

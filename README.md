@@ -1,3 +1,45 @@
+# V1.3.48 — Interface comercial, textos globais e BI mobile
+
+Esta versão profissionaliza a interface para uso comercial, amplia a personalização de textos e cria uma experiência dedicada para BI em smartphones.
+
+## Principais mudanças
+
+- Menu superior reorganizado por áreas de negócio: Início, BI, Faturamento, Financeiro, Compras, Logística e Cadastros.
+- Configurações técnicas agrupadas no submenu **Sistema**.
+- Menu mobile compacto, sem a sequência horizontal de todos os módulos.
+- Editor visual ampliado para títulos, descrições, botões, labels, mensagens, placeholders, tooltips e textos de navegação.
+- Substituições de textos continuam por empresa e não alteram dados do ERP.
+- A personalização também é aplicada à tela de login usando a identidade da empresa padrão.
+- KPIs do BI padronizados em grade estável, com alturas e espaçamentos consistentes.
+- No smartphone, cada módulo do BI passa a ter submenus internos; apenas o resultado selecionado fica visível por vez.
+- Desktop continua exibindo o conjunto completo do BI.
+- Schema permanece 15; não há migração estrutural de banco.
+
+---
+
+# V1.3.47 — Drill-down completo do BI
+
+Esta versão padroniza a navegação analítica do BI: valores consolidados podem ser expandidos até documentos e registros que compõem o resultado, preservando os filtros e os vínculos reais existentes no banco. O schema permanece 15.
+
+Esta versão melhora o painel **BI Gerencial → Contas a Pagar** sem alterar o schema do banco. O dashboard passa a separar explicitamente o valor **previsto por vencimento** do valor **realizado por data de pagamento**, mostrar o desvio de caixa e a execução percentual, detalhar títulos vencidos por faixa de atraso, destacar fornecedores com maior saldo vencido e exibir o fluxo de caixa conhecido para 7, 15 e 30 dias.
+
+Regras principais:
+
+- **Previsto no período** = valor nominal dos títulos `PAGAR` cujo vencimento está no intervalo selecionado.
+- **Realizado no período** = valor efetivamente baixado dos títulos `PAGAR` cuja data de pagamento está no intervalo.
+- **Desvio realizado × previsto** = realizado − previsto. Ele não é tratado como saldo restante, pois o realizado pode incluir atrasados ou antecipações.
+- **Vencido em aberto** usa a posição atual dos títulos e é separado em 1–7, 8–15, 16–30, 31–60, 61–90 e acima de 90 dias.
+- **Pago em atraso** considera pagamentos do período cuja data de pagamento ocorreu depois do vencimento.
+- **Fluxo de caixa de curto prazo** cruza pagamentos previstos e recebimentos conhecidos nos próximos 7/15/30 dias. Não representa saldo bancário real.
+- Cobertura das datas de vencimento e pagamento é exibida para evitar interpretar dados incompletos como zero real.
+- A exportação Excel ganhou a aba **Pagar Resumo** e a listagem de títulos inclui status e dias em atraso.
+
+O schema permanece **15**.
+
+# V1.3.41 — Cadastros completos, bancos e BI hierárquico
+
+Esta versão corrige a resolução de nomes de bancos no Financeiro/BI, amplia o parser de endereços de clientes com as estruturas reais `dadosComerciais`/`dadosResidenciais` e aliases legados, reconhece o bloco `endereco` dos fornecedores e também aproveita o endereço do XML da NF-e de entrada, além de evitar que ausência de datas financeiras seja exibida como falso `R$ 0,00`. O BI Comercial passa a apresentar **Vendedor → Categorias** e **Cliente → Categorias** em ramificações expansíveis. O schema permanece **15**; não há migração estrutural.
+
 # V1.3.40 — Interface configurável, acesso e BI mobile
 
 Esta versão simplifica a Central de Sincronização, cria personalização de cores e legendas por empresa, melhora o BI para smartphone, adiciona paginação automática às tabelas detalhadas e amplia o controle de acesso com permissões próprias para BI e customização visual. O schema passa para 15 de forma aditiva, com `ui_theme_settings` e `ui_label_overrides`.
@@ -493,3 +535,63 @@ A DRE mostra período atual x período anterior, visão mensal do ano, detalhame
 O indicador **Resultado gerencial parcial** representa apenas `Receita Bruta - Despesas conhecidas`; ele é identificado explicitamente como parcial e não deve ser tratado como lucro contábil enquanto deduções, tributos e CMV não estiverem normalizados.
 
 O schema passa para **14** com a nova tabela aditiva `dre_expense_mappings`. Dados existentes são preservados.
+
+## V1.3.40 — interface, acesso e mobile
+
+- Central de sincronização simplificada, personalização de cores/legendas, BI responsivo, paginação visual e permissões adicionais.
+- Schema 15 com `ui_theme_settings` e `ui_label_overrides`.
+
+## V1.3.41 — qualidade de dados do BI e cadastros
+
+- Reforço da resolução de bancos/carteiras, parser de endereços de clientes/fornecedores e hierarquias Vendedor × Categoria e Cliente × Categoria.
+- Schema permanece 15.
+
+## V1.3.42 — histórico Cliente × Produto e Fornecedor × Produto
+
+- O detalhe do cliente passa a mostrar os produtos comprados, total faturado, quantidade acumulada, preço médio, primeira/última compra e histórico das NF-e de saída.
+- O detalhe do fornecedor passa a mostrar os itens efetivamente comprados desse fornecedor, valores, quantidades, faixa de preço e histórico das NF-e de entrada.
+- O detalhe do produto recebe a visão inversa: clientes que compraram e fornecedores que forneceram o item.
+- O cadastro mestre de fornecedores pode ser sincronizado diretamente pela API REST documentada do ERPFlex (`POST /v1.2/auth` + `GET /v1.5/fornecedor?lastid=...`), usando sessão/token sem substituir o motor V7.8 dos demais módulos.
+- A Central de Sincronização passa a oferecer o módulo **Fornecedores** em execução manual e no Worker. O módulo inicia desabilitado em instalações existentes até ser marcado pelo operador.
+- O vínculo histórico produto-fornecedor é calculado pelas compras/NF-e já sincronizadas; não são criadas relações artificiais quando não existe documento de compra.
+- O schema permanece **15**; nenhuma migração estrutural é necessária.
+
+
+## V1.3.43 — ERPFlex Cadastros v1
+A API REST v1.x usada por Fornecedores agora possui configuração independente em Integrações. O motor V7.8 permanece inalterado. Teste a conexão v1 antes de habilitar/reprocessar Fornecedores. O histórico de sincronização mostra o motivo técnico das falhas na coluna Detalhe.
+
+## V1.3.44 — Dashboard de Faturamento
+
+A área `BI Gerencial > Faturamento` foi transformada em um dashboard de análise comercial/fiscal com drill-down. Ao acessar diretamente `/bi/faturamento`, o período padrão é Hoje.
+
+Recursos principais:
+- faturamento do período e comparação com mês anterior equivalente, período anterior ou período específico;
+- produtos mais vendidos com expansão para as NF-e relacionadas;
+- categoria > subcategoria > produtos;
+- venda por vendedor;
+- estado > cidade;
+- cliente > NF-e > detalhe completo da nota;
+- filtros globais do BI preservados;
+- layout responsivo.
+
+A receita principal continua sendo calculada pelo cabeçalho das NF-e válidas. Resultados por produto/categoria/subcategoria são baseados nos itens identificados e podem não somar exatamente ao total fiscal quando houver frete, tributos ou outros componentes não distribuídos por item.
+
+O schema permanece na versão 15.
+
+
+## V1.3.45 — BI Contas a Receber por vendedor e qualidade dos dados
+
+A área `BI Gerencial > Contas a Receber` foi revisada para reduzir resultados enganosamente zerados e ampliar a identificação de cliente, NF-e e vendedor.
+
+Principais mudanças:
+- diferencia zero real de dado indisponível;
+- novo indicador `Emitido no período`;
+- painel de qualidade mostrando cobertura de cliente, vendedor, banco, carteira, emissão e vencimento;
+- cliente dos títulos é resolvido por cadastro normalizado, ID/CNPJ/nome no título e vínculos exatos com NF-e/pedido;
+- novo `Contas a receber por vendedor` com drill-down dos títulos;
+- vendedor é obtido do título/detalhe, NF-e/pedido e, apenas como fallback operacional, do vendedor atual do cadastro do cliente;
+- títulos em aberto passam a exibir cliente, vendedor e NF-e relacionada quando disponível;
+- previsão futura mostra mensagem explícita quando não existem títulos a vencer, em vez de uma tabela de zeros sem contexto;
+- o enriquecimento do Financeiro também passa a recuperar cliente e datas a partir do detalhe do título/NF/pedido, além de banco/carteira.
+
+O schema permanece na versão 15.

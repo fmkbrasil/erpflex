@@ -990,7 +990,7 @@ def init_db() -> None:
         if not auto_cfg:
             db.add(SyncAutomationConfig(company_id=cid, active=False, poll_seconds=30))
         auto_defaults = {
-            "products": (False, 360), "banks": (False, 720), "clientes": (False, 120),
+            "products": (False, 360), "banks": (False, 720), "clientes": (False, 120), "fornecedores": (False, 360),
             "orders": (True, 15), "faturamento": (True, 15), "receber": (True, 15),
             "pagar": (False, 30), "compras": (False, 30), "despesas": (False, 60),
         }

@@ -95,26 +95,70 @@ def _row(db: Session, company_id: int, provider: str) -> IntegrationConfig | Non
 
 
 def get_erpflex_settings(db: Session, company_id: int) -> dict[str, Any]:
+    """Retorna a conexão principal ERPFlex e a conexão REST v1.x separadamente.
+
+    A integração principal (/api e /api_v2, motor V7.8) continua independente da
+    API REST v1.x usada para cadastros mestres. A v1 pode ter URL/credenciais
+    próprias; quando não houver configuração específica, usuário/senha podem
+    herdar da integração principal, mas a URL nunca é inferida da URL principal.
+    """
     row = _row(db, company_id, "ERPFLEX")
+    v1_row = _row(db, company_id, "ERPFLEX_V1")
+
     if row:
-        return {
-            "source": "database",
-            "active": bool(row.active),
-            "base_url": (row.base_url or "https://api.erpflex.com.br").rstrip("/"),
-            "username": row.username or "",
-            "password": decrypt_secret(row.secret_encrypted),
-            "secret_stored": bool(row.secret_encrypted),
-            "row": row,
-        }
+        source = "database"
+        active = bool(row.active)
+        base_url = (row.base_url or "https://api.erpflex.com.br").rstrip("/")
+        username = row.username or ""
+        password = decrypt_secret(row.secret_encrypted)
+        secret_stored = bool(row.secret_encrypted)
+    else:
+        source = "environment"
+        active = True
+        base_url = (os.getenv("ERPFLEX_API_BASE") or "https://api.erpflex.com.br").rstrip("/")
+        username = os.getenv("ERPFLEX_USER") or ""
+        password = os.getenv("ERPFLEX_PASS") or ""
+        secret_stored = bool(os.getenv("ERPFLEX_PASS"))
+
+    if v1_row:
+        v1_source = "database"
+        v1_active = bool(v1_row.active)
+        v1_base_url = (v1_row.base_url or "http://servicosflex.rpinfo.com.br:9000").rstrip("/")
+        v1_username = v1_row.username or username
+        v1_password = decrypt_secret(v1_row.secret_encrypted) or password
+        v1_secret_stored = bool(v1_row.secret_encrypted)
+    else:
+        v1_source = "environment" if any((os.getenv("ERPFLEX_V1_BASE_URL"), os.getenv("ERPFLEX_V1_USER"), os.getenv("ERPFLEX_V1_PASS"))) else "fallback"
+        v1_active = str(os.getenv("ERPFLEX_V1_ACTIVE") or "1").strip().lower() not in {"0", "false", "nao", "não", "off"}
+        # A documentação OpenAPI fornecida aponta este host como ambiente v1.x.
+        # É configurável porque contas/ambientes reais podem usar outro endereço.
+        v1_base_url = (os.getenv("ERPFLEX_V1_BASE_URL") or "http://servicosflex.rpinfo.com.br:9000").rstrip("/")
+        v1_username = os.getenv("ERPFLEX_V1_USER") or username
+        v1_password = os.getenv("ERPFLEX_V1_PASS") or password
+        v1_secret_stored = bool(os.getenv("ERPFLEX_V1_PASS"))
+
     return {
-        "source": "environment",
-        "active": True,
-        "base_url": (os.getenv("ERPFLEX_API_BASE") or "https://api.erpflex.com.br").rstrip("/"),
-        "username": os.getenv("ERPFLEX_USER") or "",
-        "password": os.getenv("ERPFLEX_PASS") or "",
-        "secret_stored": bool(os.getenv("ERPFLEX_PASS")),
-        "row": None,
+        "source": source, "active": active, "base_url": base_url,
+        "username": username, "password": password, "secret_stored": secret_stored, "row": row,
+        "v1_source": v1_source, "v1_active": v1_active, "v1_base_url": v1_base_url,
+        "v1_username": v1_username, "v1_password": v1_password,
+        "v1_secret_stored": v1_secret_stored, "v1_row": v1_row,
     }
+
+
+def save_erpflex_v1(db: Session, company_id: int, *, base_url: str, username: str, password: str, active: bool) -> IntegrationConfig:
+    row = _row(db, company_id, "ERPFLEX_V1")
+    if not row:
+        row = IntegrationConfig(company_id=company_id, provider="ERPFLEX_V1")
+        db.add(row)
+    row.active = bool(active)
+    row.base_url = (base_url or "http://servicosflex.rpinfo.com.br:9000").strip().rstrip("/")
+    row.username = (username or "").strip()
+    if password:
+        row.secret_encrypted = encrypt_secret(password)
+    row.updated_at = datetime.utcnow()
+    db.flush()
+    return row
 
 
 def get_nfstock_settings(db: Session, company_id: int) -> dict[str, Any]:
@@ -239,6 +283,7 @@ def integration_public_view(db: Session, company_id: int) -> dict[str, dict[str,
     nf = get_nfstock_settings(db, company_id)
     smtp = get_smtp_settings(db, company_id)
     erp_row = erp.get("row")
+    erp_v1_row = erp.get("v1_row")
     nf_row = nf.get("row")
     smtp_row = smtp.get("row")
     return {
@@ -249,6 +294,15 @@ def integration_public_view(db: Session, company_id: int) -> dict[str, dict[str,
             "last_test_ok": erp_row.last_test_ok if erp_row else None,
             "last_test_at": erp_row.last_test_at if erp_row else None,
             "last_test_message": erp_row.last_test_message if erp_row else None,
+        },
+        "erpflex_v1": {
+            "active": erp["v1_active"], "base_url": erp["v1_base_url"], "username": erp["v1_username"],
+            "configured": bool(erp["v1_active"] and erp["v1_base_url"] and erp["v1_username"] and erp["v1_password"]),
+            "secret_stored": erp["v1_secret_stored"], "source": erp["v1_source"],
+            "inheriting_credentials": bool(not erp_v1_row and not os.getenv("ERPFLEX_V1_USER") and not os.getenv("ERPFLEX_V1_PASS")),
+            "last_test_ok": erp_v1_row.last_test_ok if erp_v1_row else None,
+            "last_test_at": erp_v1_row.last_test_at if erp_v1_row else None,
+            "last_test_message": erp_v1_row.last_test_message if erp_v1_row else None,
         },
         "nfstock": {
             "active": nf["active"], "base_url": nf["base_url"], "crm": nf["crm"], "cnpj": nf["cnpj"],

@@ -168,8 +168,16 @@ class ERPFlexClient:
         self.base = (settings.get("base_url") or os.getenv("ERPFLEX_API_BASE") or "https://api.erpflex.com.br").rstrip("/")
         self.user = settings.get("username") if "username" in settings else (os.getenv("ERPFLEX_USER") or "")
         self.password = settings.get("password") if "password" in settings else (os.getenv("ERPFLEX_PASS") or "")
+        # V1.3.43: API REST v1.x possui configuração independente. Não reutilizar
+        # silenciosamente a URL principal (/api, /api_v2) para /v1.x.
+        self.v1_active = bool(settings.get("v1_active", True))
+        self.v1_base = (settings.get("v1_base_url") or os.getenv("ERPFLEX_V1_BASE_URL") or "http://servicosflex.rpinfo.com.br:9000").rstrip("/")
+        self.v1_user = settings.get("v1_username") if "v1_username" in settings else (os.getenv("ERPFLEX_V1_USER") or self.user)
+        self.v1_password = settings.get("v1_password") if "v1_password" in settings else (os.getenv("ERPFLEX_V1_PASS") or self.password)
         timeout = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=30.0)
         limits = httpx.Limits(max_connections=30, max_keepalive_connections=12, keepalive_expiry=90.0)
+        self._v1_token_value = ""
+        self._v1_token_expiration = ""
         self._client = httpx.Client(
             timeout=timeout,
             limits=limits,
@@ -686,6 +694,156 @@ class ERPFlexClient:
         if not html.strip():
             raise ConnectorError("Boleto: resposta vazia.")
         return html
+
+    def _v1_token(self) -> str:
+        """Autentica na API REST v1.x documentada do ERPFlex/RP Info.
+
+        Essa API usa token de sessão no header e é diferente do motor V7.8/Basic
+        Auth usado pelos endpoints /api e /api_v2. O mesmo usuário/senha já
+        configurado na integração é reutilizado, sem persistir o token em disco.
+        """
+        if self._v1_token_value:
+            return self._v1_token_value
+        if not self.v1_active:
+            raise ConnectorError("API ERPFlex Cadastros v1 está desativada em Integrações.")
+        if not self.v1_base or not self.v1_user or not self.v1_password:
+            raise ConnectorError("API ERPFlex Cadastros v1 incompleta: informe URL, usuário e senha em Integrações.")
+        url = self.v1_base + "/v1.2/auth"
+        try:
+            with httpx.Client(timeout=httpx.Timeout(connect=15.0, read=60.0, write=30.0, pool=30.0), follow_redirects=True) as client:
+                r = client.post(url, json={"usuario": self.v1_user, "senha": self.v1_password}, headers={"Accept": "application/json"})
+        except Exception as e:
+            raise ConnectorError(f"API v1 · autenticação em {self.v1_base}: {e}") from e
+        if r.status_code < 200 or r.status_code >= 300:
+            excerpt = (r.text or "").strip().replace("\n", " ")[:240]
+            raise ConnectorError(f"API v1 · autenticação em {self.v1_base}: HTTP {r.status_code}{' · ' + excerpt if excerpt else ''}")
+        try:
+            payload = r.json()
+        except Exception as e:
+            raise ConnectorError("API v1 · autenticação retornou JSON inválido") from e
+        response = payload.get("response") if isinstance(payload, dict) else None
+        token = (response or {}).get("token") if isinstance(response, dict) else None
+        if not token:
+            # Tolerância a envelopes diferentes sem inventar credenciais.
+            token = deep_find(payload, ("token", "access_token"))
+        if not token:
+            msg = deep_find(payload, ("message", "mensagem", "status"))
+            raise ConnectorError(f"API v1 · token não retornado{': ' + str(msg) if msg else ''}")
+        self._v1_token_value = str(token)
+        self._v1_token_expiration = str((response or {}).get("tokenExpiration") or "") if isinstance(response, dict) else ""
+        return self._v1_token_value
+
+    def _v1_get(self, path: str, params: dict | None = None) -> Any:
+        token = self._v1_token()
+        url = self.v1_base + path
+        try:
+            with httpx.Client(timeout=httpx.Timeout(connect=15.0, read=90.0, write=30.0, pool=30.0), follow_redirects=True) as client:
+                r = client.get(url, params=params or {}, headers={"Accept": "application/json", "token": token})
+        except Exception as e:
+            raise ConnectorError(f"API v1 · {path} em {self.v1_base}: {e}") from e
+        if r.status_code in (401, 403):
+            # Token pode ter expirado entre páginas; uma renovação é segura.
+            self._v1_token_value = ""
+            token = self._v1_token()
+            with httpx.Client(timeout=httpx.Timeout(connect=15.0, read=90.0, write=30.0, pool=30.0), follow_redirects=True) as client:
+                r = client.get(url, params=params or {}, headers={"Accept": "application/json", "token": token})
+        if r.status_code < 200 or r.status_code >= 300:
+            excerpt = (r.text or "").strip().replace("\n", " ")[:240]
+            raise ConnectorError(f"API v1 · {path} em {self.v1_base}: HTTP {r.status_code}{' · ' + excerpt if excerpt else ''}")
+        try:
+            return r.json()
+        except Exception as e:
+            raise ConnectorError(f"API v1 · {path}: JSON inválido") from e
+
+    def test_v1(self) -> dict:
+        """Valida autenticação e leitura mínima da API de Cadastros v1.x."""
+        token = self._v1_token()
+        payload = self._v1_get("/v1.5/fornecedor", {"lastid": 0})
+        response = payload.get("response") if isinstance(payload, dict) else None
+        content = response.get("content") if isinstance(response, dict) else None
+        rows = [x for x in content if isinstance(x, dict)] if isinstance(content, list) else _extract_best_array(payload)
+        return {
+            "ok": True,
+            "message": "API ERPFlex Cadastros v1 autenticada e consulta de fornecedores respondida.",
+            "base_url": self.v1_base,
+            "token_recebido": bool(token),
+            "registros_amostra": len(rows),
+            "token_expiration": self._v1_token_expiration or None,
+        }
+
+    def suppliers(self, max_pages: int = 500) -> list[dict]:
+        """Sincroniza o cadastro mestre de fornecedores pela rota documentada v1.5.
+
+        GET /v1.5/fornecedor?lastid=0 retorna fornecedores paginados. O cursor
+        seguinte é obtido do maior código/id realmente retornado. Se a API repetir
+        uma página, a rotina interrompe para evitar loop e consumo indevido.
+        """
+        out: list[dict] = []
+        lastid = 0
+        seen_pages: set[str] = set()
+        for page_no in range(1, max(1, int(max_pages or 1)) + 1):
+            self._notify(f"Fornecedores · página {page_no} · lastid {lastid}")
+            payload = self._v1_get("/v1.5/fornecedor", {"lastid": lastid})
+            response = payload.get("response") if isinstance(payload, dict) else None
+            content = response.get("content") if isinstance(response, dict) else None
+            rows = [x for x in content if isinstance(x, dict)] if isinstance(content, list) else _extract_best_array(payload)
+            if not rows:
+                break
+            signature = json.dumps([rows[0], rows[-1], len(rows)], ensure_ascii=False, sort_keys=True, default=str)
+            if signature in seen_pages:
+                raise ConnectorError("Fornecedores: a API repetiu o mesmo bloco; paginação interrompida para evitar loop.")
+            seen_pages.add(signature)
+            out.extend(rows)
+            candidates = []
+            for row in rows:
+                value = deep_find(row, ("id", "codigo", "Codigo", "fornecedor_id", "id_fornecedor"))
+                try:
+                    candidates.append(int(str(value).strip()))
+                except Exception:
+                    pass
+            if not candidates:
+                break
+            next_lastid = max(candidates)
+            if next_lastid <= lastid:
+                break
+            lastid = next_lastid
+            # A resposta paginada costuma encerrar com um bloco menor; se houver
+            # metadado explícito de fim ele também será respeitado.
+            has_more = deep_find(payload, ("hasMore", "has_more", "temMais", "maisRegistros"))
+            if has_more is False:
+                break
+        return out
+
+    def supplier_products(self, supplier_code: str, max_pages: int = 100) -> list[dict]:
+        """Produtos vinculados ao fornecedor pela rota oficial /v1.3/produtos/..."""
+        code = str(supplier_code or "").strip()
+        if not code:
+            return []
+        out: list[dict] = []
+        lastid = 0
+        seen_pages: set[str] = set()
+        for page_no in range(1, max(1, int(max_pages or 1)) + 1):
+            path = f"/v1.3/produtos/lastid/{lastid}/fornecedor/{quote(code, safe='')}"
+            self._notify(f"Fornecedor {code} · produtos · página {page_no}")
+            payload = self._v1_get(path)
+            rows = _extract_best_array(payload)
+            if not rows:
+                break
+            signature = json.dumps([rows[0], rows[-1], len(rows)], ensure_ascii=False, sort_keys=True, default=str)
+            if signature in seen_pages:
+                break
+            seen_pages.add(signature)
+            out.extend(rows)
+            candidates=[]
+            for row in rows:
+                value=deep_find(row,("id","codigo","produto_id","id_produto"))
+                try: candidates.append(int(str(value).strip()))
+                except Exception: pass
+            if not candidates: break
+            nxt=max(candidates)
+            if nxt <= lastid: break
+            lastid=nxt
+        return out
 
     def products(self, max_pages: int = 20) -> list[dict]:
         out: list[dict] = []

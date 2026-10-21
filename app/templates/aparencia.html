@@ -1,8 +1,8 @@
 {% extends 'base.html' %}
-{% block title %}Aparência e legendas · {{ app_name }}{% endblock %}
+{% block title %}Aparência e textos · {{ app_name }}{% endblock %}
 {% block content %}
 <section class="hero">
-  <div><h1>Aparência e legendas</h1><p>Personalize cores e nomes exibidos na interface sem alterar os dados ou as integrações.</p></div>
+  <div><h1>Aparência e textos</h1><p>Personalize a identidade visual, legendas, títulos e textos comerciais sem alterar dados ou integrações.</p></div>
 </section>
 {% if request.query_params.get('saved') %}<div class="alert success">Personalização salva.</div>{% endif %}
 <div class="admin-grid ui-config-grid">
@@ -29,20 +29,22 @@
   </section>
 
   <section class="panel">
-    <div class="panel-title"><div><h2>Editar legendas</h2><p class="hint">Troque termos da interface inteira. Ex.: “Contas a Receber” → “Recebíveis”.</p></div></div>
+    <div class="panel-title"><div><h2>Editar textos do aplicativo</h2><p class="hint">Troque nomenclaturas, títulos, textos de apoio e rótulos da interface inteira.</p></div></div>
+    <div class="ui-commercial-note"><b>Modo comercial:</b> a substituição é aplicada à empresa atual e pode ser usada para adaptar o sistema à sua marca. O editor visual também reconhece textos de menu, títulos, botões, cabeçalhos, mensagens, placeholders e tooltips.</div>
+    <div class="ui-capability-grid"><div><b>Textos visíveis</b><small>Títulos, descrições, mensagens e instruções.</small></div><div><b>Controles</b><small>Botões, labels, placeholders e tooltips.</small></div><div><b>Navegação</b><small>Menu principal, módulos, BI e submenus.</small></div></div>
     <form method="post" action="/aparencia/legenda" class="form-grid">
-      <label>Texto atual<input name="original_text" maxlength="255" placeholder="Ex.: Faturamento" required></label>
-      <label>Nova legenda<input name="custom_text" maxlength="255" placeholder="Ex.: Vendas faturadas" required></label>
-      <button class="btn primary" type="submit">Salvar legenda</button>
+      <label>Texto atual<input name="original_text" maxlength="255" placeholder="Ex.: Plataforma Gestão Integrada" required></label>
+      <label>Novo texto<input name="custom_text" maxlength="255" placeholder="Ex.: Minha Plataforma Comercial" required></label>
+      <button class="btn primary" type="submit">Salvar texto</button>
     </form>
-    <div class="hint-block"><b>Atalho:</b> usuários com esta permissão também podem clicar em <b>Editar legendas</b> no canto da tela e selecionar títulos, botões e cabeçalhos diretamente.</div>
+    <div class="hint-block"><b>Atalho:</b> clique em <b>Editar textos</b> no canto de qualquer tela. Os elementos editáveis serão destacados; clique no texto desejado e informe a nova redação.</div>
   </section>
 </div>
 
 <section class="panel">
-  <div class="panel-title"><div><h2>Legendas personalizadas</h2><p class="hint">Somente os textos abaixo substituem os nomes padrão.</p></div><span>{{ labels|length }} alteração(ões)</span></div>
+  <div class="panel-title"><div><h2>Textos personalizados</h2><p class="hint">As substituições abaixo são aplicadas automaticamente em toda a interface da empresa atual.</p></div><span>{{ labels|length }} alteração(ões)</span></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Texto original</th><th>Como aparece</th><th>Ação</th></tr></thead>
+    <thead><tr><th>Texto original</th><th>Texto comercial</th><th>Ação</th></tr></thead>
     <tbody>{% for row in labels %}<tr><td>{{ row.original_text }}</td><td><b>{{ row.custom_text }}</b></td><td><form method="post" action="/aparencia/legenda/{{ row.id }}/excluir"><button class="btn small" type="submit">Restaurar padrão</button></form></td></tr>{% else %}<tr><td colspan="3" class="empty">Nenhuma legenda personalizada.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>

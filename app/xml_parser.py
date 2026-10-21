@@ -134,6 +134,23 @@ def parse_nfe(xml_text: str, company_cnpj: str):
     issue_date = ctext(ide, 'dhEmi') or ctext(ide, 'dEmi')
     payment_terms, payment_method, payment_due_dates = _payment_info(inf, issue_date)
 
+    def nfe_address(parent, tag_name):
+        node = child(parent, tag_name)
+        if node is None:
+            return {}
+        return {
+            "address": ctext(node, "xLgr"),
+            "number": ctext(node, "nro"),
+            "complement": ctext(node, "xCpl"),
+            "district": ctext(node, "xBairro"),
+            "city": ctext(node, "xMun"),
+            "state": ctext(node, "UF"),
+            "zip": ctext(node, "CEP"),
+        }
+
+    issuer_address = nfe_address(emit, "enderEmit")
+    recipient_address = nfe_address(dest, "enderDest")
+
     items = []
     for det in [x for x in inf if local(x.tag) == 'det']:
         prod = child(det, 'prod')
@@ -161,8 +178,8 @@ def parse_nfe(xml_text: str, company_cnpj: str):
         })
     return {
         'access_key': access_key, 'number': ctext(ide, 'nNF'), 'series': ctext(ide, 'serie'), 'model': ctext(ide, 'mod'),
-        'issuer_cnpj': issuer_cnpj, 'issuer_name': ctext(emit, 'xNome'),
-        'recipient_cnpj': recipient_cnpj, 'recipient_name': ctext(dest, 'xNome'),
+        'issuer_cnpj': issuer_cnpj, 'issuer_name': ctext(emit, 'xNome'), 'issuer_address': issuer_address,
+        'recipient_cnpj': recipient_cnpj, 'recipient_name': ctext(dest, 'xNome'), 'recipient_address': recipient_address,
         'issue_date': issue_date, 'operation_nature': ctext(ide, 'natOp'),
         'total': fnum(ctext(total_node, 'vNF')), 'direction': direction,
         'payment_terms': payment_terms, 'payment_method': payment_method,

@@ -262,3 +262,86 @@ A permissão `bi.view` separa a consulta do BI da permissão da tela inicial. A 
 A paginação introduzida na camada de interface limita a quantidade de linhas visíveis por página (25/50/100) nas tabelas padrão. Tabelas operacionais com seleção em lote, como roteirização e baixa, não são paginadas automaticamente para evitar alteração do fluxo operacional.
 
 No smartphone, o BI usa navegação compacta por seletor, grids responsivos de KPIs/filtros e rolagem controlada de tabelas detalhadas.
+
+
+## V1.3.41 — Qualidade de cadastros e BI
+- Cadastro de clientes aceita estruturas documentadas `dadosComerciais` / `dadosResidenciais` e aliases SA1_*.
+- Fornecedor aceita o bloco documentado `endereco`/`cnpjcpf` quando presente no payload de compra e pode ser reenriquecido também pelo `enderEmit` do XML NF-e de entrada já obtido pelo NFStock.
+- Catálogo financeiro resolve banco por SA6_ID/SA6_Desc em todos os registros persistidos e mantém fallback apenas para IDs previamente confirmados na conta real.
+- BI diferencia zero calculado de indicador indisponível por ausência de data de referência.
+- Hierarquias de BI: vendedor → categoria e cliente → categoria.
+- Schema: 15, sem alteração estrutural.
+
+## Complemento V1.3.42 — relações comerciais e fornecedores
+
+- `Partner` continua sendo o cadastro central de clientes/fornecedores.
+- Fornecedores podem ser enriquecidos por uma segunda família de endpoints oficiais do ERPFlex (API REST v1.x com token de sessão), sem substituir o conector V7.8 já comprovado.
+- Cliente × Produto é derivado de `SalesInvoice -> SalesInvoiceItem`.
+- Fornecedor × Produto é derivado de `PurchaseInvoice -> PurchaseItem`.
+- O detalhe de Produto oferece a navegação inversa para clientes e fornecedores.
+- Relações históricas só existem quando há documentos/itens sincronizados; não são inferidas por similaridade textual.
+
+## Complemento V1.3.43 — ERPFlex Cadastros v1 isolado
+
+A conexão principal do ERPFlex continua responsável pelos endpoints `/api` e `/api_v2` e pelo motor V7.8. A API REST de cadastros v1.x passa a ser uma conexão lógica independente, com URL, ativação e credenciais próprias em `integration_configs` usando `provider=ERPFLEX_V1`.
+
+A senha da v1 pode herdar da integração principal quando não houver credencial específica, mas a **URL v1 nunca é derivada da URL principal**. Isso evita enviar `/v1.2/auth` para o host do motor V7.8 por engano.
+
+Fluxo de fornecedores:
+
+`Worker -> módulo fornecedores -> ERPFlexClient._v1_token() -> /v1.2/auth -> token -> /v1.5/fornecedor?lastid=... -> Partner(role_supplier)`
+
+A tela Integrações possui teste isolado da conexão v1. O histórico de sincronização exibe `SyncRun.message` em um detalhe expansível para diagnosticar HTTP, autenticação, JSON ou paginação sem registrar senha ou token.
+
+## Complemento V1.3.45 — Dashboard de Faturamento
+
+O serviço `bi_service.build_bi` passou a gerar `sales_dashboard`, uma camada de apresentação derivada exclusivamente de `sales_invoices`, `sales_invoice_items`, `partners`, `products`, `sales_orders` e registros brutos já persistidos.
+
+Princípios:
+- total fiscal: `SalesInvoice.total` de NF-e válida;
+- produto/categoria/subcategoria: `SalesInvoiceItem.total` e `qty`;
+- cliente/UF/cidade: relacionamento da NF-e com `Partner`;
+- vendedor: resolução já existente por JSON fiscal/pedido exato;
+- drill-down: IDs locais da NF-e apontam para `/faturamento/{id}`;
+- comparação: não altera persistência; somente recalcula períodos no backend;
+- nenhuma tabela ou coluna nova foi criada.
+
+## Complemento V1.3.46 — BI de Contas a Pagar
+
+O BI de Contas a Pagar foi separado em três leituras gerenciais:
+
+1. **Previsto x realizado**
+   - previsto: títulos PAGAR com vencimento no período selecionado;
+   - realizado: baixas PAGAR com data de pagamento no período;
+   - desvio: realizado menos previsto;
+   - percentual de execução: realizado dividido pelo previsto.
+
+2. **Vencidos e atraso**
+   - posição atual da carteira em aberto;
+   - aging de atraso;
+   - quantidade de títulos vencidos;
+   - fornecedores com maior saldo vencido;
+   - pagamentos realizados em atraso dentro do período.
+
+3. **Fluxo de caixa de curto prazo**
+   - horizontes acumulados de 7, 15 e 30 dias;
+   - pagamentos previstos a partir dos títulos em aberto;
+   - recebimentos conhecidos a partir do contas a receber;
+   - saldo líquido projetado e índice de cobertura;
+   - sem alegar saldo bancário real.
+
+Nenhuma nova tabela foi criada. O schema continua 15.
+
+
+## Complemento V1.3.47 — Drill-down transversal do BI
+
+O BI adota um padrão comum de drill-down em todas as áreas. Agrupamentos analíticos carregam referências aos documentos reais que os compõem. O frontend usa blocos expansíveis e links para os detalhes existentes de NF-e, título financeiro, compra e entrega. A Visão Geral utiliza drill-through para as áreas especializadas, enquanto as demais áreas expandem os próprios agrupamentos. O schema permanece 15.
+
+
+## Complemento V1.3.48 — Interface comercial e BI mobile
+
+- A camada de apresentação mantém personalizações em `ui_theme_settings` e `ui_label_overrides`.
+- `app/static/ui.js` centraliza aplicação de textos comerciais, edição visual, paginação client-side e navegação interna do BI no mobile.
+- O menu principal foi dividido entre áreas de negócio e submenu Sistema.
+- A navegação interna do BI é progressiva no smartphone e não altera a renderização desktop.
+- Nenhuma regra de negócio, integração ou schema foi modificada nesta versão.

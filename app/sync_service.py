@@ -15,7 +15,7 @@ from .db import (
 )
 from .utils import (
     access_key_from, deep_find, digits, external_id, fnum, normalize_date, payload_hash,
-    pick, safe_json, text, key_norm
+    pick, safe_json, text, key_norm, VERIFIED_BANK_NAMES
 )
 from .xml_parser import parse_nfe
 from .logistics import classificar_regiao, regiao_especial, alerta_endereco
@@ -259,7 +259,7 @@ def _progress_from_message(message: str, event_no: int, limit: int) -> tuple[flo
 
 
 MOVEMENT_MODULES = {"orders", "faturamento", "receber", "pagar", "compras", "despesas"}
-MASTER_MODULES = {"products", "banks", "clientes"}
+MASTER_MODULES = {"products", "banks", "clientes", "fornecedores"}
 
 
 def _get_sync_cursor(company_id: int, module: str) -> dict:
@@ -548,15 +548,60 @@ def _find_typed_address(value: Any, kind: str):
 
 
 def _address_from_record(record: dict, kind: str) -> dict[str, str]:
+    """Extrai endereço sem confundir UF/cidade com logradouro.
+
+    Além dos nomes usados pelo conector atual, aceita as estruturas observadas na
+    documentação do ERPFlex (dadosComerciais/dadosResidenciais) e os aliases
+    legados SA1_* já vistos nos retornos/consultas da conta real.
+    """
     if kind == "delivery":
-        sections = ("endereco_entrega", "enderecoEntrega", "delivery_address", "dados_entrega", "entrega")
+        sections = (
+            "endereco_entrega", "enderecoEntrega", "delivery_address", "dados_entrega", "entrega",
+            "enderecoDelivery", "dadosEntrega",
+        )
         prefixes = ("entrega", "delivery")
+        legacy = {
+            "address": ("SA1_EndEnt", "EndEnt"),
+            "number": ("SA1_NumeroEnt", "NumeroEnt"),
+            "complement": ("SA1_ComplementoEnt", "ComplementoEnt"),
+            "district": ("SA1_BairroEnt", "BairroEnt"),
+            "city": ("SA1_MunEnt", "MunEnt", "MunicipioEnt"),
+            "state": ("SA1_EstEnt", "EstEnt", "UFEnt", "SA1_Est"),
+            "zip": ("SA1_CEPEnt", "CEPEnt"),
+        }
     elif kind == "billing":
-        sections = ("endereco_cobranca", "enderecoCobranca", "billing_address", "dados_cobranca", "cobranca")
+        sections = (
+            "endereco_cobranca", "enderecoCobranca", "billing_address", "dados_cobranca", "cobranca",
+            "enderecoCorrespondencia", "dadosCobranca",
+        )
         prefixes = ("cobranca", "billing")
+        legacy = {
+            "address": ("SA1_EndCob", "EndCob", "endCorr"),
+            "number": ("SA1_NumeroCob", "NumeroCob"),
+            "complement": ("SA1_ComplementoCob", "ComplementoCob"),
+            "district": ("SA1_BairroCob", "BairroCob"),
+            "city": ("SA1_MunCob", "MunCob", "MunicipioCob"),
+            "state": ("SA1_EstCob", "EstCob", "UFCob"),
+            "zip": ("SA1_CEPCob", "CEPCob"),
+        }
     else:
-        sections = ("endereco_principal", "enderecoPrincipal", "main_address", "dados_endereco", "endereco_cliente")
+        # O cadastro de cliente documentado expõe dadosComerciais e dadosResidenciais.
+        # Para pessoa jurídica, o endereço comercial é a melhor fonte do endereço principal;
+        # residencial permanece como fallback, sem copiar automaticamente para entrega/cobrança.
+        sections = (
+            "endereco_principal", "enderecoPrincipal", "main_address", "dados_endereco", "endereco_cliente",
+            "dadosComerciais", "enderecoComercial", "dadosResidenciais", "enderecoResidencial", "endereco",
+        )
         prefixes = ("principal", "main")
+        legacy = {
+            "address": ("SA1_End", "Endereco", "logradouro"),
+            "number": ("SA1_Numero", "Numero"),
+            "complement": ("SA1_Complemento", "Complemento"),
+            "district": ("SA1_Bairro", "Bairro"),
+            "city": ("SA1_Mun", "Municipio", "Cidade"),
+            "state": ("SA1_Est", "UF", "Estado"),
+            "zip": ("SA1_CEP", "CEP"),
+        }
 
     direct_named_node = _case_value(record, sections)
     node = direct_named_node if direct_named_node not in (None, "", [], {}) else _find_named_node(record, sections)
@@ -564,17 +609,19 @@ def _address_from_record(record: dict, kind: str) -> dict[str, str]:
         node = _find_typed_address(record, kind)
     result = {"address": "", "number": "", "complement": "", "district": "", "city": "", "state": "", "zip": ""}
     if isinstance(node, (str, int, float)):
-        result["address"] = text(node)
+        # Só tratamos um escalar como endereço quando ele veio de um campo/bloco de endereço nomeado.
+        if direct_named_node not in (None, "", [], {}):
+            result["address"] = text(node)
     elif isinstance(node, dict):
-        result["address"] = _scalar_from(_case_value(node, ("endereco", "logradouro", "rua", "address", "street")))
-        result["number"] = _scalar_from(_case_value(node, ("numero", "nro", "numero_endereco", "number")))
+        result["address"] = _scalar_from(_case_value(node, ("endereco", "logradouro", "rua", "address", "street", "xLgr")))
+        result["number"] = _scalar_from(_case_value(node, ("numero", "nro", "numero_endereco", "number", "nroEndereco")))
         result["complement"] = _scalar_from(_case_value(node, ("complemento", "complement", "complemento_endereco")))
         result["district"] = _scalar_from(_case_value(node, ("bairro", "district")))
         result["city"] = _scalar_from(_case_value(node, ("municipio", "cidade", "city")))
         result["state"] = _scalar_from(_case_value(node, ("uf", "estado", "state")))
         result["zip"] = _scalar_from(_case_value(node, ("cep", "zip", "zip_code")))
 
-    # Campos planos específicos têm prioridade sobre qualquer busca genérica em nós aninhados.
+    # Campos planos específicos têm prioridade apenas quando são inequívocos.
     suffixes = {
         "address": ("endereco", "logradouro"), "number": ("numero", "nro"),
         "complement": ("complemento",), "district": ("bairro",),
@@ -583,7 +630,7 @@ def _address_from_record(record: dict, kind: str) -> dict[str, str]:
     for field, bases in suffixes.items():
         if result[field]:
             continue
-        candidates = []
+        candidates = list(legacy.get(field, ()))
         if kind == "main":
             candidates += list(bases)
             for base in bases:
@@ -596,20 +643,20 @@ def _address_from_record(record: dict, kind: str) -> dict[str, str]:
         if value not in (None, "", [], {}):
             result[field] = _scalar_from(value)
         elif kind != "main":
-            # Se o próprio endereço de entrega/cobrança veio como campo plano no
-            # mesmo nível, os demais componentes podem vir sem o sufixo do tipo
-            # (Numero, Complemento, Bairro, Municipio, Estado, CEP). Só aceitamos
-            # esse fallback quando o endereço nomeado existe no mesmo objeto,
-            # evitando confundir, por exemplo, número do documento com endereço.
             if direct_named_node not in (None, "", [], {}):
                 plain = _case_value(record, tuple(bases))
                 if plain not in (None, "", [], {}):
                     result[field] = _scalar_from(plain)
                     continue
-            # Para entrega/cobrança os nomes prefixados são específicos o suficiente
-            # para uma busca profunda em estruturas aninhadas.
             value = deep_find(record, tuple(candidates))
             result[field] = _scalar_from(value)
+
+    # Um UF isolado nunca deve ocupar a coluna de logradouro. Isso corrige registros
+    # antigos em que um campo geográfico escalar foi interpretado como endereço.
+    if result["address"] and len(result["address"].strip()) <= 2 and result["address"].strip().upper() in {
+        "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"
+    }:
+        result["address"] = ""
     return result
 
 
@@ -717,7 +764,7 @@ def _enrich_customer_master(row: Partner, record: dict) -> None:
     if carrier_id not in (None, "", [], {}):
         row.carrier_erpflex_id = _scalar_from(carrier_id)
 
-def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | None = None):
+def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | None = None, erpflex_id_hint: str | None = None, preferred_partner_id: int | None = None):
     if nf_xml and role == "supplier":
         cnpj = digits(nf_xml.get("issuer_cnpj"))
         name = text(nf_xml.get("issuer_name"))
@@ -728,16 +775,22 @@ def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | Non
         trade = None
     else:
         if role == "supplier":
-            cnpj = digits(deep_find(record, ("fornecedor_cnpj", "cnpj_fornecedor", "cpf_cnpj_fornecedor", "cnpj", "documento_fornecedor")))
+            cnpj = digits(deep_find(record, ("fornecedor_cnpj", "cnpj_fornecedor", "cpf_cnpj_fornecedor", "cnpjcpf", "cnpj_cpf", "cnpjCpf", "cnpj", "documento_fornecedor")))
             name = text(deep_find(record, ("fornecedor_desc", "fornecedor", "fornecedor_nome", "razao_social", "cliente", "nome_fornecedor", "nome")))
             trade = text(deep_find(record, ("nome_fantasia", "fantasia", "fornecedor_fantasia"))) or None
         else:
-            cnpj = digits(deep_find(record, ("cliente_cnpj", "cnpj_cliente", "cpf_cnpj", "cnpj", "documento_cliente")))
+            cnpj = digits(deep_find(record, ("cliente_cnpj", "cnpj_cliente", "cpf_cnpj", "cnpj_cpf", "CnpjCpf", "cpfCnpj", "cnpj", "documento_cliente")))
             name = text(deep_find(record, ("cliente_desc", "cliente", "cliente_nome", "razao_social", "nome_cliente", "nome")))
             trade = text(deep_find(record, ("nome_fantasia", "fantasia", "cliente_fantasia"))) or None
     cnpj = cnpj or None
-    row = None
-    if cnpj:
+    row = db.get(Partner, preferred_partner_id) if preferred_partner_id else None
+    hinted_id = text(erpflex_id_hint).strip() if erpflex_id_hint not in (None, "") else ""
+    if not hinted_id:
+        id_names = ("fornecedor_id", "id_fornecedor", "codigo_fornecedor", "Codigo", "codigo", "id") if role == "supplier" else ("cliente_id", "id_cliente", "codigo_cliente", "Codigo", "codigo", "id")
+        hinted_id = text(deep_find(record, id_names)).strip()
+    if not row and hinted_id:
+        row = db.scalar(select(Partner).where(Partner.company_id == company_id, Partner.erpflex_id == hinted_id).limit(1))
+    if not row and cnpj:
         row = db.scalar(select(Partner).where(Partner.company_id == company_id, Partner.cnpj_cpf == cnpj).limit(1))
     if not row and name:
         row = db.scalar(select(Partner).where(Partner.company_id == company_id, func.lower(Partner.name) == name.lower()).limit(1))
@@ -754,10 +807,10 @@ def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | Non
             row.cnpj_cpf = cnpj
     if role == "supplier":
         row.role_supplier = True
-        peid = deep_find(record, ("fornecedor_id", "id_fornecedor"))
+        peid = hinted_id or deep_find(record, ("fornecedor_id", "id_fornecedor", "codigo_fornecedor", "Codigo", "codigo"))
     else:
         row.role_customer = True
-        peid = deep_find(record, ("cliente_id", "id_cliente"))
+        peid = hinted_id or deep_find(record, ("cliente_id", "id_cliente", "codigo_cliente", "Codigo", "codigo"))
     if peid not in (None, "") and not row.erpflex_id:
         row.erpflex_id = str(peid)
     # Mantém o cadastro consolidado com o máximo de dados efetivamente retornados pela API.
@@ -765,11 +818,19 @@ def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | Non
     if role == "customer":
         _enrich_customer_master(row, record)
     else:
-        row.address = row.address or text(deep_find(record, ("endereco", "logradouro"))) or None
-        row.district = row.district or text(deep_find(record, ("bairro",))) or None
-        row.city = row.city or text(deep_find(record, ("municipio", "cidade"))) or None
-        row.state = row.state or text(deep_find(record, ("uf", "estado"))) or None
-        row.zip_code = row.zip_code or text(deep_find(record, ("cep",))) or None
+        main = _address_from_record(record, "main")
+        xml_addr = (nf_xml or {}).get("issuer_address") if isinstance(nf_xml, dict) else None
+        if isinstance(xml_addr, dict):
+            for key in ("address", "number", "complement", "district", "city", "state", "zip"):
+                if xml_addr.get(key):
+                    main[key] = text(xml_addr.get(key))
+        if main["address"]: row.address = main["address"]
+        if main["number"]: row.address_number = main["number"]
+        if main["complement"]: row.address_complement = main["complement"]
+        if main["district"]: row.district = main["district"]
+        if main["city"]: row.city = main["city"]
+        if main["state"]: row.state = main["state"]
+        if main["zip"]: row.zip_code = main["zip"]
     return row
 
 
@@ -1116,6 +1177,27 @@ def _erp_purchase(db, company_id: int, record: dict, raw_id: int):
     _reconcile(row)
 
 
+def _bank_name_from_cache(db, company_id: int, bank_id: str) -> str:
+    bid=text(bank_id).strip()
+    if not bid or bid == "0":
+        return ""
+    if bid in VERIFIED_BANK_NAMES:
+        return VERIFIED_BANK_NAMES[bid]
+    raws=db.scalars(select(RawRecord).where(
+        RawRecord.company_id == company_id, RawRecord.source == "ERPFLEX",
+        RawRecord.module.in_(["banks","bank_detail"]), RawRecord.external_id == bid
+    ).order_by(RawRecord.id.desc()).limit(3)).all()
+    for raw in raws:
+        try:
+            payload=json.loads(raw.payload_json or "{}")
+        except Exception:
+            continue
+        name=text(deep_find(payload,("SA6_Desc","nome_banco","banco_desc","descricao_banco","nome","descricao"))).strip()
+        if name and not name.lower().startswith("banco "):
+            return name
+    return ""
+
+
 def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     module = "receber" if kind == "RECEBER" else "pagar" if kind == "PAGAR" else "despesas"
     eid = str(deep_find(record, ("id", "id_titulo", "id_receita", "id_despesa", "documento", "numero")) or external_id(module, record))
@@ -1130,9 +1212,9 @@ def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     row.partner_id = partner.id if partner else row.partner_id
     # Documento permanece o identificador comercial/título; não usar nr_nfe como fallback.
     row.document = text(deep_find(record, ("documento", "numero", "titulo", "numero_pedido", "pedido"))) or row.document
-    row.issue_date = normalize_date(deep_find(record, ("emissao", "data_emissao", "data"))) or row.issue_date
-    row.due_date = normalize_date(deep_find(record, ("vencimento", "data_vencimento", "dt_vencimento"))) or row.due_date
-    row.paid_date = normalize_date(deep_find(record, ("pagamento", "data_pagamento", "baixa", "data_baixa"))) or row.paid_date
+    row.issue_date = normalize_date(deep_find(record, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data_lancamento", "dt_lancamento", "competencia", "data"))) or row.issue_date
+    row.due_date = normalize_date(deep_find(record, ("vencimento", "data_vencimento", "dt_vencimento", "dataVencimento", "dtVencimento", "data_vcto", "dt_vcto"))) or row.due_date
+    row.paid_date = normalize_date(deep_find(record, ("pagamento", "data_pagamento", "dt_pagamento", "baixa", "data_baixa", "dt_baixa"))) or row.paid_date
     row.value = fnum(deep_find(record, ("valor", "valor_titulo", "valor_total", "total"))) or row.value
     row.paid_value = fnum(deep_find(record, ("valor_pago", "valor_baixado", "valor_recebido"))) or row.paid_value
     row.status = text(deep_find(record, ("status", "situacao"))) or row.status
@@ -1140,7 +1222,8 @@ def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     bank_id = text(deep_find(record, ("banco_id", "id_banco", "idBanco")))
     wallet_desc = text(deep_find(record, ("carteira_desc", "nome_carteira", "carteira")))
     wallet_id = text(deep_find(record, ("id_carteira", "carteira_id", "idCarteira")))
-    row.bank = bank_desc or row.bank or (("Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}") if bank_id or not row.bank else row.bank)
+    known_bank = _bank_name_from_cache(db, company_id, bank_id)
+    row.bank = bank_desc or known_bank or row.bank or (("Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}") if bank_id or not row.bank else row.bank)
     row.wallet = wallet_desc or row.wallet or (("Sem carteira identificada" if wallet_id in {"", "0"} else f"Carteira {wallet_id}") if wallet_id or not row.wallet else row.wallet)
     row.raw_record_id = raw_id
 
@@ -1187,10 +1270,15 @@ def _save_erp_records(run_id: int, module: str, records: list[dict]):
                 if module == "products":
                     _erp_product(db, company_id, record)
                 elif module == "clientes":
-                    partner = _partner(db, company_id, "customer", record)
-                    cid = deep_find(record, ("id", "id_cliente", "cliente_id"))
+                    cid = deep_find(record, ("id", "id_cliente", "cliente_id", "Codigo", "codigo", "codigo_cliente"))
+                    partner = _partner(db, company_id, "customer", record, erpflex_id_hint=str(cid) if cid not in (None, "") else None)
                     if cid not in (None, ""):
                         partner.erpflex_id = str(cid)
+                elif module == "fornecedores":
+                    sid = deep_find(record, ("id", "id_fornecedor", "fornecedor_id", "Codigo", "codigo"))
+                    partner = _partner(db, company_id, "supplier", record, erpflex_id_hint=str(sid) if sid not in (None, "") else None)
+                    if sid not in (None, ""):
+                        partner.erpflex_id = str(sid)
                 elif module == "banks":
                     # Cadastro preservado integralmente em raw_records; nenhuma estrutura é inventada.
                     pass
@@ -1252,7 +1340,7 @@ def _run_erp(run_id: int, module: str, params: dict):
             company_id = run.company_id
         movement_limit = max(1, min(1000, int(params.get("max_blocks") or 100)))
         master_limit = max(1, min(2000, int(params.get("master_max_pages") or 500)))
-        limit = master_limit if module == "products" else movement_limit
+        limit = master_limit if module in {"products", "fornecedores"} else movement_limit
         mode = str(params.get("mode") or "recent").lower()
         force_period = mode == "force_period"
         recent = mode not in {"manual", "force_period"}
@@ -1281,6 +1369,8 @@ def _run_erp(run_id: int, module: str, params: dict):
                 records = client.products(limit)
             elif module == "banks":
                 records = client.banks()
+            elif module == "fornecedores":
+                records = client.suppliers(master_limit)
             elif module == "clientes":
                 max_clients = max(1, min(5000, int(params.get("max_clients") or 1000)))
                 ids = _known_customer_ids(company_id, max_clients)
@@ -1549,7 +1639,6 @@ def _run_nfstock(run_id: int, params: dict):
                         PurchaseInvoice.company_id == company_id,
                         PurchaseInvoice.access_key == key
                     ).limit(1)) if key else None
-                    supplier = _partner(db, company_id, "supplier", meta, nf_xml=parsed)
                     # Se a compra do ERPFlex chegou primeiro sem chave, tenta vínculo conservador
                     # por número + data + valor. Só vincula quando há exatamente um candidato.
                     if not row and parsed.get("number"):
@@ -1574,6 +1663,14 @@ def _run_nfstock(run_id: int, params: dict):
                         row = PurchaseInvoice(company_id=company_id, access_key=key)
                         db.add(row)
                         db.flush()
+
+                    # Se a compra ERPFlex já estava vinculada a um fornecedor, enriquecemos
+                    # exatamente esse cadastro com CNPJ/endereço do XML. Assim o NF Stock não
+                    # cria um segundo fornecedor apenas porque o registro ERP veio incompleto.
+                    supplier = _partner(
+                        db, company_id, "supplier", meta, nf_xml=parsed,
+                        preferred_partner_id=row.supplier_id,
+                    )
                     row.nfstock_nsu = nsu or row.nfstock_nsu
                     row.supplier_id = supplier.id if supplier else row.supplier_id
                     row.number = parsed.get("number") or row.number

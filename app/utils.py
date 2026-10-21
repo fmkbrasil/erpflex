@@ -7,6 +7,15 @@ import unicodedata
 from datetime import datetime
 from typing import Any
 
+# IDs/nome de bancos confirmados na conta real usada pela plataforma.
+# O catálogo sincronizado continua tendo prioridade; estes valores são apenas fallback seguro.
+VERIFIED_BANK_NAMES = {
+    "12626": "BRADESCO",
+    "25325": "ITAU VIN",
+    "32979": "SAFRA - BANCO",
+}
+
+
 
 def digits(value: Any) -> str:
     return re.sub(r"\D", "", str(value or ""))
@@ -158,6 +167,7 @@ def external_id(module: str, record: dict) -> str:
         "despesas": ("id", "id_despesa", "documento", "numero"),
         "banks": ("SA6_ID", "id", "id_banco", "codigo", "SA6_Codigo", "nome", "SA6_Desc"),
         "clientes": ("id", "id_cliente", "cliente_id", "codigo", "cnpj", "cpf_cnpj"),
+        "fornecedores": ("id", "id_fornecedor", "fornecedor_id", "codigo", "cnpjcpf", "cnpj_cpf", "cnpj"),
         "nfstock": ("nsu", "NSU", "chave", "chaveAcesso", "chave_nfe"),
     }.get(module, ("id", "codigo", "numero", "documento"))
     v = deep_find(record, candidates)
