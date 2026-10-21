@@ -1,0 +1,34 @@
+VALIDAÇÃO V1.3.36
+
+1. Python
+- python -m compileall -q app: OK
+
+2. Templates
+- 41 templates Jinja compilados: OK
+- /roteirizar renderizado via FastAPI TestClient: HTTP 200
+- /bi/vendedores renderizado via FastAPI TestClient: HTTP 200
+- /bi/contas-receber renderizado via FastAPI TestClient: HTTP 200
+
+3. Banco
+- Migração simulada de schema 12 para 13: OK
+- sales_orders.seller_id criado sem recriar tabela: OK
+- sales_orders.seller_name criado sem recriar tabela: OK
+- schema_state atualizado para 13: OK
+
+4. Vendedor
+- Parser validado com vendedor como campos separados, objeto aninhado e campos em pedido_detalhe: OK
+- BI validado com NF sem vendedor direto + pedido vinculado por ID: vendedor localizado no pedido e faturamento atribuído corretamente: OK
+- Diagnóstico de origem do vendedor disponível na tela Comercial — Vendedores: OK
+
+5. Carteira
+- Título armazenado como "Carteira 4169" + boleto_options contendo nome "COBRANCA ITAU": BI exibiu "COBRANCA ITAU": OK
+- Resultado por carteira e títulos em aberto usam a mesma resolução descritiva: OK
+- Sem descrição retornada, permanece ID da carteira; nenhuma descrição é inventada.
+
+6. Roteirização
+- Fluxo visual em 3 etapas renderizado: OK
+- Cards de região e cards de entrega renderizados: OK
+- Seleção mantém delivery_ids e rotas POST existentes: OK
+- Resumo da seleção calcula NFs, volumes e valor no navegador sem alterar regra de negócio.
+
+Health esperado: version 1.3.36 / schema 13.
