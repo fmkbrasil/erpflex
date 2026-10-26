@@ -24,16 +24,16 @@
 
 {% if can_perm('bi.view') %}
 <section class="mobile-home-bi-shortcuts">
-  <h2>Atalhos do BI</h2>
-  <div>
-    <a href="/bi/faturamento">Faturamento</a>
-    <a href="/bi/contas-receber">Receber</a>
-    <a href="/bi/contas-pagar">Pagar</a>
-    <a href="/bi/fluxo-caixa">Fluxo de Caixa</a>
-    <a href="/bi/dre">DRE</a>
-    <a href="/bi/vendedores">Vendedores</a>
-    <a href="/bi/clientes">Clientes</a>
-    <a href="/bi/produtos">Produtos</a>
+  <div class="mobile-home-section-title"><div><span>BI Gerencial</span><h2>Escolha uma análise</h2></div><a href="/bi/visao-geral">Ver todas</a></div>
+  <div class="mobile-bi-shortcut-grid">
+    <a class="tone-indigo" href="/bi/faturamento"><span>↗</span><b>Faturamento</b><small>Vendas e NF-e</small></a>
+    <a class="tone-emerald" href="/bi/contas-receber"><span>↓</span><b>Receber</b><small>Carteira e aging</small></a>
+    <a class="tone-rose" href="/bi/contas-pagar"><span>↑</span><b>Pagar</b><small>Previsto e realizado</small></a>
+    <a class="tone-cyan" href="/bi/fluxo-caixa"><span>⇄</span><b>Fluxo de Caixa</b><small>Entradas e saídas</small></a>
+    <a class="tone-violet" href="/bi/dre"><span>Σ</span><b>DRE</b><small>Resultado gerencial</small></a>
+    <a class="tone-teal" href="/bi/vendedores"><span>♙</span><b>Vendedores</b><small>Desempenho comercial</small></a>
+    <a class="tone-blue" href="/bi/clientes"><span>◎</span><b>Clientes</b><small>Compras e histórico</small></a>
+    <a class="tone-amber" href="/bi/produtos"><span>▣</span><b>Produtos</b><small>Itens e categorias</small></a>
   </div>
 </section>
 {% endif %}

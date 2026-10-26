@@ -595,3 +595,28 @@ Principais mudanças:
 - o enriquecimento do Financeiro também passa a recuperar cliente e datas a partir do detalhe do título/NF/pedido, além de banco/carteira.
 
 O schema permanece na versão 15.
+
+## V1.3.50 — Detecção mobile por viewport
+Corrige navegadores móveis que se identificam como desktop. O login e a Home usam largura real da tela (até 900 px) para entrar em /mobile. O override /?desktop=1 permanece disponível.
+
+## V1.3.51 — BI simplificado
+
+- filtros principais do BI reduzidos a períodos rápidos e intervalo De/Até;
+- filtros avançados deixam de ocupar a interface principal;
+- análises do BI passam a ser abertas por botões de resultado;
+- somente um grupo de resultado é exibido por vez em desktop e mobile;
+- drill-downs existentes permanecem disponíveis dentro de cada resultado;
+- sem alteração de schema, integrações, Worker ou regras de negócio.
+
+
+## V1.3.52 — Navegação visual do BI mobile
+
+A navegação do BI em smartphones passa a usar ícones, cores semânticas, seletor visual de módulos e cards de resultados, preservando drill-downs e cálculos existentes. Schema 15.
+
+
+## V1.3.53 — Layout comercial premium do BI
+Implementa o layout visual aprovado para desktop e smartphone, mantendo regras de negócio e drill-downs existentes. O BI usa barra lateral no desktop e navegação compacta no mobile; filtros, cards de análise e KPIs foram reorganizados para leitura comercial e operação por toque. Schema 15.
+
+
+## V1.3.54 — Períodos simplificados no BI
+O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personalizado. Os campos de data são exibidos somente no modo personalizado.

@@ -58,7 +58,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.49")
+app = FastAPI(title=APP_NAME, version="1.3.54")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -199,7 +199,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.49", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.54", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -208,7 +208,7 @@ def login_page(request: Request):
 
 
 @app.post("/login")
-def login(request: Request, user: str = Form(""), password: str = Form("")):
+def login(request: Request, user: str = Form(""), password: str = Form(""), mobile_hint: str = Form("")):
     with SessionLocal() as db:
         row = db.scalar(select(AppUser).where(func.lower(AppUser.username) == user.strip().lower(), AppUser.active.is_(True)).limit(1))
         if row and verify_password(password, row.password_hash):
@@ -220,7 +220,7 @@ def login(request: Request, user: str = Form(""), password: str = Form("")):
             request.session["company_id"] = ac.company.id
             if ac.branch:
                 request.session["branch_id"] = ac.branch.id
-            return RedirectResponse("/mobile" if _is_mobile_request(request) else "/", status_code=303)
+            return RedirectResponse("/mobile" if (mobile_hint == "1" or _is_mobile_request(request)) else "/", status_code=303)
     return render(request, "login.html", error="Usuário ou senha inválidos.")
 
 

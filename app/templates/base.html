@@ -3,8 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% if request.url.path == '/' and request.query_params.get('desktop') != '1' %}
+  <script>
+    (function(){
+      var w=window.innerWidth || document.documentElement.clientWidth || screen.width || 9999;
+      if(w <= 900){ window.location.replace('/mobile'); }
+    })();
+  </script>
+  {% endif %}
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=19">
+  <link rel="stylesheet" href="/static/style.css?v=23">
   <style>
     :root{
       --bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};
@@ -119,7 +127,7 @@
 </main>
 {% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Ative e clique em um texto da interface para editar">✎ Editar textos</button>{% endif %}
 <script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_CAN_CUSTOMIZE={{ 'true' if can_perm('ui.customize') else 'false' }};</script>
-<script src="/static/ui.js?v=19"></script>
+<script src="/static/ui.js?v=23"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

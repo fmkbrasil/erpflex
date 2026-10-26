@@ -345,3 +345,15 @@ O BI adota um padrão comum de drill-down em todas as áreas. Agrupamentos anal�
 - O menu principal foi dividido entre áreas de negócio e submenu Sistema.
 - A navegação interna do BI é progressiva no smartphone e não altera a renderização desktop.
 - Nenhuma regra de negócio, integração ou schema foi modificada nesta versão.
+
+### Interface BI V1.3.51
+A camada de apresentação do BI usa navegação progressiva por resultados. O formulário principal expõe apenas o período e o intervalo de datas. Filtros contextuais eventualmente recebidos por drill-through podem permanecer como campos ocultos até a limpeza da consulta. A seleção de resultados é feita no cliente por JavaScript, sem nova consulta ao banco ao alternar entre blocos já carregados.
+
+
+### Interface BI V1.3.52
+
+A camada mobile do BI usa um seletor visual de módulos e uma navegação interna por cards de resultado. A implementação é cliente-side em `ui.js`/`style.css` e não altera contratos de dados nem schema.
+
+
+### Interface BI V1.3.53
+A camada de apresentação do BI passa a usar shell responsivo: sidebar por área no desktop, seletor de módulo no mobile, cards de análise responsivos e KPIs em grade. Não altera modelos, sincronizadores nem schema.

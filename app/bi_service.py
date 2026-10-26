@@ -70,6 +70,8 @@ def _period_bounds(period: str, date_from: str = "", date_to: str = "") -> tuple
     if period == "yesterday":
         d = today - timedelta(days=1)
         return d, d
+    if period == "week":
+        return today - timedelta(days=today.weekday()), today
     if period == "7":
         return today - timedelta(days=6), today
     if period == "30":

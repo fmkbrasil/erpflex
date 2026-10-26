@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Entrar · {{ app_name }}</title>
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=20">
   <style>:root{--bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};--blue:{{ ui_theme.primary_color }};--nav:{{ ui_theme.nav_color }};--secondary:{{ ui_theme.secondary_color }};--secondary-text:{{ ui_theme.secondary_text_color }};--green:{{ ui_theme.success_color }};--amber:{{ ui_theme.warning_color }};--red:{{ ui_theme.danger_color }};--btn-text:{{ ui_theme.button_text_color }}}</style>
 </head>
 <body class="login-body">
@@ -15,9 +15,23 @@
     {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
     <label>Usuário<input name="user" autocomplete="username" required placeholder="Digite seu usuário"></label>
     <label>Senha<input type="password" name="password" autocomplete="current-password" required placeholder="Digite sua senha"></label>
+    <input type="hidden" name="mobile_hint" id="mobile-hint" value="0">
     <button class="btn primary" type="submit">Entrar</button>
   </form>
+  <script>
+    (function(){
+      var field=document.getElementById("mobile-hint");
+      if(field){
+        var narrow=(window.innerWidth || document.documentElement.clientWidth || screen.width || 9999) <= 900;
+        field.value=narrow ? "1" : "0";
+        window.addEventListener("resize",function(){
+          var w=(window.innerWidth || document.documentElement.clientWidth || screen.width || 9999);
+          field.value=w <= 900 ? "1" : "0";
+        });
+      }
+    })();
+  </script>
   <script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_CAN_CUSTOMIZE=false;</script>
-  <script src="/static/ui.js?v=18"></script>
+  <script src="/static/ui.js?v=20"></script>
 </body>
 </html>
