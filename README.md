@@ -620,3 +620,12 @@ Implementa o layout visual aprovado para desktop e smartphone, mantendo regras d
 
 ## V1.3.54 — Períodos simplificados no BI
 O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personalizado. Os campos de data são exibidos somente no modo personalizado.
+
+
+## V1.3.55 — Correção do cursor incremental de Faturamento
+
+- Corrige o Worker automático de Faturamento que, no modo `recent`, reprocessava o mesmo conjunto de páginas porque o novo `last_valid` não era persistido.
+- Nova rotina `faturamento_incremental()` mantém uma página de sobreposição, avança a borda e devolve metadados para `SyncCursor`.
+- Quando o limite de páginas é atingido, o cursor é salvo na última página válida e a execução seguinte continua dali, evitando ficar preso em `Atualizados=200 / Novos=0`.
+- O Histórico de Sincronização passa a registrar uma nota técnica com o avanço do cursor.
+- Sem alteração de schema, tabelas, Worker scheduler, endpoints ou regras fiscais.

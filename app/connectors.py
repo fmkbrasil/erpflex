@@ -967,6 +967,75 @@ class ERPFlexClient:
             raise ConnectorError(f"Faturamento: HTTP {pg.http} em P{pno}")
         return out
 
+    def faturamento_incremental(self, max_pages: int = 100, last_valid: int | None = None) -> tuple[list[dict], dict]:
+        """Sincronização automática incremental com avanço persistente do cursor.
+
+        A V1.3.54 lia páginas novas a partir de ``last_valid`` no modo ``recent``,
+        porém o chamador não recebia metadados de cursor. Assim o checkpoint
+        permanecia parado e o Worker reprocessava sempre o mesmo lote.
+
+        Esta rotina mantém uma página de sobreposição (P-1), avança até a
+        primeira página inválida ou até o limite configurado e devolve
+        ``last_valid``/``first_invalid`` para persistência pelo SyncCursor.
+        """
+        anchor = max(1, int(last_valid or self.FATURAMENTO_SEED))
+        start = max(1, anchor - 1)
+        limit = max(1, min(int(max_pages or 1), 1000))
+        out: list[dict] = []
+        calls = 0
+        last_seen: int | None = None
+        first_invalid: int | None = None
+        min_seen: date | None = None
+        max_seen: date | None = None
+
+        for i, pno in enumerate(range(start, start + limit), 1):
+            self._notify(f"Faturamento incremental · P{pno} · {i}/{limit}")
+            pg = self._get(f"/api_v2/faturamento/P{pno}")
+            self._observe_page("faturamento", "page", pno, pg)
+            calls += 1
+            if pg.http == 200 and pg.records:
+                out.extend(pg.records)
+                last_seen = pno
+                pmin, pmax = self._range("faturamento", pg.records, navigation=True)
+                if pmin is not None:
+                    min_seen = pmin if min_seen is None else min(min_seen, pmin)
+                if pmax is not None:
+                    max_seen = pmax if max_seen is None else max(max_seen, pmax)
+                continue
+            if pg.http in (200, 400, 404) and not pg.records:
+                first_invalid = pno
+                break
+            raise ConnectorError(f"Faturamento: HTTP {pg.http} em P{pno}")
+
+        # Nunca recua o cursor. A página de sobreposição serve apenas para
+        # capturar alterações na borda.
+        new_last = max(anchor, int(last_seen or anchor))
+        if first_invalid is None and last_seen is not None:
+            # O limite foi atingido ainda com páginas válidas. Na próxima
+            # execução o Worker continuará a partir da nova borda.
+            note = (
+                f"Cursor de faturamento avançou P{anchor}→P{new_last}; "
+                f"limite de {limit} página(s) atingido. A próxima execução continuará da nova borda."
+            )
+        elif first_invalid is not None:
+            note = (
+                f"Cursor de faturamento confirmado/avançado P{anchor}→P{new_last}; "
+                f"primeira página inválida P{first_invalid}."
+            )
+        else:
+            note = f"Cursor de faturamento mantido em P{new_last}."
+
+        return out, {
+            "initialized": True,
+            "last_valid": new_last,
+            "first_invalid": first_invalid or (new_last + 1),
+            "last_http_requests": calls,
+            "coverage_from": min_seen.isoformat() if min_seen else None,
+            "coverage_to": max_seen.isoformat() if max_seen else None,
+            "coverage_complete": bool(first_invalid is not None),
+            "note": note,
+        }
+
     def _faturamento_period_binary(self, start: date, end: date, max_pages: int, last: int) -> tuple[list[dict], dict]:
         """Fallback para períodos antigos: estratégia histórica do Analytics V7.8."""
         total_calls = 0

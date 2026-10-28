@@ -1414,11 +1414,17 @@ def _run_erp(run_id: int, module: str, params: dict):
                         page_hint=page_hint or None, force_cached_range=bool(page_hint) and (force_period or not page_hint.get("touches_recent")),
                     )
                 else:
-                    records = client.faturamento(
-                        limit,
-                        None if recent else int(params.get("start_page") or 1),
-                        last_valid=cursor.get("last_valid") if cursor.get("initialized") else None,
-                    )
+                    if recent:
+                        records, cursor_meta = client.faturamento_incremental(
+                            limit,
+                            last_valid=cursor.get("last_valid") if cursor.get("initialized") else None,
+                        )
+                    else:
+                        records = client.faturamento(
+                            limit,
+                            int(params.get("start_page") or 1),
+                            last_valid=cursor.get("last_valid") if cursor.get("initialized") else None,
+                        )
                 if str(params.get("sales_details") or "0").lower() not in {"0", "false", "off", "no"}:
                     # O Analytics V7.8 não usa um endpoint inventado de itens do faturamento.
                     # Ele relaciona faturamento.orcamento_id -> pedido e usa os itens do pedido.
