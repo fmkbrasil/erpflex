@@ -12,6 +12,7 @@ from sqlalchemy import select
 from .db import (
     Delivery, DeliveryAssignment, DreExpenseMapping, FinancialTitle, Partner, Product, PurchaseInvoice, PurchaseItem,
     RawRecord, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesInvoiceItem, SalesOrder, SyncRun,
+    CollectionCustomerRule,
 )
 from .utils import VERIFIED_BANK_NAMES
 
@@ -569,6 +570,13 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
     orders_all=db.scalars(select(SalesOrder).where(SalesOrder.company_id==cid)).all()
     purchases_all=db.scalars(select(PurchaseInvoice).where(PurchaseInvoice.company_id==cid)).all()
     titles_all=db.scalars(select(FinancialTitle).where(FinancialTitle.company_id==cid)).all()
+    collection_contract_rules = db.scalars(
+        select(CollectionCustomerRule).where(
+            CollectionCustomerRule.company_id == cid,
+            CollectionCustomerRule.has_collection_contract == True,
+        )
+    ).all()
+    contract_rule_by_partner = {r.partner_id: r for r in collection_contract_rules}
     deliveries_all=db.scalars(select(Delivery).where(Delivery.company_id==cid)).all()
 
     receivable_detail_by_external: dict[str, dict] = {}
@@ -889,13 +897,43 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         for t in titles_all
     }
 
+    def contract_rule_for_title(t: FinancialTitle):
+        if t.kind != "RECEBER":
+            return None
+        pid = resolved_partner_by_title.get(t.id, t.partner_id)
+        return contract_rule_by_partner.get(pid)
+
     def title_bank_name(t: FinancialTitle) -> str:
+        if contract_rule_for_title(t):
+            return "Sem banco"
         return str(bank_info_by_title.get(t.id, {}).get("name") or t.bank or "Sem banco").strip() or "Sem banco"
 
     def title_wallet_name(t: FinancialTitle) -> str:
+        if t.kind == "RECEBER" and contract_rule_for_title(t):
+            return "CONTRATO"
         if t.kind == "RECEBER":
             return str(wallet_info_by_title.get(t.id, {}).get("name") or t.wallet or "Sem carteira").strip() or "Sem carteira"
         return str(t.wallet or "Sem carteira").strip() or "Sem carteira"
+
+    def contract_values(t: FinancialTitle) -> dict:
+        rule = contract_rule_for_title(t)
+        gross = _money(t.value)
+        pct = 0.0
+        if rule:
+            try:
+                pct = max(0.0, min(float(rule.contract_discount_percent or 0), 100.0))
+            except Exception:
+                pct = 0.0
+        discount = round(gross * pct / 100.0, 2)
+        net = round(max(gross - discount, 0.0), 2)
+        paid = _money(t.paid_value)
+        return {
+            "is_contract": bool(rule),
+            "discount_percent": round(pct, 2),
+            "discount_value": discount,
+            "net_value": net,
+            "net_balance": round(max(net - paid, 0.0), 2),
+        }
 
     def title_filter(t: FinancialTitle) -> bool:
         if bank_filter and title_bank_name(t) != bank_filter: return False
@@ -1241,6 +1279,12 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         overdue_titles=[t for t in ar_overdue if title_wallet_name(t)==wallet_name]
         open_value=sum(max(_money(t.value)-_money(t.paid_value),0) for t in open_titles)
         overdue_value=sum(max(_money(t.value)-_money(t.paid_value),0) for t in overdue_titles)
+        is_contract_wallet = wallet_name == "CONTRATO"
+        contract_scope = [t for t in ar_all if title_wallet_name(t) == wallet_name] if is_contract_wallet else []
+        contract_open_scope = open_titles if is_contract_wallet else []
+        contract_discount = round(sum(contract_values(t)["discount_value"] for t in contract_scope), 2) if is_contract_wallet else 0.0
+        contract_net = round(sum(contract_values(t)["net_value"] for t in contract_scope), 2) if is_contract_wallet else 0.0
+        contract_net_open = round(sum(contract_values(t)["net_balance"] for t in contract_open_scope), 2) if is_contract_wallet else 0.0
         wallet_results.append({
             "name":wallet_name,
             "issued":round(issued_value,2) if issued_value is not None else None,
@@ -1249,6 +1293,10 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             "overdue":round(overdue_value,2),
             "open_count":len(open_titles),
             "overdue_pct":_pct(overdue_value,open_value) or 0.0,
+            "is_contract":is_contract_wallet,
+            "contract_discount":contract_discount,
+            "contract_net":contract_net,
+            "contract_net_open":contract_net_open,
         })
     wallet_results.sort(key=lambda r:(r["open"], r["issued"] if r["issued"] is not None else -1),reverse=True)
 
@@ -1571,6 +1619,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             "value":_money(t.value),"paid":_money(t.paid_value),
             "balance":round(max(_money(t.value)-_money(t.paid_value),0),2),
             "bank":title_bank_name(t),"wallet":title_wallet_name(t),
+            **contract_values(t),
         }
 
     def ap_detail_row(t: FinancialTitle) -> dict:
@@ -1924,7 +1973,8 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
                 "invoice_id":(invoice_by_title.get(t.id).id if invoice_by_title.get(t.id) else None),
                 "due":t.due_date,"issue":t.issue_date,"value":_money(t.value),"paid":_money(t.paid_value),
                 "balance":round(max(_money(t.value)-_money(t.paid_value),0),2),"bank":title_bank_name(t),"wallet":title_wallet_name(t),
-                "wallet_id":wallet_info_by_title.get(t.id,{}).get("id")
+                "wallet_id":wallet_info_by_title.get(t.id,{}).get("id"),
+                **contract_values(t)
             } for t in sorted(ar_open,key=lambda t:_date(t.due_date) or date.max)[:250]],
         },
         "payables":{

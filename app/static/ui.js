@@ -66,12 +66,15 @@
   function assignSurfaceKeys(){
     if(!document.body.classList.contains('page-bi'))return;
     const selectors=['.bi-kpi','.bi-card','.bi-executive-note','.bi-data-quality'];
+    const used={};
     selectors.forEach(selector=>{
       document.querySelectorAll(selector).forEach((el,index)=>{
         if(el.dataset.noUiHide!==undefined || el.dataset.uiControlKey)return;
         const kind=selector.replace(/^\./,'').replace(/[^a-z0-9_-]/gi,'_');
         const label=surfaceLabel(el,index);
-        el.dataset.uiControlKey=location.pathname+'|CARD|'+kind+'|'+index;
+        const base=location.pathname+'|CARD|'+kind+'|'+hashString(label.toLowerCase());
+        const n=used[base]||0;used[base]=n+1;
+        el.dataset.uiControlKey=base+(n?'|'+n:'');
         el.dataset.uiControlLabel=label;
         el.dataset.uiControlKind='card';
       });
@@ -141,6 +144,21 @@
     const body=new URLSearchParams({control_key:key,control_label:label,hidden:hidden?'1':'0'});
     const r=await fetch('/aparencia/controle',{method:'POST',headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'},body});
     if(!r.ok)throw new Error('Falha ao salvar');
+    if(hidden){
+      hiddenControls[key]=label;
+      el.dataset.uiHidden='1';
+      el.classList.add('ui-control-hidden');
+      if(document.body.classList.contains('label-edit-mode')){
+        el.hidden=false;
+        el.classList.add('ui-hidden-preview');
+      }else el.hidden=true;
+    }else{
+      delete hiddenControls[key];
+      delete el.dataset.uiHidden;
+      el.hidden=false;
+      el.classList.remove('ui-control-hidden','ui-hidden-preview');
+    }
+    return r.json().catch(()=>({ok:true}));
   }
   function removeEditPopover(){document.querySelectorAll('.label-edit-popover').forEach(x=>x.remove());}
   function editableTargetInsideControl(el){
@@ -157,7 +175,7 @@
     const actions=pop.querySelector('.label-edit-actions');
     if(!isHidden && kind!=='card'){const edit=document.createElement('button');edit.type='button';edit.className='btn small';edit.textContent='Editar texto';edit.addEventListener('click',()=>{removeEditPopover();promptTextEdit(editableTargetInsideControl(el));});actions.appendChild(edit);}
     const vis=document.createElement('button');vis.type='button';vis.className='btn small '+(isHidden?'primary':'danger-soft');vis.textContent=isHidden?(kind==='card'?'Exibir card':'Exibir botão'):(kind==='card'?'Ocultar card':'Ocultar botão');
-    vis.addEventListener('click',()=>{saveControlVisibility(el,!isHidden).then(()=>location.reload()).catch(()=>alert('Não foi possível salvar a visibilidade deste item.'));});actions.appendChild(vis);
+    vis.addEventListener('click',()=>{vis.disabled=true;saveControlVisibility(el,!isHidden).then(()=>{removeEditPopover();if(!document.body.classList.contains('label-edit-mode'))location.reload();}).catch(()=>{vis.disabled=false;alert('Não foi possível salvar a visibilidade deste item.');});});actions.appendChild(vis);
     const cancel=document.createElement('button');cancel.type='button';cancel.className='btn small';cancel.textContent='Cancelar';cancel.addEventListener('click',removeEditPopover);actions.appendChild(cancel);
     document.body.appendChild(pop);const r=el.getBoundingClientRect();const pw=Math.min(330,window.innerWidth-24);pop.style.width=pw+'px';let left=Math.max(12,Math.min(r.left,window.innerWidth-pw-12));let top=Math.min(window.innerHeight-pop.offsetHeight-12,r.bottom+8);if(top<12)top=12;pop.style.left=left+'px';pop.style.top=top+'px';
   }
@@ -255,12 +273,15 @@
     activate(0);
     nav.querySelectorAll('.bi-result-btn').forEach((b,index)=>{
       if(!b.dataset.uiControlKey){
-        b.dataset.uiControlKey=location.pathname+'|CARD|bi-result-btn|'+index;
-        b.dataset.uiControlLabel=cleanLabel(b.title||b.textContent||('Card de navegação '+(index+1)));
+        const stableLabel=cleanLabel(b.title||b.textContent||('Card de navegação '+(index+1)));
+        b.dataset.uiControlKey=location.pathname+'|CARD|bi-result-btn|'+hashString(stableLabel.toLowerCase());
+        b.dataset.uiControlLabel=stableLabel;
         b.dataset.uiControlKind='card';
       }
     });
     applyHiddenControls();
+    const firstVisible=[...nav.querySelectorAll('.bi-result-btn')].findIndex(b=>!b.hidden);
+    if(firstVisible>=0)activate(firstVisible);
   }
   initBiResultPanels();
 

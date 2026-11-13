@@ -310,3 +310,8 @@
 /* V1.3.59 — editor visual também permite ocultar cards do BI */
 .label-edit-mode [data-ui-control-kind="card"].ui-hideable-control{outline:2px dashed color-mix(in srgb,var(--blue) 65%,white)!important;outline-offset:3px!important;cursor:crosshair!important;position:relative}
 .label-edit-mode [data-ui-control-kind="card"].ui-hidden-preview{outline-color:var(--red)!important}
+
+
+/* V1.3.60 — correção da persistência/feedback de cards ocultos no BI */
+.label-edit-mode [data-ui-control-kind="card"].ui-hidden-preview{opacity:.32!important;filter:grayscale(.85)!important;outline:2px dashed var(--red)!important;position:relative!important}
+.label-edit-mode [data-ui-control-kind="card"].ui-hidden-preview::after{content:'OCULTO';position:absolute;right:8px;top:8px;z-index:4;background:#fff1f1;color:#a52626;border:1px solid #efb9b9;border-radius:999px;padding:3px 7px;font-size:9px;font-weight:900;letter-spacing:.04em;pointer-events:none}
