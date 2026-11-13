@@ -17,6 +17,8 @@
 {% elif col=='issue_date' %}<td>{{d.get('issue_date','—')}}</td>
 {% elif col=='due_date' %}<td>{{t.due_date or '—'}}</td>
 {% elif col=='value' %}<td class="num"><b>R$ {{'%.2f'|format(t.value or 0)}}</b></td>
+{% elif col=='contract_discount' %}<td class="num">{% if d.get('contract_discount_percent',0) > 0 %}<b>{{'%.2f'|format(d.get('contract_discount_percent',0))}}%</b><small>R$ {{'%.2f'|format(d.get('contract_discount_value',0))}}</small>{% else %}—{% endif %}</td>
+{% elif col=='net_value' %}<td class="num"><b>R$ {{'%.2f'|format(d.get('net_value',t.value or 0))}}</b></td>
 {% elif col=='paid_value' %}<td class="num">R$ {{'%.2f'|format(t.paid_value or 0)}}</td>
 {% elif col=='balance' %}<td class="num"><b>R$ {{'%.2f'|format((t.value or 0)-(t.paid_value or 0))}}</b></td>
 {% elif col=='status' %}<td><span class="badge status-lancamento">{{t.status or 'Sem status'}}</span></td>

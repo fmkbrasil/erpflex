@@ -54,6 +54,27 @@
       const label=controlLabel(el);const sig=(el.tagName||'CTRL')+'|'+hashString(label);const idx=counts[sig]||0;counts[sig]=idx+1;
       el.dataset.uiControlKey=location.pathname+'|'+sig+'|'+idx;
       el.dataset.uiControlLabel=label;
+      el.dataset.uiControlKind='button';
+    });
+  }
+  function surfaceLabel(el,index){
+    const marked=el.querySelector('[data-ui-original-text]');
+    const heading=el.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > span,:scope > .sales-card-title h3,h1,h2,h3,h4');
+    const raw=(marked&&marked.dataset.uiOriginalText)||(heading&&heading.textContent)||el.getAttribute('aria-label')||('Card '+(index+1));
+    return normalizeControlText(raw);
+  }
+  function assignSurfaceKeys(){
+    if(!document.body.classList.contains('page-bi'))return;
+    const selectors=['.bi-kpi','.bi-card','.bi-executive-note','.bi-data-quality'];
+    selectors.forEach(selector=>{
+      document.querySelectorAll(selector).forEach((el,index)=>{
+        if(el.dataset.noUiHide!==undefined || el.dataset.uiControlKey)return;
+        const kind=selector.replace(/^\./,'').replace(/[^a-z0-9_-]/gi,'_');
+        const label=surfaceLabel(el,index);
+        el.dataset.uiControlKey=location.pathname+'|CARD|'+kind+'|'+index;
+        el.dataset.uiControlLabel=label;
+        el.dataset.uiControlKind='card';
+      });
     });
   }
   function applyHiddenControls(){
@@ -62,7 +83,7 @@
       if(Object.prototype.hasOwnProperty.call(hiddenControls,key)){el.dataset.uiHidden='1';el.hidden=true;el.classList.add('ui-control-hidden');}
     });
   }
-  assignControlKeys();applyHiddenControls();
+  assignControlKeys();assignSurfaceKeys();applyHiddenControls();
 
   function directTextNodes(el){return [...el.childNodes].filter(isUiTextNode);}
   function closestEditable(start){
@@ -129,14 +150,14 @@
   }
   function openControlPopover(el){
     removeEditPopover();
-    const pop=document.createElement('div');pop.className='label-edit-popover';pop.setAttribute('role','dialog');pop.setAttribute('aria-label','Editar botão');
-    const label=el.dataset.uiControlLabel||controlLabel(el);const isHidden=el.dataset.uiHidden==='1';
+    const pop=document.createElement('div');pop.className='label-edit-popover';pop.setAttribute('role','dialog');pop.setAttribute('aria-label','Editar item da interface');
+    const label=el.dataset.uiControlLabel||controlLabel(el);const isHidden=el.dataset.uiHidden==='1';const kind=el.dataset.uiControlKind==='card'?'card':'button';
     pop.innerHTML='<b></b><small></small><div class="label-edit-actions"></div>';
-    pop.querySelector('b').textContent=isHidden?'Botão oculto':'Editar botão';pop.querySelector('small').textContent=label;
+    pop.querySelector('b').textContent=isHidden?(kind==='card'?'Card oculto':'Botão oculto'):(kind==='card'?'Editar card':'Editar botão');pop.querySelector('small').textContent=label;
     const actions=pop.querySelector('.label-edit-actions');
-    if(!isHidden){const edit=document.createElement('button');edit.type='button';edit.className='btn small';edit.textContent='Editar texto';edit.addEventListener('click',()=>{removeEditPopover();promptTextEdit(editableTargetInsideControl(el));});actions.appendChild(edit);}
-    const vis=document.createElement('button');vis.type='button';vis.className='btn small '+(isHidden?'primary':'danger-soft');vis.textContent=isHidden?'Exibir botão':'Ocultar botão';
-    vis.addEventListener('click',()=>{saveControlVisibility(el,!isHidden).then(()=>location.reload()).catch(()=>alert('Não foi possível salvar a visibilidade do botão.'));});actions.appendChild(vis);
+    if(!isHidden && kind!=='card'){const edit=document.createElement('button');edit.type='button';edit.className='btn small';edit.textContent='Editar texto';edit.addEventListener('click',()=>{removeEditPopover();promptTextEdit(editableTargetInsideControl(el));});actions.appendChild(edit);}
+    const vis=document.createElement('button');vis.type='button';vis.className='btn small '+(isHidden?'primary':'danger-soft');vis.textContent=isHidden?(kind==='card'?'Exibir card':'Exibir botão'):(kind==='card'?'Ocultar card':'Ocultar botão');
+    vis.addEventListener('click',()=>{saveControlVisibility(el,!isHidden).then(()=>location.reload()).catch(()=>alert('Não foi possível salvar a visibilidade deste item.'));});actions.appendChild(vis);
     const cancel=document.createElement('button');cancel.type='button';cancel.className='btn small';cancel.textContent='Cancelar';cancel.addEventListener('click',removeEditPopover);actions.appendChild(cancel);
     document.body.appendChild(pop);const r=el.getBoundingClientRect();const pw=Math.min(330,window.innerWidth-24);pop.style.width=pw+'px';let left=Math.max(12,Math.min(r.left,window.innerWidth-pw-12));let top=Math.min(window.innerHeight-pop.offsetHeight-12,r.bottom+8);if(top<12)top=12;pop.style.left=left+'px';pop.style.top=top+'px';
   }
@@ -232,6 +253,14 @@
     };
     nav.addEventListener('click',e=>{const b=e.target.closest('button[data-target]');if(!b)return;activate(Number(b.dataset.target));if(window.innerWidth<=900)section.scrollIntoView({behavior:'smooth',block:'start'});});
     activate(0);
+    nav.querySelectorAll('.bi-result-btn').forEach((b,index)=>{
+      if(!b.dataset.uiControlKey){
+        b.dataset.uiControlKey=location.pathname+'|CARD|bi-result-btn|'+index;
+        b.dataset.uiControlLabel=cleanLabel(b.title||b.textContent||('Card de navegação '+(index+1)));
+        b.dataset.uiControlKind='card';
+      }
+    });
+    applyHiddenControls();
   }
   initBiResultPanels();
 

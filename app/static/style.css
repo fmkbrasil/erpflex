@@ -301,8 +301,12 @@
 
 /* V1.3.57 — edição de interface: visibilidade de botões */
 .label-edit-mode .ui-hideable-control{outline:2px dashed color-mix(in srgb,var(--amber) 70%,white)!important;outline-offset:3px;cursor:crosshair!important}
-.label-edit-mode .ui-hidden-preview{display:inline-flex!important;opacity:.38!important;filter:grayscale(.7);text-decoration:line-through!important;outline-color:var(--red)!important}
+.label-edit-mode .ui-hidden-preview{opacity:.38!important;filter:grayscale(.7);outline-color:var(--red)!important}.label-edit-mode button.ui-hidden-preview,.label-edit-mode a.ui-hidden-preview,.label-edit-mode input.ui-hidden-preview{text-decoration:line-through!important}
 .ui-control-hidden[hidden]{display:none!important}
 .label-edit-popover{position:fixed;z-index:1400;background:var(--panel);color:var(--ink);border:1px solid #cfd8e6;border-radius:12px;padding:12px;box-shadow:0 14px 38px rgba(15,35,65,.24);display:grid;gap:7px}
 .label-edit-popover>b{font-size:14px}.label-edit-popover>small{color:#63738a;white-space:normal;overflow-wrap:anywhere}.label-edit-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px}.btn.danger-soft{background:#fff1f1;color:#a52626;border-color:#efb9b9}
 .contract-customer-search{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:4px 0 14px}.contract-customer-search label{flex:1 1 360px;display:grid;gap:5px}.contract-customer-search input{width:100%;min-height:40px}
+
+/* V1.3.59 — editor visual também permite ocultar cards do BI */
+.label-edit-mode [data-ui-control-kind="card"].ui-hideable-control{outline:2px dashed color-mix(in srgb,var(--blue) 65%,white)!important;outline-offset:3px!important;cursor:crosshair!important;position:relative}
+.label-edit-mode [data-ui-control-kind="card"].ui-hidden-preview{outline-color:var(--red)!important}

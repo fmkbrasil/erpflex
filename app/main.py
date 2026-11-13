@@ -58,7 +58,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.57")
+app = FastAPI(title=APP_NAME, version="1.3.58")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -961,7 +961,8 @@ DOCUMENT_COLUMN_DEFS = {
     "financeiro": [
         ("title_number", "Título"), ("nf_number", "NF-e"), ("order_number", "Pedido"),
         ("partner", "Cliente/Fornecedor"), ("issue_date", "Emissão"), ("due_date", "Vencimento"),
-        ("bank", "Banco"), ("wallet", "Carteira"), ("value", "Valor"), ("paid_value", "Pago"),
+        ("bank", "Banco"), ("wallet", "Carteira"), ("value", "Valor"),
+        ("contract_discount", "Desconto Contrato"), ("net_value", "Valor Líquido"), ("paid_value", "Pago"),
         ("balance", "Saldo"), ("status", "Status"), ("remittance", "Remessa gerada"),
     ],
 }
@@ -969,7 +970,7 @@ DOCUMENT_COLUMN_DEFS = {
 DOCUMENT_DEFAULT_COLS = {
     "faturamento": ["number", "order_number", "customer", "products", "items", "issue_date", "status_nf", "payment_status", "payment", "total", "volumes"],
     "compras": ["number", "supplier", "products", "items", "issue_date", "total_erpflex", "payment_status", "status"],
-    "financeiro": ["title_number", "nf_number", "order_number", "partner", "issue_date", "due_date", "bank", "wallet", "value", "balance", "remittance"],
+    "financeiro": ["title_number", "nf_number", "order_number", "partner", "issue_date", "due_date", "bank", "wallet", "value", "contract_discount", "net_value", "balance", "remittance"],
 }
 
 
@@ -1001,6 +1002,12 @@ def _module_view_settings(db, request: Request, company_id: int, module: str, co
         anchor = "payment" if module == "faturamento" else "status"
         pos = selected.index(anchor) if anchor in selected else len(selected)
         selected = selected[:pos] + ["payment_status"] + selected[pos:]
+    if not requested and module == "financeiro":
+        for new_col in ("contract_discount", "net_value"):
+            if new_col not in selected:
+                anchor = "balance" if "balance" in selected else "value"
+                pos = selected.index(anchor) if anchor in selected else len(selected)
+                selected = selected[:pos] + [new_col] + selected[pos:]
     pp = per_page if per_page in DOCUMENT_PER_PAGE else (pref.per_page if pref and pref.per_page in DOCUMENT_PER_PAGE else 50)
     if save_view and access_context(db, request).user:
         ac = access_context(db, request)
@@ -1527,6 +1534,18 @@ def _collection_contract_map(db, cid: int, partner_ids: list[int]) -> dict[int, 
     return {int(pid): bool(flag) for pid, flag in rows}
 
 
+def _collection_contract_rule_map(db, cid: int, partner_ids: list[int]) -> dict[int, dict]:
+    if not partner_ids:
+        return {}
+    rows = db.scalars(select(CollectionCustomerRule).where(
+        CollectionCustomerRule.company_id == cid, CollectionCustomerRule.partner_id.in_(partner_ids)
+    )).all()
+    return {int(r.partner_id): {
+        "has_contract": bool(r.has_collection_contract),
+        "discount_percent": max(0.0, min(float(r.contract_discount_percent or 0), 100.0)),
+    } for r in rows}
+
+
 def _collection_config(db, cid: int) -> CollectionAutomationConfig:
     cfg = db.scalar(select(CollectionAutomationConfig).where(CollectionAutomationConfig.company_id == cid).limit(1))
     if not cfg:
@@ -2015,8 +2034,23 @@ def _financial_display(db, title: FinancialTitle, partner: Partner | None, bank_
     faturamento_id = _title_faturamento_id(merged_fin)
     title_number = _title_number(merged_fin, title.erpflex_id)
     order_number = _title_order_number(merged_fin, title.document or "")
+    contract_rule = None
+    if title.kind == "RECEBER" and title.partner_id:
+        contract_rule = db.scalar(select(CollectionCustomerRule).where(
+            CollectionCustomerRule.company_id == title.company_id,
+            CollectionCustomerRule.partner_id == title.partner_id,
+            CollectionCustomerRule.has_collection_contract == True
+        ).limit(1))
+    discount_percent = max(0.0, min(float(contract_rule.contract_discount_percent or 0), 100.0)) if contract_rule else 0.0
+    gross_value = max(0.0, float(title.value or 0))
+    contract_discount_value = gross_value * discount_percent / 100.0
+    net_value = max(0.0, gross_value - contract_discount_value)
+    if contract_rule:
+        bank, bank_id = "Sem banco", ""
+        wallet, wallet_id = "CONTRATO", ""
     return {"partner": partner_name, "issue_date": issue, "bank": bank, "bank_id": bank_id, "wallet": wallet, "wallet_id": wallet_id,
             "nf_number": nf_number, "faturamento_id": faturamento_id, "title_number": title_number, "order_number": order_number,
+            "contract_discount_percent": discount_percent, "contract_discount_value": contract_discount_value, "net_value": net_value,
             "payload": payload, "detail_payload": detail}
 
 
@@ -2527,7 +2561,7 @@ def cobranca_configuracao(request: Request, saved: int = 0, auto_sent: int = 0, 
         if q.strip():
             stmt = stmt.where(or_(Partner.name.ilike(f"%{q.strip()}%"), Partner.trade_name.ilike(f"%{q.strip()}%"), Partner.cnpj_cpf.ilike(f"%{q.strip()}%")))
         customers = db.scalars(stmt.order_by(Partner.name).limit(1000)).all()
-        rules = _collection_contract_map(db, cid, [p.id for p in customers])
+        rules = _collection_contract_rule_map(db, cid, [p.id for p in customers])
         recent = db.execute(select(CollectionSendLog, FinancialTitle).join(FinancialTitle, CollectionSendLog.financial_title_id == FinancialTitle.id).where(
             CollectionSendLog.company_id == cid
         ).order_by(CollectionSendLog.sent_at.desc()).limit(30)).all()
@@ -2535,7 +2569,7 @@ def cobranca_configuracao(request: Request, saved: int = 0, auto_sent: int = 0, 
 
 
 @app.post("/financeiro/cobranca/configuracao")
-def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_before_due: int = Form(3), include_overdue: str = Form(""), resend_interval_hours: int = Form(24), subject_template: str = Form(""), body_template: str = Form(""), contract_customer_ids: list[int] = Form(default=[]), visible_customer_ids: list[int] = Form(default=[]), q: str = Form("")):
+def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_before_due: int = Form(3), include_overdue: str = Form(""), resend_interval_hours: int = Form(24), subject_template: str = Form(""), body_template: str = Form(""), contract_customer_ids: list[int] = Form(default=[]), visible_customer_ids: list[int] = Form(default=[]), contract_discount_partner_ids: list[int] = Form(default=[]), contract_discount_values: list[str] = Form(default=[]), q: str = Form("")):
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
         cfg = _collection_config(db, cid)
@@ -2548,6 +2582,14 @@ def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_
         current = {r.partner_id:r for r in db.scalars(select(CollectionCustomerRule).where(CollectionCustomerRule.company_id == cid)).all()}
         selected = {int(x) for x in contract_customer_ids}
         visible = {int(x) for x in visible_customer_ids}
+        discount_by_partner = {}
+        for raw_pid, raw_value in zip(contract_discount_partner_ids, contract_discount_values):
+            try:
+                pid = int(raw_pid)
+                value = float(str(raw_value or "0").replace(",", "."))
+            except (TypeError, ValueError):
+                continue
+            discount_by_partner[pid] = max(0.0, min(value, 100.0))
         # Segurança do filtro: altera somente clientes exibidos na tela. Clientes fora da pesquisa
         # preservam a configuração já gravada. Se um POST antigo não enviar visible_customer_ids,
         # atualiza somente os explicitamente selecionados e nunca limpa contratos silenciosamente.
@@ -2556,10 +2598,12 @@ def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_
         for pid in visible:
             rule = current.get(pid)
             should_have = pid in selected
+            discount_percent = discount_by_partner.get(pid, 0.0) if should_have else 0.0
             if not rule and should_have:
-                db.add(CollectionCustomerRule(company_id=cid, partner_id=pid, has_collection_contract=True))
+                db.add(CollectionCustomerRule(company_id=cid, partner_id=pid, has_collection_contract=True, contract_discount_percent=discount_percent))
             elif rule:
                 rule.has_collection_contract = should_have
+                rule.contract_discount_percent = discount_percent
         db.commit()
     suffix = "&q=" + quote_plus(q.strip()) if q.strip() else ""
     return RedirectResponse(f"/financeiro/cobranca/configuracao?saved=1{suffix}", status_code=303)

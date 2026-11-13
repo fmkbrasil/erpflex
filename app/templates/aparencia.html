@@ -29,15 +29,15 @@
   </section>
 
   <section class="panel">
-    <div class="panel-title"><div><h2>Editar interface do aplicativo</h2><p class="hint">Troque textos e escolha quais botões de ação devem ficar visíveis em cada tela.</p></div></div>
+    <div class="panel-title"><div><h2>Editar interface do aplicativo</h2><p class="hint">Troque textos e escolha quais botões de ação e cards do BI devem ficar visíveis em cada tela.</p></div></div>
     <div class="ui-commercial-note"><b>Modo comercial:</b> a substituição é aplicada à empresa atual e pode ser usada para adaptar o sistema à sua marca. O editor visual também reconhece textos de menu, títulos, botões, cabeçalhos, mensagens, placeholders e tooltips.</div>
-    <div class="ui-capability-grid"><div><b>Textos visíveis</b><small>Títulos, descrições, mensagens e instruções.</small></div><div><b>Botões e ações</b><small>Edite o texto ou oculte/exiba botões sem remover a função do sistema.</small></div><div><b>Navegação</b><small>Menu principal, módulos, BI e submenus.</small></div></div>
+    <div class="ui-capability-grid"><div><b>Textos visíveis</b><small>Títulos, descrições, mensagens e instruções.</small></div><div><b>Botões, ações e cards</b><small>Edite textos e oculte/exiba botões ou cards do BI sem remover a função do sistema.</small></div><div><b>Navegação</b><small>Menu principal, módulos, BI e submenus.</small></div></div>
     <form method="post" action="/aparencia/legenda" class="form-grid">
       <label>Texto atual<input name="original_text" maxlength="255" placeholder="Ex.: Plataforma Gestão Integrada" required></label>
       <label>Novo texto<input name="custom_text" maxlength="255" placeholder="Ex.: Minha Plataforma Comercial" required></label>
       <button class="btn primary" type="submit">Salvar texto</button>
     </form>
-    <div class="hint-block"><b>Atalho:</b> clique em <b>Editar interface</b> no canto de qualquer tela. Textos e botões serão destacados. Ao clicar em um botão, escolha entre <b>Editar texto</b> e <b>Ocultar botão</b>. Botões ocultos reaparecem de forma translúcida durante a edição para poderem ser restaurados.</div>
+    <div class="hint-block"><b>Atalho:</b> clique em <b>Editar interface</b> no canto de qualquer tela. Textos, botões e cards do BI serão destacados. Ao clicar em um botão, escolha entre <b>Editar texto</b> e <b>Ocultar botão</b>. Ao clicar em um card, use <b>Ocultar card</b>. Itens ocultos reaparecem de forma translúcida durante a edição para poderem ser restaurados.</div>
   </section>
 </div>
 
@@ -50,10 +50,10 @@
 </section>
 
 <section class="panel">
-  <div class="panel-title"><div><h2>Botões ocultos</h2><p class="hint">Controles ocultos por esta empresa. Eles continuam existindo no sistema e podem ser reexibidos a qualquer momento.</p></div><span>{{ hidden_controls|length }} oculto(s)</span></div>
+  <div class="panel-title"><div><h2>Itens ocultos</h2><p class="hint">Botões e cards ocultos por esta empresa. Eles continuam existindo no sistema e podem ser reexibidos a qualquer momento.</p></div><span>{{ hidden_controls|length }} oculto(s)</span></div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Botão / ação</th><th>Tela / identificador</th><th>Ação</th></tr></thead>
-    <tbody>{% for row in hidden_controls %}<tr><td><b>{{ row.custom_text or 'Botão' }}</b></td><td><code>{{ row.original_text|replace(ui_hide_prefix,'') }}</code></td><td><form method="post" action="/aparencia/controle"><input type="hidden" name="control_key" value="{{ row.original_text|replace(ui_hide_prefix,'') }}"><input type="hidden" name="control_label" value="{{ row.custom_text or 'Botão' }}"><input type="hidden" name="hidden" value="0"><button class="btn small" type="submit">Reexibir</button></form></td></tr>{% else %}<tr><td colspan="3" class="empty">Nenhum botão oculto.</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>Item / ação</th><th>Tela / identificador</th><th>Ação</th></tr></thead>
+    <tbody>{% for row in hidden_controls %}<tr><td><b>{{ row.custom_text or 'Item' }}</b></td><td><code>{{ row.original_text|replace(ui_hide_prefix,'') }}</code></td><td><form method="post" action="/aparencia/controle"><input type="hidden" name="control_key" value="{{ row.original_text|replace(ui_hide_prefix,'') }}"><input type="hidden" name="control_label" value="{{ row.custom_text or 'Item' }}"><input type="hidden" name="hidden" value="0"><button class="btn small" type="submit">Reexibir</button></form></td></tr>{% else %}<tr><td colspan="3" class="empty">Nenhum item oculto.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 {% endblock %}

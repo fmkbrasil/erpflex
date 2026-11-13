@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class SchemaState(Base):
@@ -107,6 +107,7 @@ class CollectionCustomerRule(Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
     partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id", ondelete="CASCADE"), index=True)
     has_collection_contract: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    contract_discount_percent: Mapped[float] = mapped_column(Float, default=0.0)
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (UniqueConstraint("company_id", "partner_id", name="uq_collection_customer_rule"),)
@@ -909,6 +910,7 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V13: identificação aditiva de vendedor no pedido comercial para BI e rastreabilidade.
     # V14: classificação configurável de categorias de despesas para a DRE Gerencial.
     # V15: personalização visual/legendas por empresa e expansão do controle de acesso.
+    # V16: desconto comercial por cliente com contrato de cobrança.
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
     if "partners" in inspect(engine).get_table_names():
@@ -951,6 +953,11 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
                 conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_id VARCHAR(120)"))
             if "seller_name" not in order_existing:
                 conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_name VARCHAR(180)"))
+    if "collection_customer_rules" in inspect(engine).get_table_names():
+        rule_existing = {c["name"] for c in inspect(engine).get_columns("collection_customer_rules")}
+        if "contract_discount_percent" not in rule_existing:
+            with engine.begin() as conn:
+                conn.execute(sql_text("ALTER TABLE collection_customer_rules ADD COLUMN contract_discount_percent FLOAT DEFAULT 0"))
     # V15 preserva o acesso ao BI de perfis legados que antes dependiam de dashboard.view.
     if previous_version < 15:
         with SessionLocal() as db:
