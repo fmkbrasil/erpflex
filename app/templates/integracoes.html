@@ -21,16 +21,9 @@
 </section>
 
 <section class="panel integration-panel">
-  <div class="panel-title"><div><h2>ERPFlex · Cadastros v1</h2><p class="hint">Conexão independente para cadastros mestres, inicialmente Fornecedores.</p></div><span class="badge {{ 'ok' if integrations.erpflex_v1.configured else 'erro' }}">{{ 'Pronto para teste' if integrations.erpflex_v1.configured else 'Configuração incompleta' }}</span></div>
-  <form method="post" action="/integracoes/erpflex-v1" class="form-grid">
-    <label class="span-2">URL base v1<input name="base_url" value="{{ integrations.erpflex_v1.base_url }}" required></label>
-    <label>Usuário<input name="username" value="{{ integrations.erpflex_v1.username }}" autocomplete="off" required></label>
-    <label>Senha<input type="password" name="password" autocomplete="new-password" placeholder="{{ 'Senha v1 já gravada — deixe vazio para manter' if integrations.erpflex_v1.secret_stored else ('Usando senha do ERPFlex principal — deixe vazio para herdar' if integrations.erpflex_v1.inheriting_credentials else 'Informe a senha da API v1') }}"></label>
-    <label class="check span-2"><input type="checkbox" name="active" value="1" {% if integrations.erpflex_v1.active %}checked{% endif %}><span>Integração v1 ativa<small>Usada somente pelos módulos que exigem sessão/token v1.x. Não altera o motor V7.8.</small></span></label>
-    <div class="actions span-2"><button class="btn primary" type="submit">Salvar API v1</button><button class="btn" type="button" onclick="testConn('erpflex-v1')">Testar autenticação e fornecedores</button></div>
-  </form>
-  <div class="integration-meta">Origem: <b>{{ 'Banco central' if integrations.erpflex_v1.source=='database' else ('Variáveis de ambiente' if integrations.erpflex_v1.source=='environment' else 'Fallback das credenciais principais') }}</b>{% if integrations.erpflex_v1.last_test_at %} · último teste {{ integrations.erpflex_v1.last_test_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
-  <p class="hint"><b>Importante:</b> a URL v1 é configurável. O valor padrão acompanha o servidor indicado na documentação fornecida; se sua conta utilizar outro host v1 de produção, informe-o aqui e valide pelo botão de teste antes de sincronizar Fornecedores.</p>
+  <div class="panel-title"><div><h2>Fornecedores via ERPFlex</h2><p class="hint">Consulta oficial de fornecedores integrada às mesmas credenciais do ERPFlex principal.</p></div><span class="badge {{ 'ok' if integrations.erpflex.configured else 'erro' }}">{{ 'Pronto para teste' if integrations.erpflex.configured else 'Configuração incompleta' }}</span></div>
+  <p class="hint"><b>Endpoint:</b> <code>GET /api/fornecedores/</code> (HTTP Basic Auth, páginas de 10 registros). Não é utilizada a conexão RPService nem /v1.5/fornecedor.</p>
+  <div class="actions"><button class="btn" type="button" onclick="testConn('erpflex-v1')">Testar consulta de fornecedores</button></div>
 </section>
 
 <section class="panel integration-panel">
@@ -45,6 +38,7 @@
     <div class="actions span-2"><button class="btn primary" type="submit">Salvar NF Stock</button><button class="btn" type="button" onclick="testConn('nfstock')">Testar conexão salva</button></div>
   </form>
   <div class="integration-meta">Origem atual: <b>{{ 'Banco central' if integrations.nfstock.source=='database' else 'Variáveis de ambiente' }}</b>{% if integrations.nfstock.last_test_at %} · último teste {{ integrations.nfstock.last_test_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
+  <p class="hint">Confirme o endereço NFStock no seu contrato/ambiente: a Alterdata também documenta <code>https://ms-exportacao-nfstock.alterdata.com.br</code>. A URL já salva não será substituída automaticamente.</p>
 </section>
 
 <section class="panel integration-panel">

@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy import select
 
 from .db import (
-    Delivery, DreExpenseMapping, FinancialTitle, Partner, Product, PurchaseInvoice, PurchaseItem,
-    RawRecord, SalesInvoice, SalesInvoiceItem, SalesOrder, SyncRun,
+    Delivery, DeliveryAssignment, DreExpenseMapping, FinancialTitle, Partner, Product, PurchaseInvoice, PurchaseItem,
+    RawRecord, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesInvoiceItem, SalesOrder, SyncRun,
 )
 from .utils import VERIFIED_BANK_NAMES
 
@@ -780,6 +780,38 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         seller_by_title[t.id] = seller
         seller_source_by_title[t.id] = seller_source or "não identificado"
 
+    # V1.3.56 — resolução ampliada de vendedor para o BI comercial.
+    # Mantém como prioridade o vendedor presente na própria NF/pedido; quando a NF
+    # antiga não carrega esse campo, reutiliza apenas vínculos determinísticos já
+    # encontrados no Contas a Receber da mesma NF. Como último fallback operacional,
+    # usa o vendedor atual do cadastro do cliente e sinaliza essa origem no diagnóstico.
+    invoice_receivable_sellers: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    invoice_receivable_sources: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for t in titles_all:
+        if t.kind != "RECEBER":
+            continue
+        inv = invoice_by_title.get(t.id)
+        seller = seller_by_title.get(t.id)
+        if not inv or not seller:
+            continue
+        invoice_receivable_sellers[inv.id][seller] += 1
+        invoice_receivable_sources[inv.id][seller_source_by_title.get(t.id) or "contas a receber"] += 1
+
+    def invoice_seller_bi(inv: SalesInvoice) -> tuple[str | None, str]:
+        seller, source = invoice_seller(inv)
+        if seller:
+            return seller, source
+        candidates = invoice_receivable_sellers.get(inv.id, {})
+        if len(candidates) == 1:
+            seller = next(iter(candidates))
+            src_counts = invoice_receivable_sources.get(inv.id, {})
+            src = max(src_counts, key=src_counts.get) if src_counts else "contas a receber vinculado à NF-e"
+            return seller, f"contas a receber · {src}"
+        if inv.customer_id and inv.customer_id in customer_seller_by_partner:
+            seller, _ = customer_seller_by_partner[inv.customer_id]
+            return seller, "cadastro atual do cliente (fallback)"
+        return None, "não identificado"
+
     customer_filter=int(filters.get("customer_id") or 0) or None
     supplier_filter=int(filters.get("supplier_id") or 0) or None
     state_filter=(filters.get("state") or "").strip().upper()
@@ -801,7 +833,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         matched_sales_ids = {i.sales_invoice_id for i in all_sales_items if needle in f"{i.product_code or ''} {i.description or ''}".lower()}
         matched_purchase_ids = {i.purchase_invoice_id for i in all_purchase_items if needle in f"{i.product_code or ''} {i.description or ''}".lower()}
 
-    seller_options = sorted({s for x in sales_all if (s := invoice_seller(x)[0])} | {s for s in seller_by_title.values() if s})
+    seller_options = sorted({s for x in sales_all if (s := invoice_seller_bi(x)[0])} | {s for s in seller_by_title.values() if s})
 
     def partner_ok(pid: int|None, target: int|None=None) -> bool:
         if target and pid != target: return False
@@ -815,7 +847,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         if not partner_ok(x.customer_id,customer_filter): return False
         payload=_raw_payload(raw_map,x.raw_record_id)
         if _is_cancelled(payload): return False
-        if seller_filter and seller_filter.lower() not in str(invoice_seller(x)[0] or "").lower(): return False
+        if seller_filter and seller_filter.lower() not in str(invoice_seller_bi(x)[0] or "").lower(): return False
         if matched_sales_ids is not None and x.id not in matched_sales_ids: return False
         return True
 
@@ -922,6 +954,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
     seller_sales=defaultdict(float)
     seller_sales_previous_month=defaultdict(float)
     seller_source_counts=defaultdict(int)
+    seller_previous_source_counts=defaultdict(int)
     channel_sales=defaultdict(float)
     state_sales=defaultdict(float)
     city_sales=defaultdict(float)
@@ -931,16 +964,27 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         state_sales[str((p.state if p else None) or "Sem UF")]+= _money(inv.total)
         city_sales[str((p.city if p else None) or "Sem município")]+= _money(inv.total)
         payload=_raw_payload(raw_map,inv.raw_record_id)
-        seller_name, seller_source = invoice_seller(inv)
+        seller_name, seller_source = invoice_seller_bi(inv)
         seller_source_counts[seller_source] += 1
         if seller_name:
             seller_sales[seller_name] += _money(inv.total)
         if _channel(payload):
             channel_sales[_channel(payload)] += _money(inv.total)
     for inv in sales_previous_month:
-        seller_name, _ = invoice_seller(inv)
+        seller_name, seller_source = invoice_seller_bi(inv)
+        seller_previous_source_counts[seller_source] += 1
         if seller_name:
             seller_sales_previous_month[seller_name] += _money(inv.total)
+
+    seller_current_identified_docs = sum(v for k,v in seller_source_counts.items() if k != "não identificado")
+    seller_previous_identified_docs = sum(v for k,v in seller_previous_source_counts.items() if k != "não identificado")
+    seller_current_coverage = round((seller_current_identified_docs / len(sales) * 100.0), 1) if sales else 100.0
+    seller_previous_coverage = round((seller_previous_identified_docs / len(sales_previous_month) * 100.0), 1) if sales_previous_month else 100.0
+    seller_current_total = round(sum(seller_sales.values()), 2)
+    seller_previous_identified_total = round(sum(seller_sales_previous_month.values()), 2)
+    seller_previous_all_total = round(sum(_money(x.total) for x in sales_previous_month), 2)
+    seller_previous_available = (not sales_previous_month) or seller_previous_identified_docs > 0
+    seller_growth_reliable = seller_previous_available and seller_current_coverage >= 80.0 and seller_previous_coverage >= 80.0
 
     seller_rows=[]
     for seller_name in set(seller_sales) | set(seller_sales_previous_month):
@@ -977,7 +1021,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         subcat_rev[meta["subcategory"]]+=_money(i.total)
         inv=sales_by_id.get(i.sales_invoice_id)
         if inv:
-            seller_name, _ = invoice_seller(inv)
+            seller_name, _ = invoice_seller_bi(inv)
             if seller_name:
                 seller_category[(seller_name,meta["category"])]+=_money(i.total)
             if inv.customer_id:
@@ -1083,7 +1127,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
     state_city_invoices=defaultdict(lambda: defaultdict(list))
     for inv in sales:
         invoices_by_customer[inv.customer_id].append(invoice_row(inv))
-        seller_name,_ = invoice_seller(inv)
+        seller_name,_ = invoice_seller_bi(inv)
         if seller_name:
             seller_invoices[seller_name].append(invoice_row(inv))
         partner=partners.get(inv.customer_id or -1)
@@ -1413,13 +1457,75 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             "category":category,"group":_dre_group_label(code),"group_code":code,"value":_money(t.value),"status":t.status or "—",
         })
 
-    # Logística vinculada apenas a NFs válidas do período.
+    # V1.3.56 — Logística gerencial.
+    # O período operacional prioriza a data real do roteiro. Entregas ainda não
+    # roteirizadas continuam aparecendo quando a NF-e pertence ao período, sem
+    # misturar custo de rotas de outros períodos.
     sale_ids_set=set(sales_ids)
-    deliveries=[d for d in deliveries_all if d.sales_invoice_id in sale_ids_set]
+    invoice_period_deliveries=[d for d in deliveries_all if d.sales_invoice_id in sale_ids_set]
+    deliveries_by_id={d.id:d for d in deliveries_all}
+    sales_all_by_id={x.id:x for x in sales_all}
+
+    routes_all=db.scalars(select(Route).where(Route.company_id==cid)).all()
+    period_routes=[r for r in routes_all if _in_period(r.route_date,start,end)]
+    period_route_ids=[r.id for r in period_routes]
+    routes_by_id={r.id:r for r in period_routes}
+    route_stops=db.scalars(select(RouteStop).where(RouteStop.route_id.in_(period_route_ids or [-1]))).all()
+    stops_by_route=defaultdict(list)
+    route_for_delivery={}
+    for stop in route_stops:
+        stops_by_route[stop.route_id].append(stop)
+        route=routes_by_id.get(stop.route_id)
+        if not route:
+            continue
+        current=route_for_delivery.get(stop.delivery_id)
+        current_route=routes_by_id.get(current.route_id) if current else None
+        current_key=((_date(current_route.route_date) or date.min), current_route.id) if current_route else (date.min, -1)
+        new_key=(_date(route.route_date) or date.min, route.id)
+        if current is None or new_key >= current_key:
+            route_for_delivery[stop.delivery_id]=stop
+
+    route_cost_rows=db.scalars(select(RouteCost).where(RouteCost.route_id.in_(period_route_ids or [-1]))).all()
+    route_cost_by_route={c.route_id:c for c in route_cost_rows}
+    responsibles=db.scalars(select(Responsible).where(Responsible.company_id==cid)).all()
+    responsible_by_id={r.id:r for r in responsibles}
+
+    period_route_delivery_ids={s.delivery_id for s in route_stops}
+    operational_delivery_ids={d.id for d in invoice_period_deliveries} | period_route_delivery_ids
+    deliveries=[deliveries_by_id[i] for i in operational_delivery_ids if i in deliveries_by_id]
+
+    assignments=db.scalars(select(DeliveryAssignment).where(
+        DeliveryAssignment.company_id==cid,
+        DeliveryAssignment.delivery_id.in_(list(operational_delivery_ids) or [-1])
+    )).all()
+    assignment_by_delivery={a.delivery_id:a for a in assignments}
+
     logistics_status=defaultdict(int); logistics_region=defaultdict(int)
     for d in deliveries:
-        logistics_status[str(d.status or "Sem status")]+=1; logistics_region[str(d.region or "Sem região")]+=1
-    freight=sum(_money(d.freight_cost) for d in deliveries)
+        logistics_status[str(d.status or "Sem status")]+=1
+        logistics_region[str(d.region or "Sem região")]+=1
+
+    # Custo: quando há roteiro no período, usa o custo consolidado do RouteCost.
+    # Se ainda não existem roteiros no período, usa o custo já distribuído nas
+    # entregas das NF-e do período como fallback operacional.
+    if period_routes:
+        freight=0.0
+        route_cost_fallbacks=0
+        for r in period_routes:
+            cost=route_cost_by_route.get(r.id)
+            if cost:
+                freight += _money(cost.freight_value)
+            else:
+                route_cost_fallbacks += 1
+                freight += sum(_money(deliveries_by_id[s.delivery_id].freight_cost) for s in stops_by_route.get(r.id,[]) if s.delivery_id in deliveries_by_id)
+        freight_source="Custos dos roteiros do período" + (f" · {route_cost_fallbacks} roteiro(s) usando custo distribuído nas entregas" if route_cost_fallbacks else "")
+    else:
+        freight=sum(_money(d.freight_cost) for d in invoice_period_deliveries)
+        freight_source="Custos distribuídos nas entregas das NF-e do período"
+
+    route_km=sum(float(route_cost_by_route.get(r.id).km_realized or 0) for r in period_routes if route_cost_by_route.get(r.id))
+    routed_delivery_count=len(period_route_delivery_ids)
+    unrouted_delivery_count=len([d for d in invoice_period_deliveries if d.id not in period_route_delivery_ids])
 
     # Alertas apenas com regras verificáveis a partir da base atual.
     ar_open_total=sum(max(_money(t.value)-_money(t.paid_value),0) for t in ar_open)
@@ -1592,7 +1698,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             continue
         meta=product_meta(item.product_code,item.description,getattr(item,"product_id",None))
         pkey=(meta["code"],meta["name"])
-        seller_name,_=invoice_seller(inv)
+        seller_name,_=invoice_seller_bi(inv)
         if seller_name:
             cell=seller_cat_product[seller_name][meta["category"]][pkey]
             cell["qty"]+=float(item.qty or 0); cell["value"]+=_money(item.total); cell["invoice_ids"].add(inv.id)
@@ -1658,26 +1764,95 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         purchase_product_drill.append({**cell["meta"],"qty":round(cell["qty"],3),"value":round(cell["value"],2),"documents":docs})
     purchase_product_drill.sort(key=lambda r:r["value"],reverse=True)
 
-    # Logística: status/região -> entregas -> NF-e/cliente.
+    # Logística: status/região/motorista/roteiro -> entregas -> NF-e/cliente.
+    def delivery_driver(d: Delivery) -> tuple[str, str, int | None, str | None, str | None]:
+        stop=route_for_delivery.get(d.id)
+        if stop:
+            route=routes_by_id.get(stop.route_id)
+            resp=responsible_by_id.get(route.responsible_id) if route else None
+            return (
+                (resp.name if resp else (d.responsible or "Sem motorista")),
+                "roteiro do período",
+                (route.id if route else None),
+                (route.route_date if route else None),
+                (route.status if route else None),
+            )
+        assignment=assignment_by_delivery.get(d.id)
+        if assignment:
+            resp=responsible_by_id.get(assignment.responsible_id)
+            if resp:
+                return resp.name, "atribuição atual", None, None, None
+        return (d.responsible or "Sem motorista"), "cadastro da entrega", None, None, None
+
     delivery_rows=[]
     for d in deliveries:
-        inv=sales_by_id.get(d.sales_invoice_id)
+        inv=sales_all_by_id.get(d.sales_invoice_id)
+        driver,driver_source,route_id,route_date,route_status=delivery_driver(d)
         delivery_rows.append({
-            "id":d.id,"status":d.status or "Sem status","region":d.region or "Sem região","responsible":d.responsible or "—",
-            "volumes":round(float(d.volumes or 0),2),"freight":_money(d.freight_cost),
+            "id":d.id,"status":d.status or "Sem status","region":d.region or "Sem região","responsible":driver,
+            "responsible_source":driver_source,"route_id":route_id,"route_date":route_date,"route_status":route_status,
+            "volumes":round(float(d.volumes or 0),2),"freight":_money(d.freight_cost),"km":round(float(d.km or 0),2),
             "invoice_id":inv.id if inv else None,"nf":inv.number if inv else "—",
+            "invoice_value":_money(inv.total) if inv else 0.0,
             "customer":_partner_name(partners,inv.customer_id) if inv else "Sem cadastro",
+            "carrier":str((inv.carrier if inv else None) or "Sem transportadora"),
         })
+
     logistics_status_drill=[]
     for name in sorted({r["status"] for r in delivery_rows}):
         rows=[r for r in delivery_rows if r["status"]==name]
-        logistics_status_drill.append({"name":name,"value":len(rows),"deliveries":rows})
+        logistics_status_drill.append({"name":name,"value":len(rows),"volumes":round(sum(r["volumes"] for r in rows),2),"deliveries":rows})
     logistics_status_drill.sort(key=lambda r:r["value"],reverse=True)
+
     logistics_region_drill=[]
     for name in sorted({r["region"] for r in delivery_rows}):
         rows=[r for r in delivery_rows if r["region"]==name]
-        logistics_region_drill.append({"name":name,"value":len(rows),"deliveries":rows})
+        logistics_region_drill.append({"name":name,"value":len(rows),"volumes":round(sum(r["volumes"] for r in rows),2),"deliveries":rows})
     logistics_region_drill.sort(key=lambda r:r["value"],reverse=True)
+
+    logistics_driver_drill=[]
+    for name in sorted({r["responsible"] for r in delivery_rows}):
+        rows=[r for r in delivery_rows if r["responsible"]==name]
+        logistics_driver_drill.append({
+            "name":name,"value":len(rows),"volumes":round(sum(r["volumes"] for r in rows),2),
+            "freight":round(sum(r["freight"] for r in rows),2),
+            "transported_value":round(sum(r["invoice_value"] for r in rows),2),
+            "deliveries":rows,
+        })
+    logistics_driver_drill.sort(key=lambda r:(r["value"],r["transported_value"]),reverse=True)
+
+    logistics_carrier_drill=[]
+    for name in sorted({r["carrier"] for r in delivery_rows}):
+        rows=[r for r in delivery_rows if r["carrier"]==name]
+        logistics_carrier_drill.append({
+            "name":name,"value":len(rows),"volumes":round(sum(r["volumes"] for r in rows),2),
+            "transported_value":round(sum(r["invoice_value"] for r in rows),2),"deliveries":rows,
+        })
+    logistics_carrier_drill.sort(key=lambda r:(r["value"],r["transported_value"]),reverse=True)
+
+    logistics_route_drill=[]
+    for route in sorted(period_routes,key=lambda r:(_date(r.route_date) or date.min,r.id),reverse=True):
+        rows=[]
+        for stop in stops_by_route.get(route.id,[]):
+            row=next((x for x in delivery_rows if x["id"]==stop.delivery_id),None)
+            if row:
+                rows.append(row)
+        resp=responsible_by_id.get(route.responsible_id)
+        cost=route_cost_by_route.get(route.id)
+        logistics_route_drill.append({
+            "id":route.id,"date":route.route_date,"status":route.status or "—","responsible":resp.name if resp else "Sem motorista",
+            "deliveries_count":len(rows),"volumes":round(sum(r["volumes"] for r in rows),2),
+            "transported_value":round(sum(r["invoice_value"] for r in rows),2),
+            "freight":_money(cost.freight_value) if cost else 0.0,"km":round(float(cost.km_realized or 0),2) if cost else 0.0,
+            "deliveries":rows,
+        })
+
+    transported_invoice_ids={r["invoice_id"] for r in delivery_rows if r["invoice_id"]}
+    transported_value=round(sum(_money(sales_all_by_id[i].total) for i in transported_invoice_ids if i in sales_all_by_id),2)
+    logistics_avg_freight=round(freight/len(deliveries),2) if deliveries else 0.0
+    logistics_freight_pct=_pct(freight,transported_value)
+    logistics_delivered=sum(1 for r in delivery_rows if str(r["status"]).upper() in {"ENTREGUE","CONCLUIDO","CONCLUÍDO"})
+    logistics_pending=max(len(delivery_rows)-logistics_delivered,0)
 
     # Alertas levam o usuário diretamente ao BI que contém o detalhe operacional.
     alert_target_by_title={
@@ -1787,12 +1962,12 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
                 "O Resultado gerencial parcial não deve ser tratado como lucro contábil enquanto deduções, impostos e CMV estiverem indisponíveis.",
             ],
         },
-        "commercial":{"sales_total":round(sum(seller_sales.values()),2),"previous_month_total":round(sum(seller_sales_previous_month.values()),2),"growth":_variation(sum(seller_sales.values()),sum(seller_sales_previous_month.values())),"sellers_count":len([r for r in seller_rows if r["value"]>0.005]),"orders":len(orders),"orders_value":round(sum(_money(o.total) for o in orders),2),"ticket":round(sum(_money(o.total) for o in orders)/len(orders),2) if orders else 0,"sellers":seller_dashboard[:50],"seller_categories":seller_category_rows[:100],"seller_category_groups":seller_category_groups[:50],"previous_month_start":previous_month_start,"previous_month_end":previous_month_end,"states":_rank(state_sales,limit=20),"customers_bought":len(bought_period),"new_customers":new_clients,"inactive_60":inactive_60,
-                      "seller_diagnostics":{"total_invoices":len(sales),"identified":sum(v for k,v in seller_source_counts.items() if k != "não identificado"),"unidentified":seller_source_counts.get("não identificado",0),"sources":[{"name":k,"count":v} for k,v in sorted(seller_source_counts.items(),key=lambda kv:kv[1],reverse=True)]}},
+        "commercial":{"sales_total":seller_current_total,"previous_month_total":(seller_previous_identified_total if seller_previous_available else None),"previous_month_all_total":seller_previous_all_total,"growth":(_variation(seller_current_total,seller_previous_identified_total) if seller_growth_reliable else None),"growth_reliable":seller_growth_reliable,"sellers_count":len([r for r in seller_rows if r["value"]>0.005]),"orders":len(orders),"orders_value":round(sum(_money(o.total) for o in orders),2),"ticket":round(sum(_money(o.total) for o in orders)/len(orders),2) if orders else 0,"sellers":seller_dashboard[:50],"seller_categories":seller_category_rows[:100],"seller_category_groups":seller_category_groups[:50],"previous_month_start":previous_month_start,"previous_month_end":previous_month_end,"states":_rank(state_sales,limit=20),"customers_bought":len(bought_period),"new_customers":new_clients,"inactive_60":inactive_60,
+                      "seller_diagnostics":{"total_invoices":len(sales),"identified":seller_current_identified_docs,"unidentified":seller_source_counts.get("não identificado",0),"coverage":seller_current_coverage,"sources":[{"name":k,"count":v} for k,v in sorted(seller_source_counts.items(),key=lambda kv:kv[1],reverse=True)],"previous_total_invoices":len(sales_previous_month),"previous_identified":seller_previous_identified_docs,"previous_unidentified":seller_previous_source_counts.get("não identificado",0),"previous_coverage":seller_previous_coverage,"previous_sources":[{"name":k,"count":v} for k,v in sorted(seller_previous_source_counts.items(),key=lambda kv:kv[1],reverse=True)]}},
         "customers":{"total":len(customer_ids),"bought":len(bought_period),"new":new_clients,"recovered":recovered,"inactive_30":inactive_30,"inactive_60":inactive_60,"inactive_90":inactive_90,"abc":customer_abc,"top_buyers":customer_rank[:50],"customer_category_groups":customer_category_groups[:50],"concentration":{"top5":concentration(5),"top10":concentration(10),"top20":concentration(20)}},
         "products":{"revenue":product_revenue_rows[:50],"qty":product_qty_rows[:50],"categories":_rank(cat_rev,limit=30),"subcategories":_rank(subcat_rev,limit=30),"drill_products":product_dashboard[:100],"category_drill":category_dashboard[:100],"margin_available":False,"inventory_available":False},
         "purchases":{"total":round(purchases_total,2),"docs":len(purchases),"ticket":round(purchases_total/len(purchases),2) if purchases else 0,"suppliers":purchase_supplier_drill[:30],"products":purchase_product_drill[:30],"documents":[{"id":x.id,"number":x.number,"date":x.issue_date,"partner":_partner_name(partners,x.supplier_id),"value":purchase_effective_values.get(x.id,0.0),"reconciliation":x.reconciliation_status} for x in sorted(purchases,key=lambda x:_date(x.issue_date) or date.min,reverse=True)[:100]]},
-        "logistics":{"deliveries":len(deliveries),"volumes":round(sum(float(d.volumes or 0) for d in deliveries),2),"freight":round(freight,2),"freight_pct":_pct(freight,sales_total),"status":logistics_status_drill,"regions":logistics_region_drill},
+        "logistics":{"deliveries":len(deliveries),"invoice_period_deliveries":len(invoice_period_deliveries),"routed_deliveries":routed_delivery_count,"unrouted_deliveries":unrouted_delivery_count,"routes_count":len(period_routes),"delivered":logistics_delivered,"pending":logistics_pending,"volumes":round(sum(float(d.volumes or 0) for d in deliveries),2),"freight":round(freight,2),"freight_source":freight_source,"avg_freight":logistics_avg_freight,"transported_value":transported_value,"freight_pct":logistics_freight_pct,"km":round(route_km,2),"status":logistics_status_drill,"regions":logistics_region_drill,"drivers":logistics_driver_drill[:50],"carriers":logistics_carrier_drill[:50],"routes":logistics_route_drill[:100]},
         "alerts":alerts,"unavailable":unavailable,
     }
     return result

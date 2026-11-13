@@ -16,7 +16,7 @@
   <div class="sync-overview-card {{ 'online' if worker_view.online else 'offline' }}"><span>Worker</span><strong>{{ 'Online' if worker_view.online else 'Offline' }}</strong><small>{{ worker_view.status }}</small></div>
   <div class="sync-overview-card"><span>Automação</span><strong>{{ 'Ativa' if worker_cfg and worker_cfg.active else 'Pausada' }}</strong><small>{{ worker_modules|selectattr('enabled')|list|length }} módulo(s) habilitado(s)</small></div>
   <div class="sync-overview-card"><span>Último sinal</span><strong>{% if worker_view.heartbeat_at %}{{ worker_view.heartbeat_at.strftime('%H:%M:%S') }}{% else %}—{% endif %}</strong><small>{% if worker_view.heartbeat_at %}{{ worker_view.heartbeat_at.strftime('%d/%m/%Y') }}{% else %}Worker ainda não registrou heartbeat{% endif %}</small></div>
-  <div class="sync-overview-card"><span>Integrações</span><strong>{{ ('ERPFlex ✓' if erp_configured else 'ERPFlex ✕') }}</strong><small>{{ ('Cadastros v1 ✓' if integrations.erpflex_v1.configured else 'Cadastros v1 ✕') }} · {{ ('NF Stock ✓' if nf_configured else 'NF Stock ✕') }}</small></div>
+  <div class="sync-overview-card"><span>Integrações</span><strong>{{ ('ERPFlex ✓' if erp_configured else 'ERPFlex ✕') }}</strong><small>{{ ('Fornecedores ✓' if erp_configured else 'Fornecedores ✕') }} · {{ ('NF Stock ✓' if nf_configured else 'NF Stock ✕') }}</small></div>
 </section>
 
 <section class="panel">

@@ -2,7 +2,7 @@
 {% block title %}Aparência e textos · {{ app_name }}{% endblock %}
 {% block content %}
 <section class="hero">
-  <div><h1>Aparência e textos</h1><p>Personalize a identidade visual, legendas, títulos e textos comerciais sem alterar dados ou integrações.</p></div>
+  <div><h1>Aparência e textos</h1><p>Personalize a identidade visual, legendas, títulos, textos e a visibilidade de botões sem alterar dados ou integrações.</p></div>
 </section>
 {% if request.query_params.get('saved') %}<div class="alert success">Personalização salva.</div>{% endif %}
 <div class="admin-grid ui-config-grid">
@@ -29,15 +29,15 @@
   </section>
 
   <section class="panel">
-    <div class="panel-title"><div><h2>Editar textos do aplicativo</h2><p class="hint">Troque nomenclaturas, títulos, textos de apoio e rótulos da interface inteira.</p></div></div>
+    <div class="panel-title"><div><h2>Editar interface do aplicativo</h2><p class="hint">Troque textos e escolha quais botões de ação devem ficar visíveis em cada tela.</p></div></div>
     <div class="ui-commercial-note"><b>Modo comercial:</b> a substituição é aplicada à empresa atual e pode ser usada para adaptar o sistema à sua marca. O editor visual também reconhece textos de menu, títulos, botões, cabeçalhos, mensagens, placeholders e tooltips.</div>
-    <div class="ui-capability-grid"><div><b>Textos visíveis</b><small>Títulos, descrições, mensagens e instruções.</small></div><div><b>Controles</b><small>Botões, labels, placeholders e tooltips.</small></div><div><b>Navegação</b><small>Menu principal, módulos, BI e submenus.</small></div></div>
+    <div class="ui-capability-grid"><div><b>Textos visíveis</b><small>Títulos, descrições, mensagens e instruções.</small></div><div><b>Botões e ações</b><small>Edite o texto ou oculte/exiba botões sem remover a função do sistema.</small></div><div><b>Navegação</b><small>Menu principal, módulos, BI e submenus.</small></div></div>
     <form method="post" action="/aparencia/legenda" class="form-grid">
       <label>Texto atual<input name="original_text" maxlength="255" placeholder="Ex.: Plataforma Gestão Integrada" required></label>
       <label>Novo texto<input name="custom_text" maxlength="255" placeholder="Ex.: Minha Plataforma Comercial" required></label>
       <button class="btn primary" type="submit">Salvar texto</button>
     </form>
-    <div class="hint-block"><b>Atalho:</b> clique em <b>Editar textos</b> no canto de qualquer tela. Os elementos editáveis serão destacados; clique no texto desejado e informe a nova redação.</div>
+    <div class="hint-block"><b>Atalho:</b> clique em <b>Editar interface</b> no canto de qualquer tela. Textos e botões serão destacados. Ao clicar em um botão, escolha entre <b>Editar texto</b> e <b>Ocultar botão</b>. Botões ocultos reaparecem de forma translúcida durante a edição para poderem ser restaurados.</div>
   </section>
 </div>
 
@@ -46,6 +46,14 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Texto original</th><th>Texto comercial</th><th>Ação</th></tr></thead>
     <tbody>{% for row in labels %}<tr><td>{{ row.original_text }}</td><td><b>{{ row.custom_text }}</b></td><td><form method="post" action="/aparencia/legenda/{{ row.id }}/excluir"><button class="btn small" type="submit">Restaurar padrão</button></form></td></tr>{% else %}<tr><td colspan="3" class="empty">Nenhuma legenda personalizada.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="panel">
+  <div class="panel-title"><div><h2>Botões ocultos</h2><p class="hint">Controles ocultos por esta empresa. Eles continuam existindo no sistema e podem ser reexibidos a qualquer momento.</p></div><span>{{ hidden_controls|length }} oculto(s)</span></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Botão / ação</th><th>Tela / identificador</th><th>Ação</th></tr></thead>
+    <tbody>{% for row in hidden_controls %}<tr><td><b>{{ row.custom_text or 'Botão' }}</b></td><td><code>{{ row.original_text|replace(ui_hide_prefix,'') }}</code></td><td><form method="post" action="/aparencia/controle"><input type="hidden" name="control_key" value="{{ row.original_text|replace(ui_hide_prefix,'') }}"><input type="hidden" name="control_label" value="{{ row.custom_text or 'Botão' }}"><input type="hidden" name="hidden" value="0"><button class="btn small" type="submit">Reexibir</button></form></td></tr>{% else %}<tr><td colspan="3" class="empty">Nenhum botão oculto.</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 {% endblock %}

@@ -1,6 +1,7 @@
 (function(){
   const map = window.UI_LABEL_OVERRIDES || {};
   const canCustomize = !!window.UI_CAN_CUSTOMIZE;
+  const hiddenControls = window.UI_HIDDEN_CONTROLS || {};
   const SKIP_TAGS = new Set(['SCRIPT','STYLE','TEXTAREA','CODE','PRE']);
   const UI_TEXT_SELECTOR = [
     'h1','h2','h3','h4','h5','h6','thead th','button','.btn','.topbar a','.topbar summary','.commercial-brand b','.commercial-brand small',
@@ -38,6 +39,31 @@
   }
   applyTextOverrides();
 
+  function normalizeControlText(v){return (v||'').replace(/\s+/g,' ').trim();}
+  function controlLabel(el){
+    const own=el.dataset.uiOriginalText;
+    const nested=el.querySelector && el.querySelector('[data-ui-original-text]');
+    return normalizeControlText(own || (nested && nested.dataset.uiOriginalText) || el.getAttribute('aria-label') || el.getAttribute('title') || el.value || el.innerText || el.textContent || 'Botão');
+  }
+  function hashString(value){let h=2166136261;for(let i=0;i<value.length;i++){h^=value.charCodeAt(i);h=Math.imul(h,16777619);}return (h>>>0).toString(36);}
+  function assignControlKeys(){
+    const selector='button:not(.label-editor-toggle),a.btn,input[type="submit"],input[type="button"]';
+    const counts={};
+    document.querySelectorAll(selector).forEach(el=>{
+      if(el.closest('.label-edit-popover') || el.closest('form[action="/aparencia/controle"]') || el.dataset.noUiHide!==undefined)return;
+      const label=controlLabel(el);const sig=(el.tagName||'CTRL')+'|'+hashString(label);const idx=counts[sig]||0;counts[sig]=idx+1;
+      el.dataset.uiControlKey=location.pathname+'|'+sig+'|'+idx;
+      el.dataset.uiControlLabel=label;
+    });
+  }
+  function applyHiddenControls(){
+    document.querySelectorAll('[data-ui-control-key]').forEach(el=>{
+      const key=el.dataset.uiControlKey;
+      if(Object.prototype.hasOwnProperty.call(hiddenControls,key)){el.dataset.uiHidden='1';el.hidden=true;el.classList.add('ui-control-hidden');}
+    });
+  }
+  assignControlKeys();applyHiddenControls();
+
   function directTextNodes(el){return [...el.childNodes].filter(isUiTextNode);}
   function closestEditable(start){
     let el=start instanceof Element?start:null;
@@ -50,8 +76,15 @@
     return null;
   }
   function markEditable(on){
-    document.querySelectorAll('.ui-editable-text').forEach(el=>el.classList.remove('ui-editable-text'));
-    if(!on)return;
+    document.querySelectorAll('.ui-editable-text,.ui-hideable-control,.ui-hidden-preview').forEach(el=>el.classList.remove('ui-editable-text','ui-hideable-control','ui-hidden-preview'));
+    if(!on){
+      document.querySelectorAll('[data-ui-hidden="1"]').forEach(el=>{el.hidden=true;});
+      return;
+    }
+    document.querySelectorAll('[data-ui-control-key]').forEach(el=>{
+      el.classList.add('ui-hideable-control');
+      if(el.dataset.uiHidden==='1'){el.hidden=false;el.classList.add('ui-hidden-preview');}
+    });
     const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:n=>isUiTextNode(n)?NodeFilter.FILTER_ACCEPT:NodeFilter.FILTER_REJECT});
     while(walker.nextNode()){
       const el=walker.currentNode.parentElement;
@@ -82,10 +115,41 @@
     if(!custom || custom.trim()===visible)return;
     saveLabel(original,custom.trim()).then(()=>location.reload()).catch(()=>alert('Não foi possível salvar o texto.'));
   }
+  async function saveControlVisibility(el,hidden){
+    const key=el.dataset.uiControlKey;const label=el.dataset.uiControlLabel||controlLabel(el);
+    const body=new URLSearchParams({control_key:key,control_label:label,hidden:hidden?'1':'0'});
+    const r=await fetch('/aparencia/controle',{method:'POST',headers:{'X-Requested-With':'fetch','Content-Type':'application/x-www-form-urlencoded'},body});
+    if(!r.ok)throw new Error('Falha ao salvar');
+  }
+  function removeEditPopover(){document.querySelectorAll('.label-edit-popover').forEach(x=>x.remove());}
+  function editableTargetInsideControl(el){
+    if(directTextNodes(el).length)return el;
+    const all=[...el.querySelectorAll(UI_TEXT_SELECTOR)];
+    return all.find(x=>directTextNodes(x).length)||el;
+  }
+  function openControlPopover(el){
+    removeEditPopover();
+    const pop=document.createElement('div');pop.className='label-edit-popover';pop.setAttribute('role','dialog');pop.setAttribute('aria-label','Editar botão');
+    const label=el.dataset.uiControlLabel||controlLabel(el);const isHidden=el.dataset.uiHidden==='1';
+    pop.innerHTML='<b></b><small></small><div class="label-edit-actions"></div>';
+    pop.querySelector('b').textContent=isHidden?'Botão oculto':'Editar botão';pop.querySelector('small').textContent=label;
+    const actions=pop.querySelector('.label-edit-actions');
+    if(!isHidden){const edit=document.createElement('button');edit.type='button';edit.className='btn small';edit.textContent='Editar texto';edit.addEventListener('click',()=>{removeEditPopover();promptTextEdit(editableTargetInsideControl(el));});actions.appendChild(edit);}
+    const vis=document.createElement('button');vis.type='button';vis.className='btn small '+(isHidden?'primary':'danger-soft');vis.textContent=isHidden?'Exibir botão':'Ocultar botão';
+    vis.addEventListener('click',()=>{saveControlVisibility(el,!isHidden).then(()=>location.reload()).catch(()=>alert('Não foi possível salvar a visibilidade do botão.'));});actions.appendChild(vis);
+    const cancel=document.createElement('button');cancel.type='button';cancel.className='btn small';cancel.textContent='Cancelar';cancel.addEventListener('click',removeEditPopover);actions.appendChild(cancel);
+    document.body.appendChild(pop);const r=el.getBoundingClientRect();const pw=Math.min(330,window.innerWidth-24);pop.style.width=pw+'px';let left=Math.max(12,Math.min(r.left,window.innerWidth-pw-12));let top=Math.min(window.innerHeight-pop.offsetHeight-12,r.bottom+8);if(top<12)top=12;pop.style.left=left+'px';pop.style.top=top+'px';
+  }
+
   const toggle=document.getElementById('label-editor-toggle');let editMode=false;
   if(toggle && canCustomize){
-    toggle.addEventListener('click',()=>{editMode=!editMode;document.body.classList.toggle('label-edit-mode',editMode);toggle.classList.toggle('active',editMode);toggle.textContent=editMode?'✓ Finalizar edição':'✎ Editar textos';markEditable(editMode);});
-    document.addEventListener('click',e=>{if(!editMode)return;const el=closestEditable(e.target);if(!el||el===toggle||el.closest('.label-editor-toggle'))return;e.preventDefault();e.stopPropagation();promptTextEdit(el);},true);
+    toggle.addEventListener('click',()=>{editMode=!editMode;removeEditPopover();document.body.classList.toggle('label-edit-mode',editMode);toggle.classList.toggle('active',editMode);toggle.textContent=editMode?'✓ Finalizar edição':'✎ Editar interface';markEditable(editMode);});
+    document.addEventListener('click',e=>{
+      if(!editMode || e.target.closest('.label-edit-popover'))return;
+      const control=e.target.closest('[data-ui-control-key]');
+      if(control && control!==toggle && !control.closest('.label-editor-toggle')){e.preventDefault();e.stopPropagation();openControlPopover(control);return;}
+      const el=closestEditable(e.target);if(!el||el===toggle||el.closest('.label-editor-toggle'))return;e.preventDefault();e.stopPropagation();promptTextEdit(el);
+    },true);
   }
 
   function initTablePagination(table){
@@ -134,6 +198,10 @@
       if(t.includes('produto'))return {icon:'▣',tone:'amber',hint:'Itens e documentos'};
       if(t.includes('categoria')||t.includes('subcategoria'))return {icon:'≡',tone:'orange',hint:'Categorias e produtos'};
       if(t.includes('vendedor'))return {icon:'♙',tone:'teal',hint:'Desempenho por vendedor'};
+      if(t.includes('motorista'))return {icon:'♙',tone:'teal',hint:'Entregas por motorista'};
+      if(t.includes('roteiro'))return {icon:'⇢',tone:'indigo',hint:'Roteiros e custos'};
+      if(t.includes('transportadora'))return {icon:'◇',tone:'orange',hint:'Transportadoras e entregas'};
+      if(t.includes('status'))return {icon:'✓',tone:'emerald',hint:'Situação das entregas'};
       if(t.includes('cliente')||t.includes('devedor'))return {icon:'◎',tone:'blue',hint:'Clientes e documentos'};
       if(t.includes('fornecedor'))return {icon:'◇',tone:'orange',hint:'Fornecedores e compras'};
       if(t.includes('aging')||t.includes('atras')||t.includes('vencid'))return {icon:'!',tone:'rose',hint:'Faixas e vencimentos'};

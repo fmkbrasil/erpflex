@@ -123,16 +123,15 @@ def get_erpflex_settings(db: Session, company_id: int) -> dict[str, Any]:
     if v1_row:
         v1_source = "database"
         v1_active = bool(v1_row.active)
-        v1_base_url = (v1_row.base_url or "http://servicosflex.rpinfo.com.br:9000").rstrip("/")
+        v1_base_url = (v1_row.base_url or "https://api.erpflex.com.br").rstrip("/")
         v1_username = v1_row.username or username
         v1_password = decrypt_secret(v1_row.secret_encrypted) or password
         v1_secret_stored = bool(v1_row.secret_encrypted)
     else:
         v1_source = "environment" if any((os.getenv("ERPFLEX_V1_BASE_URL"), os.getenv("ERPFLEX_V1_USER"), os.getenv("ERPFLEX_V1_PASS"))) else "fallback"
         v1_active = str(os.getenv("ERPFLEX_V1_ACTIVE") or "1").strip().lower() not in {"0", "false", "nao", "não", "off"}
-        # A documentação OpenAPI fornecida aponta este host como ambiente v1.x.
-        # É configurável porque contas/ambientes reais podem usar outro endereço.
-        v1_base_url = (os.getenv("ERPFLEX_V1_BASE_URL") or "http://servicosflex.rpinfo.com.br:9000").rstrip("/")
+        # Campos legados apenas para leitura/auditoria; não são usados na sincronização.
+        v1_base_url = (os.getenv("ERPFLEX_V1_BASE_URL") or "https://api.erpflex.com.br").rstrip("/")
         v1_username = os.getenv("ERPFLEX_V1_USER") or username
         v1_password = os.getenv("ERPFLEX_V1_PASS") or password
         v1_secret_stored = bool(os.getenv("ERPFLEX_V1_PASS"))
@@ -152,7 +151,7 @@ def save_erpflex_v1(db: Session, company_id: int, *, base_url: str, username: st
         row = IntegrationConfig(company_id=company_id, provider="ERPFLEX_V1")
         db.add(row)
     row.active = bool(active)
-    row.base_url = (base_url or "http://servicosflex.rpinfo.com.br:9000").strip().rstrip("/")
+    row.base_url = (base_url or "https://api.erpflex.com.br").strip().rstrip("/")
     row.username = (username or "").strip()
     if password:
         row.secret_encrypted = encrypt_secret(password)

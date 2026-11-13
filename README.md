@@ -629,3 +629,23 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - Quando o limite de páginas é atingido, o cursor é salvo na última página válida e a execução seguinte continua dali, evitando ficar preso em `Atualizados=200 / Novos=0`.
 - O Histórico de Sincronização passa a registrar uma nota técnica com o avanço do cursor.
 - Sem alteração de schema, tabelas, Worker scheduler, endpoints ou regras fiscais.
+
+
+## V1.3.56 — BI Comercial/Vendedores e Logística gerencial
+
+- Amplia a identificação de vendedor do BI sem alterar o ERP: NF/pedido continuam prioritários; quando ausentes, o BI aproveita o vendedor encontrado no título financeiro ligado à mesma NF-e e, como fallback operacional sinalizado, o vendedor atual do cadastro do cliente.
+- O comparativo com o mês anterior passa a medir cobertura de identificação. Se a cobertura não for suficiente, crescimento/valor comparativo não são apresentados como zero fictício.
+- O diagnóstico de vendedores mostra cobertura e origem da identificação nos períodos atual e anterior.
+- O BI Estoque e Logística passa a exibir entregas, roteiros, volumes, custo de frete, frete médio por entrega, valor transportado, relação frete/valor transportado e KM realizado.
+- Inclui drill-down por motorista, status, região, transportadora e roteiro.
+- Custos de frete priorizam RouteCost dos roteiros cuja data pertence ao período selecionado; quando não há roteiro no período, usa o custo já distribuído nas entregas vinculadas às NF-e do período.
+- Schema permanece 15; não há migração de banco.
+
+## V1.3.57 — Editor de botões e busca em contratos de cobrança
+
+- O editor visual passa a permitir, além da troca de textos, ocultar e reexibir botões de ação por empresa.
+- Botões ocultos permanecem disponíveis no modo de edição em visual translúcido e também podem ser restaurados pela tela Aparência e textos.
+- A configuração usa a estrutura existente de personalização e não altera o schema do banco.
+- Clientes com contrato de cobrança ganham pesquisa por nome/fantasia/CNPJ/CPF.
+- Ao salvar uma lista filtrada, somente os clientes exibidos têm a marcação de contrato atualizada; os demais são preservados.
+- Schema permanece 15.

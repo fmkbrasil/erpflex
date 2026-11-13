@@ -12,7 +12,7 @@
   </script>
   {% endif %}
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=23">
+  <link rel="stylesheet" href="/static/style.css?v=25">
   <style>
     :root{
       --bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};
@@ -125,9 +125,9 @@
   {% endif %}
   {% block content %}{% endblock %}
 </main>
-{% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Ative e clique em um texto da interface para editar">✎ Editar textos</button>{% endif %}
-<script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_CAN_CUSTOMIZE={{ 'true' if can_perm('ui.customize') else 'false' }};</script>
-<script src="/static/ui.js?v=23"></script>
+{% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Ative para editar textos e ocultar/exibir botões da interface">✎ Editar interface</button>{% endif %}
+<script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_HIDDEN_CONTROLS={{ ui_hidden_controls|tojson }};window.UI_CAN_CUSTOMIZE={{ 'true' if can_perm('ui.customize') else 'false' }};</script>
+<script src="/static/ui.js?v=25"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

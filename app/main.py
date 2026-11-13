@@ -58,7 +58,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.55")
+app = FastAPI(title=APP_NAME, version="1.3.57")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -149,6 +149,8 @@ def required_permission(method: str, path: str) -> str | None:
     return None
 
 
+UI_HIDE_PREFIX = "__UI_HIDE__:"
+
 DEFAULT_UI_THEME = {
     "primary_color": "#2463eb", "nav_color": "#111b2b", "secondary_color": "#edf1f6", "secondary_text_color": "#142642", "success_color": "#0c9f6e",
     "warning_color": "#c77a00", "danger_color": "#d64545", "background_color": "#f4f7fb",
@@ -158,6 +160,7 @@ DEFAULT_UI_THEME = {
 def render(request: Request, template: str, **ctx):
     theme = dict(DEFAULT_UI_THEME)
     label_overrides = {}
+    hidden_controls = {}
     with SessionLocal() as db:
         configured = auth_configured(db)
         ac = None
@@ -177,7 +180,14 @@ def render(request: Request, template: str, **ctx):
             labels = db.scalars(select(UILabelOverride).where(
                 UILabelOverride.company_id == ui_company.id, UILabelOverride.active.is_(True)
             ).order_by(UILabelOverride.original_text)).all()
-            label_overrides = {r.original_text: r.custom_text for r in labels if r.original_text and r.custom_text}
+            label_overrides = {
+                r.original_text: r.custom_text for r in labels
+                if r.original_text and r.custom_text and not r.original_text.startswith(UI_HIDE_PREFIX)
+            }
+            hidden_controls = {
+                r.original_text[len(UI_HIDE_PREFIX):]: (r.custom_text or "Botão oculto") for r in labels
+                if r.original_text and r.original_text.startswith(UI_HIDE_PREFIX)
+            }
     if ac:
         ctx.update({
             "company": ctx.get("company") or ac.company, "branch": ac.branch, "current_user": ac.user,
@@ -188,7 +198,7 @@ def render(request: Request, template: str, **ctx):
         ctx.update({"branch": None, "current_user": None, "current_profile": None, "permissions": set(),
                     "available_companies": [], "available_branches": [], "can_perm": lambda p: False})
     ctx.update({"request": request, "app_name": APP_NAME, "auth_enabled": configured,
-                "ui_theme": theme, "ui_label_overrides": label_overrides})
+                "ui_theme": theme, "ui_label_overrides": label_overrides, "ui_hidden_controls": hidden_controls})
     return templates.TemplateResponse(template, ctx)
 
 
@@ -199,7 +209,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.55", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.57", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -657,17 +667,12 @@ def integracoes_erpflex(
 
 
 @app.post("/integracoes/erpflex-v1")
-def integracoes_erpflex_v1(
-    request: Request, base_url: str = Form("http://servicosflex.rpinfo.com.br:9000"),
-    username: str = Form(""), password: str = Form(""), active: str | None = Form(None),
-):
-    with SessionLocal() as db:
-        cid, _company = company_context(db, request)
-        row = save_erpflex_v1(db, cid, base_url=base_url, username=username, password=password, active=bool(active))
-        ac = access_context(db, request)
-        add_audit(db, ac, "INTEGRACAO_SALVA", "integration", row.id, "ERPFlex Cadastros v1 atualizado; segredo não registrado no log")
-        db.commit()
-    return RedirectResponse("/integracoes?saved=erpflex-v1", status_code=303)
+def integracoes_erpflex_v1_legacy(request: Request):
+    """Endpoint legado desativado; não salvar host/credenciais de RPService."""
+    return JSONResponse(
+        {"error": "A API independente de fornecedores foi desativada. Use a configuração oficial ERPFlex."},
+        status_code=410,
+    )
 
 
 @app.post("/integracoes/nfstock")
@@ -2530,7 +2535,7 @@ def cobranca_configuracao(request: Request, saved: int = 0, auto_sent: int = 0, 
 
 
 @app.post("/financeiro/cobranca/configuracao")
-def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_before_due: int = Form(3), include_overdue: str = Form(""), resend_interval_hours: int = Form(24), subject_template: str = Form(""), body_template: str = Form(""), contract_customer_ids: list[int] = Form(default=[])):
+def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_before_due: int = Form(3), include_overdue: str = Form(""), resend_interval_hours: int = Form(24), subject_template: str = Form(""), body_template: str = Form(""), contract_customer_ids: list[int] = Form(default=[]), visible_customer_ids: list[int] = Form(default=[]), q: str = Form("")):
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
         cfg = _collection_config(db, cid)
@@ -2541,18 +2546,23 @@ def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_
         cfg.subject_template = subject_template.strip() or None
         cfg.body_template = body_template.strip() or None
         current = {r.partner_id:r for r in db.scalars(select(CollectionCustomerRule).where(CollectionCustomerRule.company_id == cid)).all()}
-        selected = set(int(x) for x in contract_customer_ids)
-        for pid in selected:
+        selected = {int(x) for x in contract_customer_ids}
+        visible = {int(x) for x in visible_customer_ids}
+        # Segurança do filtro: altera somente clientes exibidos na tela. Clientes fora da pesquisa
+        # preservam a configuração já gravada. Se um POST antigo não enviar visible_customer_ids,
+        # atualiza somente os explicitamente selecionados e nunca limpa contratos silenciosamente.
+        if not visible:
+            visible = set(selected)
+        for pid in visible:
             rule = current.get(pid)
-            if not rule:
+            should_have = pid in selected
+            if not rule and should_have:
                 db.add(CollectionCustomerRule(company_id=cid, partner_id=pid, has_collection_contract=True))
-            else:
-                rule.has_collection_contract = True
-        for pid, rule in current.items():
-            if pid not in selected:
-                rule.has_collection_contract = False
+            elif rule:
+                rule.has_collection_contract = should_have
         db.commit()
-    return RedirectResponse("/financeiro/cobranca/configuracao?saved=1", status_code=303)
+    suffix = "&q=" + quote_plus(q.strip()) if q.strip() else ""
+    return RedirectResponse(f"/financeiro/cobranca/configuracao?saved=1{suffix}", status_code=303)
 
 
 @app.post("/financeiro/cobranca/executar")
@@ -4879,12 +4889,14 @@ def appearance_page(request: Request):
     with SessionLocal() as db:
         cid, company = company_context(db, request)
         theme_row = db.scalar(select(UIThemeSetting).where(UIThemeSetting.company_id == cid).limit(1))
-        labels = db.scalars(select(UILabelOverride).where(UILabelOverride.company_id == cid).order_by(UILabelOverride.original_text)).all()
+        all_ui_rows = db.scalars(select(UILabelOverride).where(UILabelOverride.company_id == cid).order_by(UILabelOverride.original_text)).all()
+        labels = [r for r in all_ui_rows if not (r.original_text or "").startswith(UI_HIDE_PREFIX)]
+        hidden_controls = [r for r in all_ui_rows if (r.original_text or "").startswith(UI_HIDE_PREFIX) and r.active]
         theme = dict(DEFAULT_UI_THEME)
         if theme_row:
             for key in theme:
                 theme[key] = getattr(theme_row, key) or theme[key]
-    return render(request, "aparencia.html", company=company, theme_form=theme, labels=labels)
+    return render(request, "aparencia.html", company=company, theme_form=theme, labels=labels, hidden_controls=hidden_controls, ui_hide_prefix=UI_HIDE_PREFIX)
 
 
 @app.post("/aparencia/tema")
@@ -4928,6 +4940,40 @@ async def appearance_label_save(request: Request):
     if request.headers.get("x-requested-with") == "fetch":
         return JSONResponse({"ok": True, "original": original, "custom": custom})
     return RedirectResponse("/aparencia?saved=label", status_code=303)
+
+
+@app.post("/aparencia/controle")
+async def appearance_control_visibility(request: Request):
+    form = await request.form()
+    control_key = str(form.get("control_key") or "").strip()[:220]
+    control_label = str(form.get("control_label") or "Botão").strip()[:255]
+    hidden = str(form.get("hidden") or "1").strip() == "1"
+    if not control_key:
+        return JSONResponse({"error": "Controle inválido."}, status_code=400)
+    storage_key = UI_HIDE_PREFIX + control_key
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        row = db.scalar(select(UILabelOverride).where(
+            UILabelOverride.company_id == cid, UILabelOverride.original_text == storage_key
+        ).limit(1))
+        if hidden:
+            if not row:
+                row = UILabelOverride(company_id=cid, original_text=storage_key, custom_text=control_label or "Botão", active=True)
+                db.add(row)
+            else:
+                row.custom_text = control_label or row.custom_text or "Botão"
+                row.active = True
+            db.flush()
+            add_audit(db, ac, "CONTROLE_INTERFACE_OCULTADO", "ui_control", row.id, f"{control_key} · {control_label}")
+        elif row:
+            row.active = False
+            db.flush()
+            add_audit(db, ac, "CONTROLE_INTERFACE_REEXIBIDO", "ui_control", row.id, f"{control_key} · {control_label}")
+        db.commit()
+    if request.headers.get("x-requested-with") == "fetch":
+        return JSONResponse({"ok": True, "control_key": control_key, "hidden": hidden})
+    return RedirectResponse("/aparencia?saved=control", status_code=303)
 
 
 @app.post("/aparencia/legenda/{label_id}/excluir")
