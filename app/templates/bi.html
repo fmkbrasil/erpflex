@@ -223,15 +223,16 @@
 <section class="bi-section receivables-dashboard">
 <div class="bi-heading"><div><span>Gestão da carteira</span><h2>Contas a Receber</h2></div></div>
 <div class="bi-kpi-grid compact">
- {{ kpi('Total em aberto', money(data.receivables.open), data.receivables.quality.total|string+' título(s) sincronizados') }}
- {{ kpi('Total vencido', money(data.receivables.overdue), ('%.1f%% da carteira'|format(data.receivables.overdue_pct)),'danger') }}
- {{ kpi('Total a vencer', money(data.receivables.due), (data.receivables.future_open_count|string+' título(s) com vencimento futuro') if data.receivables.future_open_count else 'Nenhum título futuro em aberto') }}
+ {{ kpi('Vencido em aberto', money(data.receivables.overdue), data.receivables.overdue_count|string+' título(s) vencido(s)', 'danger') }}
+ {{ kpi('A vencer', money(data.receivables.due), data.receivables.due_count|string+' título(s) com vencimento hoje ou futuro') }}
+ {{ kpi('Total em aberto', money(data.receivables.open), data.receivables.open_count|string+' título(s) com saldo em aberto') }}
+ {{ kpi('Índice de inadimplência', '%.1f%%'|format(data.receivables.overdue_pct), 'Vencido em aberto ÷ total em aberto', 'warning') }}
  {{ kpi('Emitido no período', money(data.receivables.issued), 'Baseado na data de emissão reconhecida') }}
  {{ kpi('Recebido no período', money(data.receivables.received), 'Baixas com data no período') }}
  {{ kpi('Recebido com atraso', money(data.receivables.received_late),'','warning') }}
- {{ kpi('Índice de inadimplência', '%.1f%%'|format(data.receivables.overdue_pct), 'Sobre o saldo atual em aberto') }}
  {{ kpi('Recebido no prazo', ('%.1f%%'|format(data.receivables.on_time_pct)) if data.receivables.on_time_pct is not none else 'Dados indisponíveis', 'Entre baixas com vencimento e pagamento reconhecidos') }}
 </div>
+{% if data.receivables.without_due_count %}<div class="bi-data-warning">⚠ <b>{{ data.receivables.without_due_count }}</b> título(s), somando <b>{{ money(data.receivables.without_due) }}</b>, estão em aberto sem data de vencimento identificada. Eles compõem o <b>Total em aberto</b>, mas não são classificados como vencidos nem a vencer.</div>{% endif %}
 
 {% if data.receivables.issued is none or data.receivables.quality.issue_pct < 100 or data.receivables.quality.partner_pct < 100 %}
 <div class="bi-data-warning">⚠ Parte do financeiro ainda está incompleta. A tela agora diferencia <b>zero real</b> de <b>dado ausente</b> e tenta recuperar cliente/vendedor pelos vínculos exatos com NF-e e pedido. Use o enriquecimento do Financeiro para títulos que ainda permanecerem sem identificação.</div>
@@ -284,15 +285,16 @@
   <div class="bi-heading"><div><span>Gestão financeira</span><h2>Contas a Pagar</h2></div></div>
 
   <div class="bi-kpi-grid compact">
+    {{ kpi('Vencido em aberto', money(data.payables.overdue), data.payables.overdue_count|string+' título(s) vencido(s)', 'danger') }}
+    {{ kpi('A vencer', money(data.payables.due), data.payables.due_count|string+' título(s) com vencimento hoje ou futuro') }}
+    {{ kpi('Total em aberto', money(data.payables.open), data.payables.open_count|string+' título(s) com saldo em aberto') }}
     {{ kpi('Previsto no período', money(data.payables.planned), (data.payables.planned_count|string+' título(s) por vencimento') if data.payables.planned_count is not none else 'Data de vencimento indisponível') }}
     {{ kpi('Realizado no período', money(data.payables.realized), (data.payables.realized_count|string+' pagamento(s) por data de baixa') if data.payables.realized_count is not none else 'Data de pagamento indisponível') }}
     {{ kpi('Desvio realizado × previsto', money(data.payables.variance), 'Positivo = saiu mais caixa que o previsto', 'danger' if data.payables.variance is not none and data.payables.variance > 0 else '') }}
     {{ kpi('Execução do previsto', ('%.1f%%'|format(data.payables.execution_pct)) if data.payables.execution_pct is not none else 'Dados indisponíveis', 'Realizado ÷ previsto') }}
-    {{ kpi('Vencido em aberto', money(data.payables.overdue), data.payables.overdue_count|string+' título(s) vencido(s)', 'danger') }}
     {{ kpi('Pago em atraso no período', money(data.payables.paid_late), (data.payables.paid_late_count|string+' título(s)') if data.payables.paid_late_count is not none else 'Data de pagamento/vencimento indisponível', 'warning') }}
-    {{ kpi('Total em aberto', money(data.payables.open), 'Posição atual da carteira') }}
-    {{ kpi('Total a vencer', money(data.payables.due), 'Saldo ainda não vencido') }}
   </div>
+  {% if data.payables.without_due_count %}<div class="bi-data-warning">⚠ <b>{{ data.payables.without_due_count }}</b> título(s), somando <b>{{ money(data.payables.without_due) }}</b>, estão em aberto sem data de vencimento identificada. Eles compõem o <b>Total em aberto</b>, mas não são classificados como vencidos nem a vencer.</div>{% endif %}
 
   <article class="bi-executive-note payable-note">
     <h3>Como ler previsto × realizado</h3>

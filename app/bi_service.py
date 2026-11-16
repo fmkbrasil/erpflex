@@ -980,8 +980,15 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         return dre_mapping_by_category.get(expense_category(t), "NAO_CLASSIFICADO")
     ar_open=[t for t in ar_all if max(_money(t.value)-_money(t.paid_value),0)>0.005]
     ap_open=[t for t in ap_all if max(_money(t.value)-_money(t.paid_value),0)>0.005]
+    # Posição atual da carteira: vencido = data anterior a hoje; a vencer = hoje ou futuro.
+    # Títulos sem data de vencimento permanecem no total em aberto, mas não são classificados
+    # artificialmente como "a vencer". Eles são informados separadamente como qualidade de dados.
     ar_overdue=[t for t in ar_open if _date(t.due_date) and _date(t.due_date)<today]
     ap_overdue=[t for t in ap_open if _date(t.due_date) and _date(t.due_date)<today]
+    ar_due=[t for t in ar_open if _date(t.due_date) and _date(t.due_date)>=today]
+    ap_due=[t for t in ap_open if _date(t.due_date) and _date(t.due_date)>=today]
+    ar_without_due=[t for t in ar_open if not _date(t.due_date)]
+    ap_without_due=[t for t in ap_open if not _date(t.due_date)]
 
     sales_total=sum(_money(x.total) for x in sales)
     sales_prev_total=sum(_money(x.total) for x in sales_prev)
@@ -1354,7 +1361,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
     bank_identified=sum(1 for t in ar_all if title_bank_name(t) and not title_bank_name(t).lower().startswith(("sem banco","banco ")))
     wallet_identified=sum(1 for t in ar_all if title_wallet_name(t) and not title_wallet_name(t).lower().startswith(("sem carteira","carteira ")))
     seller_identified=sum(1 for t in ar_all if seller_by_title.get(t.id))
-    future_open=[t for t in ar_open if _date(t.due_date) and _date(t.due_date)>=today]
+    future_open=list(ar_due)
     receivable_quality={
         "total":ar_count,
         "partner":partner_identified, "partner_pct":round(partner_identified/ar_count*100,1) if ar_count else 100.0,
@@ -1958,7 +1965,11 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             "documents": [invoice_row(x) for x in sorted(sales,key=lambda x:_date(x.issue_date) or date.min,reverse=True)],
         },
         "receivables":{
-            "open":round(ar_open_total,2),"overdue":round(ar_overdue_total,2),"due":round(ar_open_total-ar_overdue_total,2),"issued":issued_receivables,"received":round(received_total,2),"received_late":round(received_late,2),
+            "open":round(ar_open_total,2),"open_count":len(ar_open),
+            "overdue":round(ar_overdue_total,2),"overdue_count":len(ar_overdue),
+            "due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ar_due),2),"due_count":len(ar_due),
+            "without_due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ar_without_due),2),"without_due_count":len(ar_without_due),
+            "issued":issued_receivables,"received":round(received_total,2),"received_late":round(received_late,2),
             "on_time_pct":_pct(received_on_time,received_total),"overdue_pct":overdue_pct,"aging":receivable_aging_details,"forecast":receivable_forecast_details,
             "future_open_count":len(future_open),"future_open_value":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in future_open),2),
             "top_balance":customer_open_drill[:20],"top_overdue":customer_overdue_drill[:20],
@@ -1978,12 +1989,15 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             } for t in sorted(ar_open,key=lambda t:_date(t.due_date) or date.max)[:250]],
         },
         "payables":{
-            "open":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_open),2),"overdue":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_overdue),2),"due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_open if t not in ap_overdue),2),
+            "open":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_open),2),"open_count":len(ap_open),
+            "overdue":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_overdue),2),"overdue_count":len(ap_overdue),
+            "due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_due),2),"due_count":len(ap_due),
+            "without_due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ap_without_due),2),"without_due_count":len(ap_without_due),
             "period":issued_payables,"paid":payable_realized,"forecast":outflows,
             "planned":payable_planned,"realized":payable_realized,"variance":payable_variance,"execution_pct":payable_execution_pct,
             "planned_count":len(ap_due_period) if payable_planned is not None else None,"realized_count":len(ap_paid_period) if payable_realized is not None else None,
             "paid_late":payable_paid_late if payable_realized is not None else None,"paid_late_count":payable_paid_late_count if payable_realized is not None else None,
-            "overdue_count":len(ap_overdue),"aging":payable_aging_details,"overdue_aging":[r for r in payable_aging_details if r["name"]!="A vencer"],
+            "aging":payable_aging_details,"overdue_aging":[r for r in payable_aging_details if r["name"]!="A vencer"],
             "short_cashflow":short_cashflow,
             "due_coverage_pct":payable_due_coverage_pct,"paid_date_coverage_pct":payable_paid_date_coverage_pct,
             "suppliers":payable_supplier_drill[:20],
