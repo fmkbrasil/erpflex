@@ -649,3 +649,14 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - Clientes com contrato de cobrança ganham pesquisa por nome/fantasia/CNPJ/CPF.
 - Ao salvar uma lista filtrada, somente os clientes exibidos têm a marcação de contrato atualizada; os demais são preservados.
 - Schema permanece 15.
+
+
+## V1.3.63 — Destaque visual para métricas secundárias no BI
+
+- melhora a leitura dos resumos expansíveis de **Contas a Receber** e **Contas a Pagar**;
+- informações secundárias como **Vencido**, **Recebido**, **Saídas**, **Entradas**, **Cobertura** e métricas contratuais passam a usar cápsulas coloridas com o mesmo nível de destaque visual do valor principal;
+- o bloco **Resultado por carteira** passa a mostrar emitido, recebido, desconto e líquido em destaque, sem depender de texto pequeno;
+- o bloco **Contas a receber por vendedor** passa a destacar vencido e inadimplência;
+- o bloco **Fluxo de caixa de curto prazo** passa a destacar saídas, entradas e cobertura em cores distintas;
+- atualização de cache dos arquivos estáticos (`style.css` / `ui.js`) para evitar uso de CSS antigo pelo navegador;
+- sem alteração de schema (permanece **16**) nem regras de negócio.

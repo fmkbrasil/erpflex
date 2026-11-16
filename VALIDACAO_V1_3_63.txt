@@ -1,0 +1,7 @@
+Validação V1.3.63
+
+- Python compilado: OK (15 arquivos)
+- Templates Jinja carregados: OK (43 templates)
+- Schema do banco: inalterado (16)
+- Static cache-busting atualizado: style.css v=28 / ui.js v=28
+- Alteração concentrada em templates e CSS do BI, sem migração de dados

@@ -1,0 +1,9 @@
+V1.3.62 - VALIDACAO
+
+- Python: todos os arquivos app/*.py compilados com sucesso.
+- Jinja2: todos os templates HTML analisados sem erro de sintaxe.
+- Regra Receber: vencido < hoje; a vencer >= hoje; sem vencimento separado.
+- Regra Pagar: vencido < hoje; a vencer >= hoje; sem vencimento separado.
+- Total em aberto preserva todos os títulos com saldo > 0, inclusive sem vencimento.
+- Indicadores de período permanecem separados da posição atual da carteira.
+- Schema: sem alteração.
