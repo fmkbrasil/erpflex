@@ -12,7 +12,7 @@
   </script>
   {% endif %}
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=28">
+  <link rel="stylesheet" href="/static/style.css?v=29">
   <style>
     :root{
       --bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};
@@ -27,7 +27,7 @@
 {% set can_logistics = can_perm('logistica.view') or can_perm('roteirizar.view') or can_perm('roteiros.view') or can_perm('painel_entregas.view') or can_perm('baixa.manage') or can_perm('painel_gerencial.view') or can_perm('relatorios.view') or can_perm('ocorrencias.view') or can_perm('responsaveis.view') or can_perm('importar.manage') %}
 {% set system_active = request.url.path.startswith('/sincronizacao') or request.url.path.startswith('/integracoes') or request.url.path.startswith('/diagnostico') or request.url.path.startswith('/aparencia') or request.url.path.startswith('/administracao') %}
 <header class="topbar app-header">
-  <a class="brand commercial-brand" href="/" aria-label="Página inicial">
+  <a class="brand commercial-brand" href="{{ home_url }}" aria-label="Página inicial autorizada">
     <span class="brand-mark">◆</span><div><b>{{ app_name }}</b><small>Núcleo central compartilhado</small></div>
   </a>
   <nav class="desktop-main-nav" aria-label="Menu principal">
@@ -45,7 +45,7 @@
         {% if can_perm('sync.manage') %}<a href="/sincronizacao" class="{% if '/sincronizacao' in request.url.path %}active{% endif %}"><b>Sincronização</b><small>Robô, módulos e histórico</small></a><a href="/integracoes" class="{% if '/integracoes' in request.url.path %}active{% endif %}"><b>Integrações</b><small>ERPFlex, NF Stock e conexões</small></a>{% endif %}
         {% if can_perm('diagnostico.view') %}<a href="/diagnostico" class="{% if '/diagnostico' in request.url.path %}active{% endif %}"><b>Diagnóstico</b><small>Banco, API e execução</small></a>{% endif %}
         {% if can_perm('ui.customize') %}<a href="/aparencia" class="{% if '/aparencia' in request.url.path %}active{% endif %}"><b>Aparência e textos</b><small>Marca, cores e nomenclaturas</small></a>{% endif %}
-        {% if can_perm('admin.manage') %}<a href="/administracao" class="{% if '/administracao' in request.url.path %}active{% endif %}"><b>Administração</b><small>Usuários, perfis e acessos</small></a>{% endif %}
+        {% if can_perm('admin.manage') %}<a href="/administracao" class="{% if '/administracao' in request.url.path %}active{% endif %}"><b>Controle de acesso</b><small>Usuários, perfis e permissões</small></a>{% endif %}
       </div>
     </details>
     {% endif %}
@@ -63,17 +63,17 @@
       {% if can_perm('compras.view') %}<a href="/compras">Compras / NF-e</a>{% endif %}
       {% if can_logistics %}<a href="/logistica/inicio">Logística</a>{% endif %}
       {% if can_perm('cadastros.view') %}<a href="/cadastros">Cadastros</a>{% endif %}
-      <div class="mobile-menu-divider">Sistema</div>
+      {% if can_perm('sync.manage') or can_perm('diagnostico.view') or can_perm('ui.customize') or can_perm('admin.manage') %}<div class="mobile-menu-divider">Sistema</div>{% endif %}
       {% if can_perm('sync.manage') %}<a href="/sincronizacao">Sincronização</a><a href="/integracoes">Integrações</a>{% endif %}
       {% if can_perm('diagnostico.view') %}<a href="/diagnostico">Diagnóstico</a>{% endif %}
       {% if can_perm('ui.customize') %}<a href="/aparencia">Aparência e textos</a>{% endif %}
-      {% if can_perm('admin.manage') %}<a href="/administracao">Administração</a>{% endif %}
+      {% if can_perm('admin.manage') %}<a href="/administracao">Controle de acesso</a>{% endif %}
       {% if auth_enabled and current_user %}<div class="mobile-menu-divider">Conta</div><a href="/minha-conta">Minha conta</a><a href="/logout">Sair</a>{% endif %}
     </div>
   </details>
 </header>
 <nav class="mobile-bottom-nav" aria-label="Navegação rápida no celular">
-  <a href="/mobile" class="{% if request.url.path == '/mobile' %}active{% endif %}"><b>⌂</b><span>Início</span></a>
+  {% if can_perm('dashboard.view') %}<a href="/mobile" class="{% if request.url.path == '/mobile' %}active{% endif %}"><b>⌂</b><span>Início</span></a>{% endif %}
   {% if can_perm('bi.view') %}<a href="/bi/visao-geral" class="{% if request.url.path.startswith('/bi') %}active{% endif %}"><b>▦</b><span>BI</span></a>{% endif %}
   {% if can_perm('faturamento.view') %}<a href="/faturamento" class="{% if request.url.path.startswith('/faturamento') %}active{% endif %}"><b>↗</b><span>Faturamento</span></a>{% endif %}
   {% if can_perm('financeiro.view') %}<a href="/financeiro" class="{% if request.url.path.startswith('/financeiro') %}active{% endif %}"><b>$</b><span>Financeiro</span></a>{% endif %}
@@ -127,7 +127,7 @@
 </main>
 {% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Ative para editar textos e ocultar/exibir botões da interface">✎ Editar interface</button>{% endif %}
 <script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_HIDDEN_CONTROLS={{ ui_hidden_controls|tojson }};window.UI_CAN_CUSTOMIZE={{ 'true' if can_perm('ui.customize') else 'false' }};</script>
-<script src="/static/ui.js?v=28"></script>
+<script src="/static/ui.js?v=29"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

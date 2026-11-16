@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Acesso não autorizado · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="panel access-denied-panel">
+  <div class="access-denied-icon">🔒</div>
+  <div>
+    <h1>Acesso não autorizado</h1>
+    <p>Seu perfil não possui permissão para abrir esta área ou executar esta operação.</p>
+    {% if required_permission_name %}<div class="access-denied-perm"><span>Permissão necessária</span><b>{{ required_permission_name }}</b></div>{% endif %}
+    <div class="actions"><a class="btn primary" href="{{ safe_next }}">Ir para um módulo permitido</a><a class="btn" href="/minha-conta">Minha conta</a></div>
+  </div>
+</section>
+{% endblock %}

@@ -31,7 +31,7 @@ from .db import (
     Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat,
     UserBranchAccess, UserCompanyAccess, UserViewPreference, UIThemeSetting, UILabelOverride, create_sqlite_backup, database_status, init_db
 )
-from .access import access_context, add_audit, auth_configured, can, current_user
+from .access import access_context, add_audit, auth_configured, can, current_user, first_allowed_path
 from .security import hash_password, verify_password
 from .sync_service import start_sync, start_sync_batch, recover_interrupted_sync_runs, page_index_summary, _purchase_items_from_record, _purchase_item_value, _enrich_customer_master, _partner
 from .integration_settings import (
@@ -58,7 +58,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.63")
+app = FastAPI(title=APP_NAME, version="1.3.64")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -97,9 +97,15 @@ async def auth_middleware(request: Request, call_next):
                 return RedirectResponse("/login", status_code=303)
             required = required_permission(request.method, path)
             if required and not can(ctx, required):
+                try:
+                    add_audit(db, ctx, "ACESSO_NEGADO", "route", path, f"{request.method.upper()} exige {required}")
+                    db.commit()
+                except Exception:
+                    db.rollback()
                 if path.startswith("/api/"):
                     return JSONResponse({"error": "sem permissão", "permission": required}, status_code=403)
-                return HTMLResponse("Acesso não autorizado para este módulo.", status_code=403)
+                safe = first_allowed_path(ctx, mobile=_is_mobile_request(request))
+                return RedirectResponse(f"/sem-acesso?permission={quote_plus(required)}&next={quote_plus(safe)}", status_code=303)
     return await call_next(request)
 
 
@@ -109,7 +115,13 @@ app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, same_site="lax", ht
 
 def required_permission(method: str, path: str) -> str | None:
     method = method.upper()
-    rules = [
+    # Regras específicas devem vir antes dos prefixos gerais.
+    if path == "/":
+        return "dashboard.view"
+    if path == "/mobile":
+        return "dashboard.view"
+
+    exact_or_prefix = [
         ("/administracao", "admin.manage"),
         ("/aparencia", "ui.customize"),
         ("/dashboard-gerencial", "bi.view"),
@@ -117,10 +129,15 @@ def required_permission(method: str, path: str) -> str | None:
         ("/sincronizacao", "sync.manage"),
         ("/integracoes", "sync.manage"),
         ("/sistema/backup", "admin.manage"),
+        ("/financeiro/cobranca", "financeiro.manage"),
+        ("/financeiro/enriquecer", "financeiro.manage"),
+        ("/financeiro/lote", "financeiro.manage"),
+        ("/faturamento/atualizar-itens", "faturamento.manage"),
+        ("/compras/atualizar-itens", "compras.manage"),
         ("/cadastros", "cadastros.view"),
-        ("/faturamento", "faturamento.view"),
-        ("/financeiro", "financeiro.view"),
-        ("/compras", "compras.view"),
+        ("/faturamento", "faturamento.manage" if method != "GET" else "faturamento.view"),
+        ("/financeiro", "financeiro.manage" if method != "GET" else "financeiro.view"),
+        ("/compras", "compras.manage" if method != "GET" else "compras.view"),
         ("/importar-logistica", "importar.manage"),
         ("/roteirizar", "roteirizar.manage" if method != "GET" else "roteirizar.view"),
         ("/painel-entregas", "painel_entregas.view"),
@@ -141,9 +158,7 @@ def required_permission(method: str, path: str) -> str | None:
         ("/docs", "diagnostico.view"),
         ("/openapi.json", "diagnostico.view"),
     ]
-    if path == "/":
-        return "dashboard.view"
-    for prefix, perm in rules:
+    for prefix, perm in exact_or_prefix:
         if path.startswith(prefix):
             return perm
     return None
@@ -193,10 +208,11 @@ def render(request: Request, template: str, **ctx):
             "company": ctx.get("company") or ac.company, "branch": ac.branch, "current_user": ac.user,
             "current_profile": ac.profile, "permissions": ac.permissions, "available_companies": ac.companies,
             "available_branches": ac.branches, "can_perm": lambda p: can(ac, p),
+            "home_url": first_allowed_path(ac, mobile=False),
         })
     else:
         ctx.update({"branch": None, "current_user": None, "current_profile": None, "permissions": set(),
-                    "available_companies": [], "available_branches": [], "can_perm": lambda p: False})
+                    "available_companies": [], "available_branches": [], "can_perm": lambda p: False, "home_url": "/"})
     ctx.update({"request": request, "app_name": APP_NAME, "auth_enabled": configured,
                 "ui_theme": theme, "ui_label_overrides": label_overrides, "ui_hidden_controls": hidden_controls})
     return templates.TemplateResponse(template, ctx)
@@ -209,7 +225,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.63", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.64", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -230,7 +246,8 @@ def login(request: Request, user: str = Form(""), password: str = Form(""), mobi
             request.session["company_id"] = ac.company.id
             if ac.branch:
                 request.session["branch_id"] = ac.branch.id
-            return RedirectResponse("/mobile" if (mobile_hint == "1" or _is_mobile_request(request)) else "/", status_code=303)
+            landing = first_allowed_path(ac, mobile=(mobile_hint == "1" or _is_mobile_request(request)))
+            return RedirectResponse(landing, status_code=303)
     return render(request, "login.html", error="Usuário ou senha inválidos.")
 
 
@@ -238,6 +255,12 @@ def login(request: Request, user: str = Form(""), password: str = Form(""), mobi
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/sem-acesso", response_class=HTMLResponse)
+def sem_acesso(request: Request, permission: str = "", next: str = "/"):
+    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
+    return render(request, "sem_acesso.html", required_permission_name=permission, safe_next=safe_next)
 
 
 def _dashboard_counts(db, cid: int) -> dict:
@@ -4904,23 +4927,64 @@ def diagnostico(request: Request):
                   erpflex_bridge_exists=(Path(__file__).resolve().parent.parent / "bin" / ("erpflex_v78_bridge_windows.exe" if os.name == "nt" else "erpflex_v78_bridge")).exists())
 
 
-PERMISSION_CATALOG = [
-    ("dashboard.view", "Início / indicadores"), ("bi.view", "BI Gerencial / DRE"),
-    ("sync.manage", "Sincronização ERPFlex / NF Stock"),
-    ("cadastros.view", "Cadastros"), ("faturamento.view", "Faturamento"),
-    ("financeiro.view", "Financeiro"), ("compras.view", "Compras / NF-e"),
-    ("logistica.view", "Consultar logística"), ("logistica.edit", "Editar logística"),
-    ("roteirizar.view", "Consultar Roteirizador"), ("roteirizar.manage", "Classificar, vincular e montar roteiros"),
-    ("importar.manage", "Importação Excel de contingência"), ("painel_entregas.view", "Painel de Entregas"),
-    ("painel_gerencial.view", "Painel Gerencial de Logística"), ("relatorios.view", "Relatórios Gerenciais de Logística"),
-    ("roteiros.view", "Consultar roteiros e custos"), ("roteiros.manage", "Criar / iniciar / finalizar roteiros e custos"),
-    ("baixa.manage", "Baixa de entregas"), ("ocorrencias.view", "Consultar ocorrências"),
-    ("ocorrencias.manage", "Resolver ocorrências"), ("responsaveis.view", "Consultar responsáveis"),
-    ("responsaveis.manage", "Gerenciar responsáveis"), ("regras.manage", "Gerenciar regras de entrega"),
-    ("parametros.manage", "Gerenciar parâmetros logísticos"), ("diagnostico.view", "Diagnóstico"),
-    ("api.read", "Consumir API interna somente leitura"), ("ui.customize", "Personalizar cores e legendas da interface"),
-    ("admin.manage", "Administração de usuários, perfis, empresas e filiais"),
+PERMISSION_GROUPS = [
+    ("Geral", [
+        ("dashboard.view", "Início / indicadores", "Visualizar a página inicial e seus indicadores."),
+        ("bi.view", "BI Gerencial / DRE", "Consultar todos os painéis e análises do BI."),
+    ]),
+    ("Comercial e Financeiro", [
+        ("cadastros.view", "Cadastros", "Consultar clientes, fornecedores, produtos e demais cadastros."),
+        ("faturamento.view", "Faturamento — consultar", "Consultar NF-e de saída e DANFE."),
+        ("faturamento.manage", "Faturamento — operar", "Atualizar/reprocessar itens e executar ações operacionais do faturamento."),
+        ("financeiro.view", "Financeiro — consultar", "Consultar contas a receber, contas a pagar, despesas e boletos."),
+        ("financeiro.manage", "Financeiro — operar", "Enriquecer títulos, configurar cobrança, gerar/enviar boletos e executar ações em lote."),
+        ("compras.view", "Compras — consultar", "Consultar NF-e de entrada e detalhes de compras."),
+        ("compras.manage", "Compras — operar", "Atualizar/reprocessar itens das compras."),
+    ]),
+    ("Logística", [
+        ("logistica.view", "Consultar logística", "Visualizar entregas e ajustes logísticos."),
+        ("logistica.edit", "Editar logística", "Alterar dados operacionais de logística."),
+        ("roteirizar.view", "Consultar Roteirizador", "Visualizar classificação e roteirização."),
+        ("roteirizar.manage", "Operar Roteirizador", "Classificar, vincular responsáveis e montar roteiros."),
+        ("importar.manage", "Importação Excel", "Executar importação de contingência."),
+        ("painel_entregas.view", "Painel de Entregas", "Consultar painel operacional de entregas."),
+        ("painel_gerencial.view", "Painel Gerencial", "Consultar gestão e indicadores de logística."),
+        ("relatorios.view", "Relatórios Gerenciais", "Consultar e imprimir relatórios de logística."),
+        ("roteiros.view", "Consultar roteiros e custos", "Visualizar roteiros, custos e KM."),
+        ("roteiros.manage", "Gerenciar roteiros e custos", "Criar, iniciar, finalizar e alterar roteiros/custos."),
+        ("baixa.manage", "Baixa de entregas", "Executar baixa e reprogramação de entregas."),
+        ("ocorrencias.view", "Consultar ocorrências", "Visualizar ocorrências de entrega."),
+        ("ocorrencias.manage", "Resolver ocorrências", "Criar/alterar/resolver ocorrências."),
+        ("responsaveis.view", "Consultar responsáveis", "Visualizar motoristas e transportadoras."),
+        ("responsaveis.manage", "Gerenciar responsáveis", "Cadastrar/alterar responsáveis."),
+        ("regras.manage", "Gerenciar regras de entrega", "Alterar regras automáticas de entrega."),
+        ("parametros.manage", "Gerenciar parâmetros logísticos", "Alterar parâmetros gerais da logística."),
+    ]),
+    ("Sistema", [
+        ("sync.manage", "Sincronização e integrações", "Executar sincronizações e configurar integrações."),
+        ("diagnostico.view", "Diagnóstico", "Consultar status técnico, API e banco."),
+        ("api.read", "API interna — leitura", "Consumir endpoints internos de consulta."),
+        ("ui.customize", "Personalizar interface", "Editar cores, textos e visibilidade de componentes."),
+        ("admin.manage", "Controle de acesso", "Gerenciar usuários, perfis, empresas, filiais e permissões."),
+    ]),
 ]
+PERMISSION_CATALOG = [(perm, label) for _group, items in PERMISSION_GROUPS for perm, label, _description in items]
+PERMISSION_DESCRIPTIONS = {perm: description for _group, items in PERMISSION_GROUPS for perm, _label, description in items}
+PERMISSION_DEPENDENCIES = {
+    "faturamento.manage": {"faturamento.view"},
+    "financeiro.manage": {"financeiro.view"},
+    "compras.manage": {"compras.view"},
+    "logistica.edit": {"logistica.view"},
+    "roteirizar.manage": {"roteirizar.view", "logistica.view"},
+    "roteiros.manage": {"roteiros.view", "logistica.view"},
+    "baixa.manage": {"logistica.view"},
+    "ocorrencias.manage": {"ocorrencias.view", "logistica.view"},
+    "responsaveis.manage": {"responsaveis.view", "logistica.view"},
+    "regras.manage": {"logistica.view"},
+    "parametros.manage": {"logistica.view"},
+    "importar.manage": {"logistica.view"},
+}
+
 
 
 def _valid_hex_color(value: str, fallback: str) -> str:
@@ -5064,6 +5128,8 @@ def administracao(request: Request):
                               .where(Company.id.in_(allowed_company_ids)).order_by(Company.name, Branch.name)).all()
         profiles = db.scalars(select(AccessProfile).where(AccessProfile.active.is_(True)).order_by(AccessProfile.name)).all()
         profile_permissions = {p.id: set(db.scalars(select(ProfilePermission.permission).where(ProfilePermission.profile_id == p.id)).all()) for p in profiles}
+        bootstrap_mode = not auth_configured(db)
+        assignable_profiles = list(profiles) if (bootstrap_mode or (ac.user and ac.user.is_superuser)) else [p for p in profiles if "*" not in profile_permissions.get(p.id, set())]
         if ac.user and ac.user.is_superuser:
             users = db.scalars(select(AppUser).order_by(AppUser.username)).all()
         else:
@@ -5084,9 +5150,30 @@ def administracao(request: Request):
             ).all()
         audit = db.execute(select(AuditLog, AppUser).outerjoin(AppUser, AuditLog.user_id == AppUser.id)
                            .where(AuditLog.company_id.in_(allowed_company_ids)).order_by(AuditLog.id.desc()).limit(80)).all()
+        effective_access = {}
+        for u in users:
+            rows = []
+            for access_row, company_row, profile_row in user_access.get(u.id, []):
+                perms = {"*"} if u.is_superuser else profile_permissions.get(profile_row.id, set())
+                rows.append({
+                    "company": company_row, "profile": profile_row, "active": access_row.active,
+                    "permissions": perms,
+                    "modules": {
+                        "inicio": "*" in perms or "dashboard.view" in perms,
+                        "bi": "*" in perms or "bi.view" in perms,
+                        "faturamento": "*" in perms or "faturamento.view" in perms,
+                        "financeiro": "*" in perms or "financeiro.view" in perms,
+                        "compras": "*" in perms or "compras.view" in perms,
+                        "logistica": "*" in perms or any(p in perms for p in ["logistica.view","roteirizar.view","roteiros.view","painel_entregas.view","painel_gerencial.view","relatorios.view","ocorrencias.view","responsaveis.view"]),
+                        "cadastros": "*" in perms or "cadastros.view" in perms,
+                        "sistema": "*" in perms or any(p in perms for p in ["sync.manage","diagnostico.view","ui.customize","admin.manage"]),
+                    }
+                })
+            effective_access[u.id] = rows
     return render(request, "administracao.html", companies=companies, branches=branches, profiles=profiles,
-                  profile_permissions=profile_permissions, users=users, user_access=user_access, user_branches=user_branches,
-                  permission_catalog=PERMISSION_CATALOG, audit=audit)
+                  profile_permissions=profile_permissions, profiles_assignable=assignable_profiles, users=users, user_access=user_access, user_branches=user_branches,
+                  permission_catalog=PERMISSION_CATALOG, permission_groups=PERMISSION_GROUPS, permission_descriptions=PERMISSION_DESCRIPTIONS,
+                  effective_access=effective_access, audit=audit)
 
 
 @app.post("/administracao/empresa")
@@ -5143,7 +5230,10 @@ def admin_filial(request: Request, company_id: int = Form(...), name: str = Form
 @app.post("/administracao/perfil")
 def admin_perfil(request: Request, name: str = Form(...), description: str = Form(""), permissions: list[str] = Form([])):
     valid = {p for p, _ in PERMISSION_CATALOG}
-    chosen = [p for p in permissions if p in valid]
+    chosen_set = {p for p in permissions if p in valid}
+    for permission in list(chosen_set):
+        chosen_set.update(PERMISSION_DEPENDENCIES.get(permission, set()))
+    chosen = sorted(chosen_set)
     with SessionLocal() as db:
         ac = access_context(db, request)
         profile = db.scalar(select(AccessProfile).where(func.lower(AccessProfile.name) == name.strip().lower()).limit(1))
@@ -5162,6 +5252,12 @@ def admin_perfil(request: Request, name: str = Form(...), description: str = For
     return RedirectResponse("/administracao", status_code=303)
 
 
+def _profile_has_full_access(db, profile_id: int) -> bool:
+    return db.scalar(select(ProfilePermission.id).where(
+        ProfilePermission.profile_id == profile_id, ProfilePermission.permission == "*"
+    ).limit(1)) is not None
+
+
 @app.post("/administracao/usuario")
 def admin_usuario(request: Request, username: str = Form(...), name: str = Form(""), email: str = Form(""),
                   password: str = Form(...), company_id: int = Form(...), profile_id: int = Form(...), branch_ids: list[int] = Form([])):
@@ -5176,6 +5272,8 @@ def admin_usuario(request: Request, username: str = Form(...), name: str = Form(
             return JSONResponse({"error": "empresa não autorizada"}, status_code=403)
         if not profile or not company:
             return JSONResponse({"error": "empresa/perfil inválido"}, status_code=400)
+        if _profile_has_full_access(db, profile.id) and auth_configured(db) and not (ac.user and ac.user.is_superuser):
+            return JSONResponse({"error": "somente superusuário pode atribuir perfil de acesso total"}, status_code=403)
         user = AppUser(username=username.strip(), name=name.strip() or username.strip(), email=email.strip() or None, password_hash=hash_password(password))
         db.add(user); db.flush()
         db.add(UserCompanyAccess(user_id=user.id, company_id=company_id, profile_id=profile_id))
@@ -5199,6 +5297,12 @@ def admin_usuario_acesso(request: Request, user_id: int, company_id: int = Form(
             return JSONResponse({"error": "empresa não autorizada"}, status_code=403)
         if not user or not profile or not company:
             return JSONResponse({"error": "dados inválidos"}, status_code=400)
+        if user.is_superuser and not (ac.user and ac.user.is_superuser):
+            return JSONResponse({"error": "somente superusuário pode alterar acesso de outro superusuário"}, status_code=403)
+        if ac.user and ac.user.id == user_id and not ac.user.is_superuser:
+            return JSONResponse({"error": "não é permitido alterar o próprio perfil de acesso"}, status_code=400)
+        if _profile_has_full_access(db, profile.id) and not (ac.user and ac.user.is_superuser):
+            return JSONResponse({"error": "somente superusuário pode atribuir perfil de acesso total"}, status_code=403)
         access = db.scalar(select(UserCompanyAccess).where(UserCompanyAccess.user_id == user_id, UserCompanyAccess.company_id == company_id).limit(1))
         if not access:
             db.add(UserCompanyAccess(user_id=user_id, company_id=company_id, profile_id=profile_id))
@@ -5223,6 +5327,8 @@ def admin_usuario_toggle(request: Request, user_id: int):
         user = db.get(AppUser, user_id)
         if not user:
             return JSONResponse({"error": "usuário não encontrado"}, status_code=404)
+        if user.is_superuser and not (ac.user and ac.user.is_superuser):
+            return JSONResponse({"error": "somente superusuário pode alterar outro superusuário"}, status_code=403)
         if not (ac.user and ac.user.is_superuser):
             allowed_ids = {c.id for c in ac.companies}
             visible = db.scalar(select(UserCompanyAccess.id).where(UserCompanyAccess.user_id == user_id, UserCompanyAccess.company_id.in_(allowed_ids)).limit(1))
@@ -5245,6 +5351,8 @@ def admin_usuario_senha(request: Request, user_id: int, new_password: str = Form
         user = db.get(AppUser, user_id)
         if not user:
             return JSONResponse({"error": "usuário não encontrado"}, status_code=404)
+        if user.is_superuser and not (ac.user and ac.user.is_superuser):
+            return JSONResponse({"error": "somente superusuário pode redefinir senha de outro superusuário"}, status_code=403)
         if not (ac.user and ac.user.is_superuser):
             allowed_ids = {c.id for c in ac.companies}
             visible = db.scalar(select(UserCompanyAccess.id).where(UserCompanyAccess.user_id == user_id, UserCompanyAccess.company_id.in_(allowed_ids)).limit(1))

@@ -660,3 +660,15 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - o bloco **Fluxo de caixa de curto prazo** passa a destacar saídas, entradas e cobertura em cores distintas;
 - atualização de cache dos arquivos estáticos (`style.css` / `ui.js`) para evitar uso de CSS antigo pelo navegador;
 - sem alteração de schema (permanece **16**) nem regras de negócio.
+
+
+## V1.3.64 — Controle de acesso ao app
+
+- centraliza usuários, perfis, empresas, filiais e permissões em uma tela de controle de acesso;
+- cria mapa de acesso por módulo;
+- separa permissões de **consulta** e **operação** para Faturamento, Financeiro e Compras;
+- bloqueia operações no backend e oculta ações não autorizadas na interface;
+- registra tentativas de acesso negado em auditoria;
+- corrige proteção do `/mobile` e direciona o login ao primeiro módulo permitido;
+- protege superusuários contra alteração por administradores comuns;
+- schema **17**, com migração de permissões para preservar perfis existentes.

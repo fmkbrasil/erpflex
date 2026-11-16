@@ -1,8 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Administração · {{ app_name }}{% endblock %}
+{% block title %}Controle de acesso · {{ app_name }}{% endblock %}
+{% macro permission_selector(prefix='new') %}
+<div class="permission-groups">
+  {% for group,items in permission_groups %}
+  <section class="permission-group" data-permission-group>
+    <div class="permission-group-head"><h3>{{ group }}</h3><div class="permission-group-actions"><button type="button" data-check-group>Marcar tudo</button><button type="button" data-uncheck-group>Limpar</button></div></div>
+    <div class="permission-grid grouped">
+      {% for perm,label,description in items %}
+      <label class="check"><input type="checkbox" name="permissions" value="{{perm}}"> <span><b>{{label}}</b><small>{{description}}</small><span class="perm-code">{{perm}}</span></span></label>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endmacro %}
+{% macro permission_selector_edit(profile) %}
+<div class="permission-groups">
+  {% for group,items in permission_groups %}
+  <section class="permission-group" data-permission-group>
+    <div class="permission-group-head"><h3>{{ group }}</h3><div class="permission-group-actions"><button type="button" data-check-group>Marcar tudo</button><button type="button" data-uncheck-group>Limpar</button></div></div>
+    <div class="permission-grid grouped">
+      {% for perm,label,description in items %}
+      <label class="check"><input type="checkbox" name="permissions" value="{{perm}}" {% if perm in profile_permissions[profile.id] %}checked{% endif %}> <span><b>{{label}}</b><small>{{description}}</small><span class="perm-code">{{perm}}</span></span></label>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endmacro %}
 {% block content %}
-<div class="page-head"><div><h1>Administração e controle de acesso</h1><p>Defina quem pode consultar ou operar cada módulo, incluindo BI, sincronização, logística e personalização visual.</p></div></div>
-<section class="panel access-summary"><div class="panel-title"><div><h2>Como funciona</h2><p class="hint">1. Crie um perfil com as permissões desejadas. 2. Crie ou ajuste o usuário. 3. Vincule empresa, perfil e filiais autorizadas. Superusuários mantêm acesso total.</p></div></div></section>
+<div class="page-head"><div><h1>Controle de acesso ao app</h1><p>Defina quem entra na plataforma, quais empresas e filiais cada usuário pode acessar e quais módulos podem ser apenas consultados ou operados.</p></div></div>
+<section class="panel access-summary"><div class="panel-title"><div><h2>Segurança por perfil</h2><p class="hint">O bloqueio é aplicado no backend. Ocultar um menu não concede nem remove acesso: uma URL direta também é validada pela permissão do perfil.</p></div></div>
+<div class="access-help"><b>Consulta × operação:</b> Faturamento, Financeiro e Compras agora distinguem permissão de leitura da permissão para executar ações. Perfis existentes foram preservados na atualização; nos novos perfis você pode liberar somente consulta.</div></section>
+
+<section class="panel"><div class="panel-title"><div><h2>Mapa de acesso dos usuários</h2><p class="hint">Resumo rápido do que cada usuário consegue abrir em cada empresa.</p></div></div><div class="table-wrap"><table class="access-matrix"><thead><tr><th>Usuário</th><th>Empresa / Perfil</th><th>Início</th><th>BI</th><th>Faturamento</th><th>Financeiro</th><th>Compras</th><th>Logística</th><th>Cadastros</th><th>Sistema</th></tr></thead><tbody>
+{% for u in users %}
+  {% for row in effective_access.get(u.id,[]) %}
+  <tr><td>{% if loop.first %}<b>{{u.name or u.username}}</b><small>@{{u.username}}</small>{% endif %}</td><td><b>{{row.company.trade_name or row.company.name}}</b><small>{{row.profile.name}}{% if not row.active %} · acesso inativo{% endif %}</small></td>
+  {% for key in ['inicio','bi','faturamento','financeiro','compras','logistica','cadastros','sistema'] %}<td><span class="access-dot {% if row.modules[key] and row.active %}ok{% endif %}">{{'✓' if row.modules[key] and row.active else '—'}}</span></td>{% endfor %}</tr>
+  {% else %}<tr><td><b>{{u.name or u.username}}</b><small>@{{u.username}}</small></td><td colspan="9">Sem acesso empresarial.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="10">Nenhum usuário cadastrado.</td></tr>{% endfor %}
+</tbody></table></div></section>
 
 <div class="admin-grid">
   {% if current_user and current_user.is_superuser %}<section class="panel"><h2>Nova empresa</h2><form method="post" action="/administracao/empresa" class="form-grid">
@@ -19,29 +57,41 @@
 </tbody></table></div></section>
 
 <div class="admin-grid">
-<section class="panel"><h2>Novo perfil</h2><form method="post" action="/administracao/perfil">
+<section class="panel"><h2>Novo perfil de acesso</h2><p class="hint">Crie, por exemplo, “Financeiro consulta”, “Comercial”, “Expedição” ou “Gerência”.</p><form method="post" action="/administracao/perfil">
   <label>Nome<input name="name" required></label><label>Descrição<input name="description"></label>
-  <div class="permission-grid">{% for perm,label in permission_catalog %}<label class="check"><input type="checkbox" name="permissions" value="{{perm}}"> <span><b>{{label}}</b><small>{{perm}}</small></span></label>{% endfor %}</div>
+  {{ permission_selector() }}
   <button class="btn primary" type="submit">Salvar perfil</button>
 </form></section>
-<section class="panel"><h2>Perfis existentes</h2>{% for p in profiles %}<div class="profile-card"><div><b>{{p.name}}</b>{% if p.system %}<span class="badge">Sistema protegido</span>{% endif %}<small>{{p.description or ''}}</small></div><div class="perm-list">{% for perm in profile_permissions[p.id] %}<span>{{perm}}</span>{% endfor %}</div>{% if not p.system %}<details style="margin-top:8px"><summary>Editar permissões</summary><form method="post" action="/administracao/perfil" style="margin-top:9px"><input type="hidden" name="name" value="{{p.name}}"><label>Descrição<input name="description" value="{{p.description or ''}}"></label><div class="permission-grid">{% for perm,label in permission_catalog %}<label class="check"><input type="checkbox" name="permissions" value="{{perm}}" {% if perm in profile_permissions[p.id] %}checked{% endif %}> <span><b>{{label}}</b><small>{{perm}}</small></span></label>{% endfor %}</div><button class="btn primary" type="submit">Atualizar perfil</button></form></details>{% endif %}</div>{% endfor %}</section>
+<section class="panel"><h2>Perfis existentes</h2>{% for p in profiles %}<div class="profile-card"><div><b>{{p.name}}</b>{% if p.system %}<span class="badge">Perfil padrão protegido</span>{% endif %}<small>{{p.description or ''}}</small></div>
+<div class="admin-profile-permissions">{% if '*' in profile_permissions[p.id] %}<span class="manage">Acesso total</span>{% else %}{% for group,items in permission_groups %}{% for perm,label,description in items %}{% if perm in profile_permissions[p.id] %}<span class="{% if perm.endswith('.manage') or perm.endswith('.edit') %}manage{% endif %}">{{label}}</span>{% endif %}{% endfor %}{% endfor %}{% endif %}</div>
+{% if not p.system %}<details style="margin-top:8px"><summary>Editar permissões</summary><form method="post" action="/administracao/perfil" style="margin-top:9px"><input type="hidden" name="name" value="{{p.name}}"><label>Descrição<input name="description" value="{{p.description or ''}}"></label>{{ permission_selector_edit(p) }}<button class="btn primary" type="submit">Atualizar perfil</button></form></details>{% endif %}</div>{% endfor %}</section>
 </div>
 
 <section class="panel"><h2>Novo usuário</h2><form method="post" action="/administracao/usuario" class="form-grid wide">
-  <label>Usuário<input name="username" required></label><label>Nome<input name="name"></label><label>E-mail<input name="email" type="email"></label><label>Senha inicial<input name="password" type="password" minlength="6" required></label>
+  <label>Usuário<input name="username" required autocomplete="off"></label><label>Nome<input name="name"></label><label>E-mail<input name="email" type="email"></label><label>Senha inicial<input name="password" type="password" minlength="6" required autocomplete="new-password"></label>
   <label>Empresa<select name="company_id">{% for c in companies %}<option value="{{c.id}}">{{c.trade_name or c.name}}</option>{% endfor %}</select></label>
-  <label>Perfil<select name="profile_id">{% for p in profiles %}<option value="{{p.id}}">{{p.name}}</option>{% endfor %}</select></label>
+  <label>Perfil<select name="profile_id">{% for p in profiles_assignable %}<option value="{{p.id}}">{{p.name}}</option>{% endfor %}</select></label>
   <label class="span-2">Filiais permitidas<select name="branch_ids" multiple size="5">{% for b,c in branches %}<option value="{{b.id}}">{{c.trade_name or c.name}} · {{b.name}}</option>{% endfor %}</select><small>Se nenhuma for selecionada, será usada a primeira filial ativa da empresa.</small></label>
   <button class="btn primary" type="submit">Criar usuário</button>
 </form></section>
 
 <section class="panel"><h2>Usuários e acessos</h2>
-{% for u in users %}<article class="user-admin-card"><div class="user-admin-head"><div><b>{{u.name or u.username}}</b><small>@{{u.username}}{% if u.email %} · {{u.email}}{% endif %}</small></div><div><span class="badge {{'ok' if u.active else 'muted'}}">{{'Ativo' if u.active else 'Inativo'}}</span>{% if u.is_superuser %}<span class="badge">Superusuário</span>{% endif %}</div></div>
+{% for u in users %}<article class="user-admin-card"><div class="user-admin-head"><div><b>{{u.name or u.username}}</b><small>@{{u.username}}{% if u.email %} · {{u.email}}{% endif %}{% if u.last_login_at %} · último login {{u.last_login_at.strftime('%d/%m/%Y %H:%M')}}{% endif %}</small></div><div><span class="badge {{'ok' if u.active else 'muted'}}">{{'Ativo' if u.active else 'Inativo'}}</span>{% if u.is_superuser %}<span class="badge">Superusuário</span>{% endif %}</div></div>
 <div class="access-lines">{% for a,c,p in user_access[u.id] %}<div><b>{{c.trade_name or c.name}}</b> · {{p.name}} · {% if a.active %}ativo{% else %}inativo{% endif %}</div>{% else %}<div>Sem acesso empresarial.</div>{% endfor %}<div class="muted-text">Filiais: {% for ba,b in user_branches[u.id] %}{{b.name}}{% if not loop.last %}, {% endif %}{% else %}nenhuma{% endfor %}</div></div>
 <div class="inline-actions"><form method="post" action="/administracao/usuario/{{u.id}}/toggle"><button class="btn small" type="submit">{{'Desativar' if u.active else 'Ativar'}}</button></form><form method="post" action="/administracao/usuario/{{u.id}}/senha" class="inline-form"><input type="password" name="new_password" minlength="6" placeholder="Nova senha" required><button class="btn small" type="submit">Redefinir senha</button></form></div>
-<details><summary>Adicionar/alterar acesso</summary><form method="post" action="/administracao/usuario/{{u.id}}/acesso" class="form-grid compact"><label>Empresa<select name="company_id">{% for c in companies %}<option value="{{c.id}}">{{c.trade_name or c.name}}</option>{% endfor %}</select></label><label>Perfil<select name="profile_id">{% for p in profiles %}<option value="{{p.id}}">{{p.name}}</option>{% endfor %}</select></label><label class="span-2">Filiais<select name="branch_ids" multiple size="4">{% for b,c in branches %}<option value="{{b.id}}">{{c.trade_name or c.name}} · {{b.name}}</option>{% endfor %}</select></label><button class="btn" type="submit">Salvar acesso</button></form></details>
+{% if current_user.is_superuser or current_user.id != u.id %}<details><summary>Adicionar/alterar acesso</summary><form method="post" action="/administracao/usuario/{{u.id}}/acesso" class="form-grid compact"><label>Empresa<select name="company_id">{% for c in companies %}<option value="{{c.id}}">{{c.trade_name or c.name}}</option>{% endfor %}</select></label><label>Perfil<select name="profile_id">{% for p in profiles_assignable %}<option value="{{p.id}}">{{p.name}}</option>{% endfor %}</select></label><label class="span-2">Filiais<select name="branch_ids" multiple size="4">{% for b,c in branches %}<option value="{{b.id}}">{{c.trade_name or c.name}} · {{b.name}}</option>{% endfor %}</select></label><button class="btn" type="submit">Salvar acesso</button></form></details>{% endif %}
 </article>{% endfor %}
 </section>
 
-<section class="panel"><h2>Auditoria recente</h2><div class="table-wrap"><table><thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>Detalhe</th></tr></thead><tbody>{% for log,u in audit %}<tr><td>{{log.created_at.strftime('%d/%m/%Y %H:%M') if log.created_at else '—'}}</td><td>{{u.username if u else 'sistema'}}</td><td>{{log.action}}</td><td>{{log.entity or '—'}}{% if log.entity_id %} #{{log.entity_id}}{% endif %}</td><td>{{log.detail or '—'}}</td></tr>{% else %}<tr><td colspan="5">Sem eventos de auditoria.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><h2>Auditoria recente</h2><p class="hint">Inclui criação de usuários, alterações de acesso e tentativas bloqueadas pelo controle de permissões.</p><div class="table-wrap"><table><thead><tr><th>Data/hora</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>Detalhe</th></tr></thead><tbody>{% for log,u in audit %}<tr><td>{{log.created_at.strftime('%d/%m/%Y %H:%M') if log.created_at else '—'}}</td><td>{{u.username if u else 'sistema'}}</td><td>{{log.action}}</td><td>{{log.entity or '—'}}{% if log.entity_id %} #{{log.entity_id}}{% endif %}</td><td>{{log.detail or '—'}}</td></tr>{% else %}<tr><td colspan="5">Sem eventos de auditoria.</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-permission-group]').forEach(function(group){
+  const checks=()=>group.querySelectorAll('input[type="checkbox"][name="permissions"]');
+  const on=group.querySelector('[data-check-group]'); const off=group.querySelector('[data-uncheck-group]');
+  if(on) on.addEventListener('click',()=>checks().forEach(x=>x.checked=true));
+  if(off) off.addEventListener('click',()=>checks().forEach(x=>x.checked=false));
+});
+</script>
 {% endblock %}

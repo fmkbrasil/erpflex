@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class SchemaState(Base):
@@ -794,6 +794,14 @@ DEFAULT_PERMISSIONS = {
         "baixa.manage", "ocorrencias.view", "ocorrencias.manage", "responsaveis.view", "responsaveis.manage",
         "regras.manage", "parametros.manage", "api.read"
     ],
+    "Financeiro": [
+        "dashboard.view", "bi.view", "cadastros.view", "faturamento.view",
+        "financeiro.view", "financeiro.manage", "compras.view"
+    ],
+    "Consulta": [
+        "dashboard.view", "bi.view", "cadastros.view", "faturamento.view", "financeiro.view", "compras.view",
+        "logistica.view", "roteirizar.view", "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "ocorrencias.view", "responsaveis.view"
+    ],
 }
 
 
@@ -911,6 +919,7 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V14: classificação configurável de categorias de despesas para a DRE Gerencial.
     # V15: personalização visual/legendas por empresa e expansão do controle de acesso.
     # V16: desconto comercial por cliente com contrato de cobrança.
+    # V17: separação entre permissões de consulta e operação nos módulos comerciais/financeiros.
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
     if "partners" in inspect(engine).get_table_names():
@@ -966,6 +975,25 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
                 exists = db.scalar(select(ProfilePermission.id).where(ProfilePermission.profile_id == profile.id, ProfilePermission.permission == "bi.view").limit(1))
                 if not exists:
                     db.add(ProfilePermission(profile_id=profile.id, permission="bi.view"))
+            db.commit()
+    # V17 separa consulta de operação nos módulos comerciais/financeiros.
+    # Perfis existentes preservam exatamente a capacidade operacional que tinham antes da atualização:
+    # anteriormente, possuir *.view também autorizava os POSTs desses módulos.
+    if previous_version < 17:
+        legacy_manage_map = {
+            "faturamento.view": "faturamento.manage",
+            "financeiro.view": "financeiro.manage",
+            "compras.view": "compras.manage",
+        }
+        with SessionLocal() as db:
+            for view_perm, manage_perm in legacy_manage_map.items():
+                profile_ids = set(db.scalars(select(ProfilePermission.profile_id).where(ProfilePermission.permission == view_perm)).all())
+                for profile_id in profile_ids:
+                    exists = db.scalar(select(ProfilePermission.id).where(
+                        ProfilePermission.profile_id == profile_id, ProfilePermission.permission == manage_perm
+                    ).limit(1))
+                    if not exists:
+                        db.add(ProfilePermission(profile_id=profile_id, permission=manage_perm))
             db.commit()
     with SessionLocal() as db:
         state = db.get(SchemaState, 1)

@@ -102,6 +102,39 @@ def can(ctx: AccessContext, permission: str) -> bool:
     return "*" in ctx.permissions or permission in ctx.permissions
 
 
+ACCESS_LANDING_ROUTES = [
+    ("dashboard.view", "/"),
+    ("bi.view", "/bi/visao-geral"),
+    ("faturamento.view", "/faturamento"),
+    ("financeiro.view", "/financeiro"),
+    ("compras.view", "/compras"),
+    ("logistica.view", "/logistica/inicio"),
+    ("roteirizar.view", "/roteirizar"),
+    ("roteiros.view", "/roteiros"),
+    ("painel_entregas.view", "/painel-entregas"),
+    ("painel_gerencial.view", "/painel-gerencial"),
+    ("relatorios.view", "/relatorios-gerenciais"),
+    ("cadastros.view", "/cadastros"),
+    ("sync.manage", "/sincronizacao"),
+    ("diagnostico.view", "/diagnostico"),
+    ("ui.customize", "/aparencia"),
+    ("admin.manage", "/administracao"),
+]
+
+def first_allowed_path(ctx: AccessContext, mobile: bool = False) -> str:
+    """Retorna uma rota inicial que o perfil pode realmente acessar.
+
+    No mobile, /mobile só é usado quando dashboard.view está liberado.
+    Caso contrário, o usuário cai no primeiro módulo permitido, evitando login -> 403.
+    """
+    if mobile and can(ctx, "dashboard.view"):
+        return "/mobile"
+    for permission, path in ACCESS_LANDING_ROUTES:
+        if can(ctx, permission):
+            return path
+    return "/minha-conta?sem_acesso=1"
+
+
 def add_audit(db, ctx: AccessContext, action: str, entity: str | None = None, entity_id: str | int | None = None, detail: str | None = None):
     db.add(AuditLog(
         company_id=ctx.company.id if ctx.company else None,
