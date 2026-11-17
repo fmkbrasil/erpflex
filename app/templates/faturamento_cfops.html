@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}CFOPs excluídos · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><h1>CFOPs excluídos de vendas</h1><p>Defina operações fiscais que não devem aparecer no Faturamento nem compor vendas e indicadores do Comercial/BI.</p></div>
+  <div class="hero-actions"><a class="btn" href="/faturamento">← Voltar ao Faturamento</a></div>
+</section>
+
+{% if saved %}<section class="alert success"><b>Configuração salva.</b> Os próximos cálculos do BI e a lista de Faturamento já usarão a regra atualizada.</section>{% endif %}
+{% if error %}<section class="alert error"><b>CFOP inválido.</b> Informe códigos com 4 dígitos, por exemplo 5910, 5924 ou 6152.</section>{% endif %}
+
+<section class="panel">
+  <div class="panel-title"><div><h2>Adicionar CFOPs</h2><p class="hint">Você pode informar vários códigos separados por espaço, vírgula, ponto e vírgula ou quebra de linha.</p></div></div>
+  <form method="post" action="/faturamento/cfops-excluidos" class="form-grid">
+    <label><span>CFOPs que não representam venda</span><textarea name="cfops" rows="4" placeholder="Ex.: 5910&#10;5924&#10;6152" required></textarea></label>
+    <label><span>Descrição / motivo</span><input name="description" maxlength="255" placeholder="Ex.: Bonificação, transferência, remessa"></label>
+    <div class="actions"><button class="btn primary" type="submit">Salvar CFOPs</button></div>
+  </form>
+  <div class="hint-block"><b>Regra de segurança:</b> a NF-e é excluída somente quando possui itens normalizados, todos os itens possuem CFOP válido e todos os CFOPs da NF-e estão configurados como excluídos. NF-e mista ou com CFOP ausente permanece visível.</div>
+</section>
+
+<section class="panel">
+  <div class="panel-title"><div><h2>CFOPs configurados</h2><p class="hint">A configuração é independente por empresa.</p></div><span>{{ rules|length }} regra(s)</span></div>
+  <div class="table-wrap"><table><thead><tr><th>CFOP</th><th>Motivo</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+    {% for r in rules %}<tr><td><b>{{ r.cfop }}</b></td><td>{{ r.description or '—' }}</td><td><span class="badge {{ 'ok' if r.active else 'muted' }}">{{ 'Ativo' if r.active else 'Inativo' }}</span></td><td><div class="row-actions"><form method="post" action="/faturamento/cfops-excluidos/{{r.id}}/toggle"><button class="btn small" type="submit">{{ 'Desativar' if r.active else 'Ativar' }}</button></form><form method="post" action="/faturamento/cfops-excluidos/{{r.id}}/excluir" onsubmit="return confirm('Excluir o CFOP {{r.cfop}} da regra?')"><button class="btn small danger-soft" type="submit">Excluir</button></form></div></td></tr>
+    {% else %}<tr><td colspan="4" class="empty">Nenhum CFOP excluído. Todas as NF-e fiscais válidas continuam compondo o faturamento.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel">
+  <div class="panel-title"><div><h2>Impacto atual</h2><p class="hint">Prévia das NF-e que deixam de compor Faturamento e Comercial com a configuração ativa.</p></div><span>{{ affected_count }} NF-e · <span data-money="{{affected_total}}"></span></span></div>
+  {% if active_cfops %}<p class="hint">CFOPs ativos: <b>{{ active_cfops|join(', ') }}</b></p>{% endif %}
+  <div class="table-wrap"><table><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>CFOPs</th><th>Valor</th><th>Consulta</th></tr></thead><tbody>
+    {% for inv,p in affected_rows %}<tr><td><b>{{inv.number or '—'}}</b></td><td>{{inv.issue_date or '—'}}</td><td>{{(p.trade_name or p.name) if p else '—'}}</td><td>{{cfops_by_invoice.get(inv.id,[])|join(', ') or '—'}}</td><td><span data-money="{{inv.total or 0}}"></span></td><td><a class="btn small" href="/faturamento/{{inv.id}}">Abrir NF-e</a></td></tr>
+    {% else %}<tr><td colspan="6" class="empty">Nenhuma NF-e atual atende integralmente à regra de exclusão.</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if affected_count > 100 %}<p class="hint">Exibindo as 100 NF-e mais recentes de {{affected_count}} afetadas.</p>{% endif %}
+</section>
+{% endblock %}

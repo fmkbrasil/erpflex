@@ -672,3 +672,15 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - corrige proteção do `/mobile` e direciona o login ao primeiro módulo permitido;
 - protege superusuários contra alteração por administradores comuns;
 - schema **17**, com migração de permissões para preservar perfis existentes.
+
+
+## V1.3.65 — Recebidos/Pagos, edição de cards e exclusão fiscal por CFOP
+
+- cria resultado específico **Títulos recebidos no período** em Contas a Receber, usando a data de baixa/recebimento do período selecionado;
+- cria resultado específico **Títulos pagos no período** em Contas a Pagar, usando a data de pagamento/baixa do período selecionado;
+- corrige o editor de interface: cards passam a oferecer **Editar nome** além de **Ocultar/Exibir**, mantendo a chave de visibilidade estável após renomear;
+- cria configuração por empresa de **CFOPs excluídos de venda** em Faturamento;
+- NF-e totalmente enquadradas nos CFOPs excluídos deixam de aparecer na lista de Faturamento e deixam de compor BI de Faturamento, Comercial, DRE e demais indicadores baseados em vendas;
+- NF-e permanece armazenada e pode ser consultada na tela de impacto da configuração fiscal;
+- regra conservadora: notas mistas ou com CFOP ausente não são excluídas automaticamente;
+- schema passa de **17 para 18** com nova tabela aditiva `sales_cfop_exclusions`.

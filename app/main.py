@@ -27,11 +27,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from .connectors import ERPFlexClient, NFStockClient
 from .db import (
     AccessProfile, AppUser, AuditLog, BoxType, Branch, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, Delivery, DeliveryAssignment, DeliveryMovement,
-    DeliveryOccurrence, DeliveryRule, DreExpenseMapping, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesInvoiceItem,
+    DeliveryOccurrence, DeliveryRule, DreExpenseMapping, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesCfopExclusion, SalesInvoiceItem,
     Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat,
     UserBranchAccess, UserCompanyAccess, UserViewPreference, UIThemeSetting, UILabelOverride, create_sqlite_backup, database_status, init_db
 )
 from .access import access_context, add_audit, auth_configured, can, current_user, first_allowed_path
+from .fiscal_rules import active_excluded_cfops, excluded_invoice_ids, invoice_cfops, normalize_cfop
 from .security import hash_password, verify_password
 from .sync_service import start_sync, start_sync_batch, recover_interrupted_sync_runs, page_index_summary, _purchase_items_from_record, _purchase_item_value, _enrich_customer_master, _partner
 from .integration_settings import (
@@ -58,7 +59,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.64")
+app = FastAPI(title=APP_NAME, version="1.3.65")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -132,6 +133,7 @@ def required_permission(method: str, path: str) -> str | None:
         ("/financeiro/cobranca", "financeiro.manage"),
         ("/financeiro/enriquecer", "financeiro.manage"),
         ("/financeiro/lote", "financeiro.manage"),
+        ("/faturamento/cfops-excluidos", "faturamento.manage"),
         ("/faturamento/atualizar-itens", "faturamento.manage"),
         ("/compras/atualizar-itens", "compras.manage"),
         ("/cadastros", "cadastros.view"),
@@ -225,7 +227,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.64", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.65", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2248,9 +2250,14 @@ def faturamento(request: Request, q: str = "", period: str = "all", date_from: s
             SalesInvoice.number.is_not(None), SalesInvoice.number != "",
             func.ltrim(func.trim(SalesInvoice.number), "0") != ""
         )
+        excluded_cfops = active_excluded_cfops(db, cid)
+        cfop_excluded_ids = excluded_invoice_ids(db, cid, excluded_cfops)
         base_where = (SalesInvoice.company_id == cid, valid_nf)
         stmt = select(SalesInvoice, Partner).outerjoin(Partner, SalesInvoice.customer_id == Partner.id).outerjoin(RawRecord, SalesInvoice.raw_record_id == RawRecord.id).where(*base_where)
         count_stmt = select(func.count(SalesInvoice.id)).outerjoin(Partner, SalesInvoice.customer_id == Partner.id).outerjoin(RawRecord, SalesInvoice.raw_record_id == RawRecord.id).where(*base_where)
+        if cfop_excluded_ids:
+            stmt = stmt.where(SalesInvoice.id.not_in(cfop_excluded_ids))
+            count_stmt = count_stmt.where(SalesInvoice.id.not_in(cfop_excluded_ids))
         if q.strip():
             like = f"%{q.strip()}%"
             cond = or_(SalesInvoice.number.ilike(like), SalesInvoice.access_key.ilike(like), Partner.name.ilike(like), RawRecord.payload_json.ilike(like))
@@ -2290,7 +2297,94 @@ def faturamento(request: Request, q: str = "", period: str = "all", date_from: s
                   date_from=date_from, date_to=date_to, period_label=_period_label(period,start,end),
                   column_defs=column_defs, selected_cols=selected_cols, per_page=pp, page=page, pages=pages,
                   total_rows=total_rows, prev_url=prev_url, next_url=next_url, item_info=item_info, nf_status=nf_status,
-                  invoice_display=invoice_display, payments=payments, items_updated=items_updated, items_failed=items_failed)
+                  invoice_display=invoice_display, payments=payments, items_updated=items_updated, items_failed=items_failed,
+                  excluded_cfops=sorted(excluded_cfops), excluded_invoice_count=len(cfop_excluded_ids))
+
+
+@app.get("/faturamento/cfops-excluidos", response_class=HTMLResponse)
+def faturamento_cfops_excluidos(request: Request, saved: str = "", error: str = ""):
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        rules = db.scalars(select(SalesCfopExclusion).where(
+            SalesCfopExclusion.company_id == cid
+        ).order_by(SalesCfopExclusion.cfop)).all()
+        active = active_excluded_cfops(db, cid)
+        affected_ids = excluded_invoice_ids(db, cid, active)
+        affected_rows = []
+        if affected_ids:
+            affected_rows = db.execute(
+                select(SalesInvoice, Partner)
+                .outerjoin(Partner, SalesInvoice.customer_id == Partner.id)
+                .where(SalesInvoice.company_id == cid, SalesInvoice.id.in_(affected_ids))
+                .order_by(SalesInvoice.issue_date.desc(), SalesInvoice.id.desc())
+                .limit(100)
+            ).all()
+        affected_total = round(float(db.scalar(select(func.sum(SalesInvoice.total)).where(SalesInvoice.id.in_(affected_ids))) or 0), 2) if affected_ids else 0.0
+        cfops_by_invoice = invoice_cfops(db, {inv.id for inv, _p in affected_rows})
+    return render(request, "faturamento_cfops.html", company=company, rules=rules, active_cfops=sorted(active),
+                  affected_rows=affected_rows, affected_total=affected_total, affected_count=len(affected_ids),
+                  cfops_by_invoice=cfops_by_invoice, saved=saved, error=error)
+
+
+@app.post("/faturamento/cfops-excluidos")
+async def faturamento_cfops_excluidos_salvar(request: Request):
+    form = await request.form()
+    raw = str(form.get("cfops") or "")
+    description = str(form.get("description") or "").strip()[:255] or None
+    candidates = [normalize_cfop(x) for x in re.split(r"[\s,;|/]+", raw)]
+    cfops = sorted({x for x in candidates if x})
+    if not cfops:
+        return RedirectResponse("/faturamento/cfops-excluidos?error=cfop-invalido", status_code=303)
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        for cfop in cfops:
+            row = db.scalar(select(SalesCfopExclusion).where(
+                SalesCfopExclusion.company_id == cid, SalesCfopExclusion.cfop == cfop
+            ).limit(1))
+            if not row:
+                row = SalesCfopExclusion(company_id=cid, cfop=cfop, description=description, active=True)
+                db.add(row)
+            else:
+                row.active = True
+                if description:
+                    row.description = description
+        db.flush()
+        add_audit(db, ac, "CFOP_EXCLUSAO_VENDA_ATUALIZADA", "sales_cfop_exclusion", None, ", ".join(cfops))
+        db.commit()
+    return RedirectResponse("/faturamento/cfops-excluidos?saved=1", status_code=303)
+
+
+@app.post("/faturamento/cfops-excluidos/{rule_id}/toggle")
+def faturamento_cfop_toggle(request: Request, rule_id: int):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        row = db.scalar(select(SalesCfopExclusion).where(
+            SalesCfopExclusion.id == rule_id, SalesCfopExclusion.company_id == cid
+        ).limit(1))
+        if row:
+            row.active = not bool(row.active)
+            db.flush()
+            add_audit(db, ac, "CFOP_EXCLUSAO_VENDA_TOGGLE", "sales_cfop_exclusion", row.id, f"CFOP {row.cfop} · ativo={row.active}")
+            db.commit()
+    return RedirectResponse("/faturamento/cfops-excluidos", status_code=303)
+
+
+@app.post("/faturamento/cfops-excluidos/{rule_id}/excluir")
+def faturamento_cfop_excluir(request: Request, rule_id: int):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        row = db.scalar(select(SalesCfopExclusion).where(
+            SalesCfopExclusion.id == rule_id, SalesCfopExclusion.company_id == cid
+        ).limit(1))
+        if row:
+            detail = f"CFOP {row.cfop}"
+            db.delete(row)
+            add_audit(db, ac, "CFOP_EXCLUSAO_VENDA_REMOVIDA", "sales_cfop_exclusion", rule_id, detail)
+            db.commit()
+    return RedirectResponse("/faturamento/cfops-excluidos", status_code=303)
 
 
 @app.post("/faturamento/atualizar-itens")

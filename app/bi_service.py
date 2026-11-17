@@ -14,6 +14,7 @@ from .db import (
     RawRecord, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesInvoiceItem, SalesOrder, SyncRun,
     CollectionCustomerRule,
 )
+from .fiscal_rules import active_excluded_cfops, excluded_invoice_ids
 from .utils import VERIFIED_BANK_NAMES
 
 
@@ -841,7 +842,12 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         matched_sales_ids = {i.sales_invoice_id for i in all_sales_items if needle in f"{i.product_code or ''} {i.description or ''}".lower()}
         matched_purchase_ids = {i.purchase_invoice_id for i in all_purchase_items if needle in f"{i.product_code or ''} {i.description or ''}".lower()}
 
-    seller_options = sorted({s for x in sales_all if (s := invoice_seller_bi(x)[0])} | {s for s in seller_by_title.values() if s})
+    # Regras fiscais configuráveis por empresa. A NF-e permanece armazenada, porém
+    # deixa de compor faturamento/Comercial quando todos os itens possuem CFOP
+    # identificado e todos os CFOPs pertencem à lista de exclusão.
+    excluded_cfops = active_excluded_cfops(db, cid)
+    cfop_excluded_invoice_ids = excluded_invoice_ids(db, cid, excluded_cfops)
+    seller_options = sorted({s for x in sales_all if x.id not in cfop_excluded_invoice_ids and (s := invoice_seller_bi(x)[0])} | {s for s in seller_by_title.values() if s})
 
     def partner_ok(pid: int|None, target: int|None=None) -> bool:
         if target and pid != target: return False
@@ -851,6 +857,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         return True
 
     def sale_ok(x: SalesInvoice) -> bool:
+        if x.id in cfop_excluded_invoice_ids: return False
         if str(x.number or "").strip() in {"", "0"}: return False
         if not partner_ok(x.customer_id,customer_filter): return False
         payload=_raw_payload(raw_map,x.raw_record_id)
@@ -1963,13 +1970,15 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
             "states": state_dashboard[:100],
             "customers": customer_dashboard[:200],
             "documents": [invoice_row(x) for x in sorted(sales,key=lambda x:_date(x.issue_date) or date.min,reverse=True)],
+            "excluded_cfops": sorted(excluded_cfops),
+            "excluded_invoice_count": len(cfop_excluded_invoice_ids),
         },
         "receivables":{
             "open":round(ar_open_total,2),"open_count":len(ar_open),
             "overdue":round(ar_overdue_total,2),"overdue_count":len(ar_overdue),
             "due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ar_due),2),"due_count":len(ar_due),
             "without_due":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in ar_without_due),2),"without_due_count":len(ar_without_due),
-            "issued":issued_receivables,"received":round(received_total,2),"received_late":round(received_late,2),
+            "issued":issued_receivables,"received":round(received_total,2),"received_count":len(received),"received_titles":cash_received_details,"received_late":round(received_late,2),
             "on_time_pct":_pct(received_on_time,received_total),"overdue_pct":overdue_pct,"aging":receivable_aging_details,"forecast":receivable_forecast_details,
             "future_open_count":len(future_open),"future_open_value":round(sum(max(_money(t.value)-_money(t.paid_value),0) for t in future_open),2),
             "top_balance":customer_open_drill[:20],"top_overdue":customer_overdue_drill[:20],

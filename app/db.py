@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 class SchemaState(Base):
@@ -496,6 +496,17 @@ class SalesOrder(Base):
     __table_args__ = (UniqueConstraint("company_id", "erpflex_id", name="uq_sales_order_erp"),)
 
 
+class SalesCfopExclusion(Base):
+    __tablename__ = "sales_cfop_exclusions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    cfop: Mapped[str] = mapped_column(String(10), index=True)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "cfop", name="uq_sales_cfop_exclusion"),)
+
+
 class SalesInvoice(Base):
     __tablename__ = "sales_invoices"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -920,6 +931,7 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V15: personalização visual/legendas por empresa e expansão do controle de acesso.
     # V16: desconto comercial por cliente com contrato de cobrança.
     # V17: separação entre permissões de consulta e operação nos módulos comerciais/financeiros.
+    # V18: CFOPs configuráveis que não compõem faturamento/vendas comerciais.
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
     if "partners" in inspect(engine).get_table_names():

@@ -75,7 +75,8 @@
         const base=location.pathname+'|CARD|'+kind+'|'+hashString(label.toLowerCase());
         const n=used[base]||0;used[base]=n+1;
         el.dataset.uiControlKey=base+(n?'|'+n:'');
-        el.dataset.uiControlLabel=label;
+        el.dataset.uiControlLabel=map[label]||label;
+        el.dataset.uiOriginalCardLabel=label;
         el.dataset.uiControlKind='card';
       });
     });
@@ -166,6 +167,13 @@
     const all=[...el.querySelectorAll(UI_TEXT_SELECTOR)];
     return all.find(x=>directTextNodes(x).length)||el;
   }
+  function promptCardTitleEdit(el){
+    const visible=normalizeControlText(el.dataset.uiControlLabel||controlLabel(el));
+    const original=normalizeControlText(el.dataset.uiOriginalCardLabel||visible);
+    const custom=prompt('Novo nome para o card “'+visible+'”:',visible);
+    if(!custom || custom.trim()===visible)return;
+    saveLabel(original,custom.trim()).then(()=>location.reload()).catch(()=>alert('Não foi possível salvar o nome do card.'));
+  }
   function openControlPopover(el){
     removeEditPopover();
     const pop=document.createElement('div');pop.className='label-edit-popover';pop.setAttribute('role','dialog');pop.setAttribute('aria-label','Editar item da interface');
@@ -173,7 +181,7 @@
     pop.innerHTML='<b></b><small></small><div class="label-edit-actions"></div>';
     pop.querySelector('b').textContent=isHidden?(kind==='card'?'Card oculto':'Botão oculto'):(kind==='card'?'Editar card':'Editar botão');pop.querySelector('small').textContent=label;
     const actions=pop.querySelector('.label-edit-actions');
-    if(!isHidden && kind!=='card'){const edit=document.createElement('button');edit.type='button';edit.className='btn small';edit.textContent='Editar texto';edit.addEventListener('click',()=>{removeEditPopover();promptTextEdit(editableTargetInsideControl(el));});actions.appendChild(edit);}
+    if(!isHidden){const edit=document.createElement('button');edit.type='button';edit.className='btn small';edit.textContent=kind==='card'?'Editar nome':'Editar texto';edit.addEventListener('click',()=>{removeEditPopover();if(kind==='card')promptCardTitleEdit(el);else promptTextEdit(editableTargetInsideControl(el));});actions.appendChild(edit);}
     const vis=document.createElement('button');vis.type='button';vis.className='btn small '+(isHidden?'primary':'danger-soft');vis.textContent=isHidden?(kind==='card'?'Exibir card':'Exibir botão'):(kind==='card'?'Ocultar card':'Ocultar botão');
     vis.addEventListener('click',()=>{vis.disabled=true;saveControlVisibility(el,!isHidden).then(()=>{removeEditPopover();if(!document.body.classList.contains('label-edit-mode'))location.reload();}).catch(()=>{vis.disabled=false;alert('Não foi possível salvar a visibilidade deste item.');});});actions.appendChild(vis);
     const cancel=document.createElement('button');cancel.type='button';cancel.className='btn small';cancel.textContent='Cancelar';cancel.addEventListener('click',removeEditPopover);actions.appendChild(cancel);
@@ -212,9 +220,9 @@
       if(el.classList.contains('bi-data-quality'))return 'Qualidade dos dados';
       if(el.classList.contains('bi-alert-list'))return 'Alertas';
       const h=el.querySelector(':scope > h3,:scope > h2,:scope > .panel-title h3,:scope > .panel-title h2');
-      if(h)return cleanLabel(h.textContent);
+      if(h)return cleanLabel(h.dataset.uiOriginalText||h.textContent);
       const nested=el.querySelector('h3,h2');
-      return nested?cleanLabel(nested.textContent):'Detalhes';
+      return nested?cleanLabel(nested.dataset.uiOriginalText||nested.textContent):'Detalhes';
     };
     const flushSummary=()=>{if(summary.length){groups.push({label:'Resumo',els:summary});summary=[];}};
     candidates.forEach(el=>{
@@ -248,6 +256,8 @@
       if(t.includes('carteira'))return {icon:'▤',tone:'violet',hint:'Carteiras e títulos'};
       if(t.includes('banco'))return {icon:'▥',tone:'slate',hint:'Bancos e títulos'};
       if(t.includes('estado')||t.includes('região')||t.includes('cidade'))return {icon:'⌖',tone:'emerald',hint:'Distribuição geográfica'};
+      if(t.includes('recebid'))return {icon:'↓',tone:'emerald',hint:'Baixas e recebimentos'};
+      if(t.includes('pago')||t.includes('pagos')||t.includes('pagas'))return {icon:'↑',tone:'teal',hint:'Baixas e pagamentos'};
       if(t.includes('fluxo')||t.includes('entrada')||t.includes('saída'))return {icon:'⇄',tone:'cyan',hint:'Movimentação financeira'};
       if(t.includes('dre')||t.includes('resultado'))return {icon:'Σ',tone:'violet',hint:'Resultado gerencial'};
       if(t.includes('qualidade')||t.includes('disponibilidade'))return {icon:'✓',tone:'emerald',hint:'Cobertura dos dados'};
@@ -258,10 +268,10 @@
     mergedGroups.forEach((g,i)=>{
       const wrap=document.createElement('div');wrap.className='bi-mobile-panel bi-result-panel';wrap.dataset.mobilePanel=String(i);
       section.appendChild(wrap);g.els.forEach(el=>wrap.appendChild(el));
-      const meta=resultMeta(g.label);
-      const b=document.createElement('button');b.type='button';b.className='bi-mobile-section-btn bi-result-btn tone-'+meta.tone;b.dataset.target=String(i);b.title=g.label;
+      const meta=resultMeta(g.label);const displayLabel=cleanLabel(map[g.label]||g.label);
+      const b=document.createElement('button');b.type='button';b.className='bi-mobile-section-btn bi-result-btn tone-'+meta.tone;b.dataset.target=String(i);b.title=displayLabel;b.dataset.uiOriginalCardLabel=g.label;
       const icon=document.createElement('span');icon.className='bi-result-icon';icon.textContent=meta.icon;
-      const copy=document.createElement('span');copy.className='bi-result-copy';const title=document.createElement('b');title.textContent=g.label.length>38?g.label.slice(0,36)+'…':g.label;const hint=document.createElement('small');hint.textContent=meta.hint;copy.append(title,hint);b.append(icon,copy);nav.appendChild(b);
+      const copy=document.createElement('span');copy.className='bi-result-copy';const title=document.createElement('b');title.textContent=displayLabel.length>38?displayLabel.slice(0,36)+'…':displayLabel;const hint=document.createElement('small');hint.textContent=meta.hint;copy.append(title,hint);b.append(icon,copy);nav.appendChild(b);
     });
     cleanup.forEach(el=>el.remove());
     section.before(nav);
@@ -273,9 +283,11 @@
     activate(0);
     nav.querySelectorAll('.bi-result-btn').forEach((b,index)=>{
       if(!b.dataset.uiControlKey){
-        const stableLabel=cleanLabel(b.title||b.textContent||('Card de navegação '+(index+1)));
-        b.dataset.uiControlKey=location.pathname+'|CARD|bi-result-btn|'+hashString(stableLabel.toLowerCase());
-        b.dataset.uiControlLabel=stableLabel;
+        const originalLabel=cleanLabel(b.dataset.uiOriginalCardLabel||b.title||b.textContent||('Card de navegação '+(index+1)));
+        const visibleLabel=cleanLabel(b.title||b.textContent||originalLabel);
+        b.dataset.uiControlKey=location.pathname+'|CARD|bi-result-btn|'+hashString(originalLabel.toLowerCase());
+        b.dataset.uiControlLabel=visibleLabel;
+        b.dataset.uiOriginalCardLabel=originalLabel;
         b.dataset.uiControlKind='card';
       }
     });
