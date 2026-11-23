@@ -1,5 +1,5 @@
 {% macro invoice_table(rows) -%}
-<div class="table-wrap"><table class="bi-fast-detail-table nested"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>{% if rows and rows[0].item is defined %}Item{% else %}Valor{% endif %}</th><th>Valor</th></tr></thead><tbody>{% for r in rows %}<tr><td>{% if r.id %}<a href="/faturamento/{{ r.id }}">{{ r.number }}</a>{% else %}{{ r.number }}{% endif %}</td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td>{% if r.item is defined %}{{ r.item }}{% else %}—{% endif %}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="5">Sem documentos.</td></tr>{% endfor %}</tbody></table></div>
+<div class="table-wrap"><table class="bi-fast-detail-table nested sales-nested"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in rows %}<tr><td>{% if r.id %}<a href="/faturamento/{{ r.id }}">{{ r.number }}</a>{% else %}{{ r.number }}{% endif %}</td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem documentos.</td></tr>{% endfor %}</tbody></table></div>
 {%- endmacro %}
 <div data-detail-title="{{ detail.title }}">
 {% if detail.options %}
@@ -20,14 +20,14 @@
   <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
   <div class="bi-fast-breakdown-list accordion-list">
   {% for r in detail.rows %}
-    <details class="bi-fast-breakdown-row grouped" {% if loop.first %}open{% endif %}>
+    <details class="bi-fast-breakdown-row grouped">
       <summary>
         <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s)</small></div>
         <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
         <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
       </summary>
       <div class="bi-fast-group-body">
-        <div class="table-wrap"><table class="bi-fast-detail-table nested"><thead><tr><th>Documento</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
+        <div class="table-wrap"><table class="bi-fast-detail-table nested financial-nested"><thead><tr><th>Documento</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
         {% for t in r.titles %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.issue }}</td><td>{{ t.due }}</td><td>{{ t.paid_date }}</td><td><span data-money="{{ t.value }}"></span></td><td><span data-money="{{ t.paid }}"></span></td><td><b data-money="{{ t.balance }}"></b></td></tr>{% else %}<tr><td colspan="7">Sem títulos.</td></tr>{% endfor %}
         </tbody></table></div>
       </div>
@@ -38,7 +38,7 @@
   <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
   <div class="bi-fast-breakdown-list accordion-list">
   {% for r in detail.rows %}
-    <details class="bi-fast-breakdown-row grouped" {% if loop.first %}open{% endif %}>
+    <details class="bi-fast-breakdown-row grouped">
       <summary>
         <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s) · bruto <span data-money="{{ r.gross }}"></span></small></div>
         <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
@@ -67,26 +67,45 @@
   <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
   <div class="bi-fast-breakdown-list accordion-list">
   {% for r in detail.rows %}
-    <details class="bi-fast-breakdown-row grouped" {% if loop.first %}open{% endif %}>
+    <details class="bi-fast-breakdown-row grouped">
       <summary>
         <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} documento(s)</small></div>
         <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
         <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
       </summary>
-      <div class="bi-fast-group-body">{{ invoice_table(r.invoices) }}</div>
+      <div class="bi-fast-group-body">
+        {% if r.products is defined and r.products %}
+        <div class="bi-fast-product-summary">
+          <h4>Produtos do grupo</h4>
+          {% for p in r.products[:12] %}<div><span>{{ p.name }}</span><small>{{ p.count }} item(ns)</small><b data-money="{{ p.value }}"></b></div>{% endfor %}
+          {% if r.products|length > 12 %}<p>+ {{ r.products|length - 12 }} produto(s) neste grupo</p>{% endif %}
+        </div>
+        {% endif %}
+        {{ invoice_table(r.invoices) }}
+      </div>
     </details>
   {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}
   </div>
 {% elif detail.kind == 'sales' %}
   <div class="bi-fast-detail-meta">NF-e válidas do período, já considerando CFOPs excluídos.</div>
   <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in detail.rows %}<tr><td><a href="/faturamento/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem NF-e no período.</td></tr>{% endfor %}</tbody></table></div>
-{% elif detail.kind == 'cash' %}
-  <h3>Recebimentos</h3>
-  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente</th><th>Baixa</th><th>Recebido</th></tr></thead><tbody>{% for r in detail.receivables %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.paid_date }}</td><td><b data-money="{{ r.paid }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem recebimentos.</td></tr>{% endfor %}</tbody></table></div>
-  <h3>Pagamentos</h3>
-  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Fornecedor</th><th>Baixa</th><th>Pago</th></tr></thead><tbody>{% for r in detail.payables %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.paid_date }}</td><td><b data-money="{{ r.paid }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem pagamentos.</td></tr>{% endfor %}</tbody></table></div>
-{% elif detail.kind == 'agenda' %}
-  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Vencimento</th><th>Tipo</th><th>Cliente/Fornecedor</th><th>Documento</th><th>Saldo</th></tr></thead><tbody>{% for r in detail.rows %}<tr><td>{{ r.due }}</td><td><span class="bi-fast-type {{ 'receive' if r.kind=='RECEBER' else 'pay' }}">{{ 'Receber' if r.kind=='RECEBER' else 'Pagar' }}</span></td><td>{{ r.partner }}</td><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="5">Sem vencimentos.</td></tr>{% endfor %}</tbody></table></div>
+{% elif detail.kind == 'cash_grouped' %}
+  {% for section,label in [(detail.receivables,'Recebimentos'),(detail.payables,'Pagamentos')] %}
+  <div class="bi-fast-subsection-title"><span>{{ label }}</span><b data-money="{{ section.total }}"></b></div>
+  <div class="bi-fast-breakdown-list accordion-list">
+    {% for r in section.rows %}
+    <details class="bi-fast-breakdown-row grouped">
+      <summary><div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s)</small></div><div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div><div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div></summary>
+      <div class="bi-fast-group-body"><div class="table-wrap"><table class="bi-fast-detail-table nested financial-nested"><thead><tr><th>Documento</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>{% for t in r.titles %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.issue }}</td><td>{{ t.due }}</td><td>{{ t.paid_date }}</td><td><span data-money="{{ t.value }}"></span></td><td><span data-money="{{ t.paid }}"></span></td><td><b data-money="{{ t.balance }}"></b></td></tr>{% endfor %}</tbody></table></div></div>
+    </details>
+    {% else %}<div class="bi-fast-empty">Sem {{ label|lower }} no período.</div>{% endfor %}
+  </div>
+  {% endfor %}
+{% elif detail.kind == 'agenda_grouped' %}
+  <div class="bi-fast-breakdown-total"><span>Total dos próximos 7 dias</span><b data-money="{{ detail.total }}"></b></div>
+  <div class="bi-fast-breakdown-list accordion-list">
+  {% for g in detail.rows %}<details class="bi-fast-breakdown-row grouped"><summary><div class="bi-fast-breakdown-name"><b>{{ g.name }}</b><small>{{ g.count }} compromisso(s)</small></div><div class="bi-fast-breakdown-bar"><i style="width:100%"></i></div><div class="bi-fast-breakdown-value"><b data-money="{{ g.value }}"></b></div></summary><div class="bi-fast-group-body"><div class="bi-fast-agenda-cards">{% for r in g.rows %}<a href="/financeiro/{{ r.id }}"><span><b>{{ r.partner }}</b><small>{{ r.document }}</small></span><em class="{{ 'receive' if r.kind=='RECEBER' else 'pay' }}">{{ 'Receber' if r.kind=='RECEBER' else 'Pagar' }}</em><strong data-money="{{ r.value }}"></strong></a>{% endfor %}</div></div></details>{% else %}<div class="bi-fast-empty">Sem vencimentos.</div>{% endfor %}
+  </div>
 {% elif detail.kind == 'ranking' %}
   <ol class="bi-fast-detail-ranking">{% for r in detail.rows %}<li><span>{{ loop.index }}. {{ r.name }}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li>Sem registros.</li>{% endfor %}</ol>
 {% else %}<div class="bi-fast-empty">Sem dados para este detalhamento.</div>{% endif %}

@@ -717,3 +717,19 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 ## V1.3.68 — Drill-downs múltiplos no BI rápido
 
 O BI rápido passa a abrir um seletor de análises no painel lateral, mantendo o carregamento sob demanda. Receber, Pagar, Faturamento e Comercial possuem visões especializadas sem recalcular o BI completo na abertura. Schema 18.
+
+
+## V1.3.70 — BI mobile expansível e revisão integral dos drill-downs
+
+- corrige a exibição que pulava diretamente para tabelas nos detalhes do BI;
+- padroniza todas as análises rápidas para uma hierarquia mobile-first: resumo agrupado → expansão → documentos;
+- Contas a Receber: vencidos, a vencer, recebidos, contrato, banco e aging agrupados e expansíveis;
+- Contas a Pagar: vencidos, a vencer, pagos e fornecedor agrupados e expansíveis;
+- Faturamento: cliente, zona, estado, prazo de pagamento e NF-e do período agrupados;
+- Comercial: vendedor, categoria e subcategoria agrupados, com produtos consolidados e NF-e relacionadas;
+- categoria/subcategoria passam a usar a mesma lógica de enriquecimento do BI legado: cadastro de produto + ERPFlex ID/código + payload bruto de produtos como fallback;
+- Fluxo do período e Agenda financeira também passam a usar grupos expansíveis;
+- maiores clientes e fornecedores agora abrem os títulos relacionados;
+- remove o pré-cálculo pesado dos indicadores comerciais na tela inicial, preservando o carregamento sob demanda;
+- limita grupos/documentos enviados ao smartphone sem alterar os totais consolidados;
+- schema permanece 18.
