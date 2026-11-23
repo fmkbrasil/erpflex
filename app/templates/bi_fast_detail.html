@@ -1,5 +1,6 @@
 {% macro invoice_table(rows) -%}
-<div class="table-wrap"><table class="bi-fast-detail-table nested sales-nested"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in rows %}<tr><td>{% if r.id %}<a href="/faturamento/{{ r.id }}">{{ r.number }}</a>{% else %}{{ r.number }}{% endif %}</td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem documentos.</td></tr>{% endfor %}</tbody></table></div>
+{% set has_seller = rows and rows[0].seller is defined %}
+<div class="table-wrap"><table class="bi-fast-detail-table nested sales-nested"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th>{% if has_seller %}<th>Vendedor</th>{% endif %}<th>Valor</th></tr></thead><tbody>{% for r in rows %}<tr><td>{% if r.id %}<a href="/faturamento/{{ r.id }}">{{ r.number }}</a>{% else %}{{ r.number }}{% endif %}</td><td>{{ r.date }}</td><td>{{ r.partner }}</td>{% if has_seller %}<td>{{ r.seller }}</td>{% endif %}<td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="{{ 5 if has_seller else 4 }}">Sem documentos.</td></tr>{% endfor %}</tbody></table></div>
 {%- endmacro %}
 <div data-detail-title="{{ detail.title }}">
 {% if detail.options %}
@@ -74,6 +75,21 @@
         <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
       </summary>
       <div class="bi-fast-group-body">
+        {% if r.sellers is defined and r.sellers %}
+        <div class="bi-fast-seller-summary">
+          <h4>Subtotal por vendedor</h4>
+          {% for s in r.sellers %}
+          <details class="bi-fast-seller-row">
+            <summary>
+              <span><b>{{ s.name }}</b><small>{{ s.count }} NF-e · {{ s.item_count }} item(ns)</small></span>
+              <em>{{ '%.1f'|format(s.share) }}%</em>
+              <strong data-money="{{ s.value }}"></strong>
+            </summary>
+            <div class="bi-fast-seller-docs">{{ invoice_table(s.invoices[:40]) }}{% if s.invoices|length > 40 %}<p>Mostrando 40 de {{ s.invoices|length }} NF-e deste vendedor.</p>{% endif %}</div>
+          </details>
+          {% endfor %}
+        </div>
+        {% endif %}
         {% if r.products is defined and r.products %}
         <div class="bi-fast-product-summary">
           <h4>Produtos do grupo</h4>
@@ -81,7 +97,7 @@
           {% if r.products|length > 12 %}<p>+ {{ r.products|length - 12 }} produto(s) neste grupo</p>{% endif %}
         </div>
         {% endif %}
-        {{ invoice_table(r.invoices) }}
+        <div class="bi-fast-group-documents"><h4>NF-e do grupo</h4>{{ invoice_table(r.invoices[:60]) }}{% if r.invoices|length > 60 %}<p>Mostrando 60 de {{ r.invoices|length }} NF-e neste grupo.</p>{% endif %}</div>
       </div>
     </details>
   {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}

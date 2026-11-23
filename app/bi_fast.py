@@ -838,12 +838,12 @@ def _cash_grouped(db, cid: int, start: date, end: date) -> dict:
     return {"title": "Movimentação financeira do período", "kind": "cash_grouped", "receivables": rec, "payables": pay}
 
 
-def _commercial_grouped_by_seller(db, cid: int, start: date, end: date) -> list[dict]:
-    sales = _sales_rows(db, cid, start, end)
-    if not sales:
-        return []
+def _seller_resolver_context(db, cid: int, sales: list):
     invoice_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in sales if r.raw_record_id])
-    order_rows = db.execute(select(SalesOrder.erpflex_id, SalesOrder.number, SalesOrder.seller_id, SalesOrder.seller_name, SalesOrder.raw_record_id).where(SalesOrder.company_id == cid)).all()
+    order_rows = db.execute(select(
+        SalesOrder.erpflex_id, SalesOrder.number, SalesOrder.seller_id,
+        SalesOrder.seller_name, SalesOrder.raw_record_id
+    ).where(SalesOrder.company_id == cid)).all()
     order_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in order_rows if r.raw_record_id])
     by_id: dict[str, str] = {}
     by_number: dict[str, list[str]] = defaultdict(list)
@@ -858,6 +858,7 @@ def _commercial_grouped_by_seller(db, cid: int, start: date, end: date) -> list[
             by_id[oid] = seller
         if onum and seller not in by_number[onum]:
             by_number[onum].append(seller)
+
     def seller_for(inv) -> str:
         payload = invoice_payloads.get(int(inv.raw_record_id), {}) if inv.raw_record_id else {}
         direct = _seller_info(payload).get("display")
@@ -869,6 +870,14 @@ def _commercial_grouped_by_seller(db, cid: int, start: date, end: date) -> list[
         onum = str(_walk_find(payload, {"numero_pedido", "pedido_numero", "numero_orcamento", "documento"}) or "").strip()
         candidates = by_number.get(onum, []) if onum else []
         return candidates[0] if len(candidates) == 1 else "Sem vendedor identificado"
+    return seller_for
+
+
+def _commercial_grouped_by_seller(db, cid: int, start: date, end: date) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    if not sales:
+        return []
+    seller_for = _seller_resolver_context(db, cid, sales)
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
     acc: dict[str, dict] = {}
     for inv in sales:
@@ -880,7 +889,6 @@ def _commercial_grouped_by_seller(db, cid: int, start: date, end: date) -> list[
         cell["value"] += _money(inv.total)
         cell["invoices"].append(invoice)
     return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
-
 
 def _product_meta_context(db, cid: int):
     products = db.scalars(select(Product).where(Product.company_id == cid)).all()
@@ -1000,10 +1008,13 @@ def _commercial_grouped_by_product(db, cid: int, start: date, end: date, mode: s
         SalesInvoiceItem.total, SalesInvoiceItem.sales_invoice_id,
     ).where(SalesInvoiceItem.sales_invoice_id.in_(invoice_ids))).all()
     resolve_meta = _product_meta_context(db, cid)
+    seller_for = _seller_resolver_context(db, cid, sales)
     sales_map = {int(r.id): r for r in sales}
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
     acc: dict[str, dict] = {}
     seen_invoice: dict[tuple[str, int], dict] = {}
+    seen_seller_invoice: dict[tuple[str, str, int], dict] = {}
+
     for item in items:
         meta = resolve_meta(item.product_code, item.description, getattr(item, "product_id", None))
         category = meta["category"]
@@ -1013,32 +1024,77 @@ def _commercial_grouped_by_product(db, cid: int, start: date, end: date, mode: s
         if not inv:
             continue
         partner = partners.get(int(inv.customer_id or 0))
+        seller = seller_for(inv)
         product_label = f"{meta['code']} · {meta['name']}"
-        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "products": {}, "invoices": []})
-        cell["count"] += 1
         item_value = _money(item.total)
+
+        cell = acc.setdefault(name, {
+            "name": name, "count": 0, "item_count": 0, "value": 0.0,
+            "products": {}, "invoices": [], "invoice_ids": set(), "sellers": {}
+        })
+        cell["item_count"] += 1
         cell["value"] += item_value
+        cell["invoice_ids"].add(int(inv.id))
+
         prod = cell["products"].setdefault(product_label, {"name": product_label, "count": 0, "value": 0.0})
         prod["count"] += 1
         prod["value"] += item_value
+
         ikey = (name, int(inv.id))
         if ikey not in seen_invoice:
-            inv_row = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": 0.0, "items": []}
+            inv_row = {
+                "id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—",
+                "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro",
+                "value": 0.0, "items": [], "seller": seller,
+            }
             seen_invoice[ikey] = inv_row
             cell["invoices"].append(inv_row)
         inv_row = seen_invoice[ikey]
         inv_row["value"] += item_value
         inv_row["items"].append({"item": product_label, "value": item_value})
+
+        seller_cell = cell["sellers"].setdefault(seller, {
+            "name": seller, "count": 0, "item_count": 0, "value": 0.0,
+            "invoice_ids": set(), "invoices": []
+        })
+        seller_cell["item_count"] += 1
+        seller_cell["value"] += item_value
+        seller_cell["invoice_ids"].add(int(inv.id))
+        skey = (name, seller, int(inv.id))
+        if skey not in seen_seller_invoice:
+            sinv = {
+                "id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—",
+                "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro",
+                "value": 0.0,
+            }
+            seen_seller_invoice[skey] = sinv
+            seller_cell["invoices"].append(sinv)
+        seen_seller_invoice[skey]["value"] += item_value
+
     result = []
     for cell in acc.values():
         cell["value"] = round(cell["value"], 2)
-        cell["products"] = sorted(({**p, "value": round(p["value"], 2)} for p in cell["products"].values()), key=lambda r: r["value"], reverse=True)
+        cell["count"] = len(cell.pop("invoice_ids"))
+        cell["products"] = sorted(
+            ({**p, "value": round(p["value"], 2)} for p in cell["products"].values()),
+            key=lambda r: r["value"], reverse=True
+        )
         for inv in cell["invoices"]:
             inv["value"] = round(inv["value"], 2)
         cell["invoices"].sort(key=lambda r: (r["date"], r["number"]), reverse=True)
+
+        seller_rows = []
+        for seller_cell in cell["sellers"].values():
+            seller_cell["value"] = round(seller_cell["value"], 2)
+            seller_cell["count"] = len(seller_cell.pop("invoice_ids"))
+            for inv in seller_cell["invoices"]:
+                inv["value"] = round(inv["value"], 2)
+            seller_cell["invoices"].sort(key=lambda r: (r["date"], r["number"]), reverse=True)
+            seller_cell["share"] = _pct(seller_cell["value"], cell["value"]) if cell["value"] else 0.0
+            seller_rows.append(seller_cell)
+        cell["sellers"] = sorted(seller_rows, key=lambda r: r["value"], reverse=True)
         result.append(cell)
     return sorted(result, key=lambda r: r["value"], reverse=True)
-
 
 def _commercial_snapshot(db, cid: int, start: date, end: date) -> dict:
     sellers_all = _commercial_grouped_by_seller(db, cid, start, end)
