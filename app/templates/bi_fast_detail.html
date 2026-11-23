@@ -1,0 +1,20 @@
+<div data-detail-title="{{ detail.title }}">
+{% if detail.kind == 'financial' %}
+  <div class="bi-fast-detail-meta">Mostrando até {{ detail.rows|length }} títulos. Clique no documento para abrir o financeiro.</div>
+  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente/Fornecedor</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
+  {% for r in detail.rows %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.issue }}</td><td>{{ r.due }}</td><td>{{ r.paid_date }}</td><td><span data-money="{{ r.value }}"></span></td><td><span data-money="{{ r.paid }}"></span></td><td><b data-money="{{ r.balance }}"></b></td></tr>{% else %}<tr><td colspan="8">Sem registros.</td></tr>{% endfor %}
+  </tbody></table></div>
+{% elif detail.kind == 'sales' %}
+  <div class="bi-fast-detail-meta">NF-e válidas do período, já considerando CFOPs excluídos.</div>
+  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in detail.rows %}<tr><td><a href="/faturamento/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem NF-e no período.</td></tr>{% endfor %}</tbody></table></div>
+{% elif detail.kind == 'cash' %}
+  <h3>Recebimentos</h3>
+  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente</th><th>Baixa</th><th>Recebido</th></tr></thead><tbody>{% for r in detail.receivables %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.paid_date }}</td><td><b data-money="{{ r.paid }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem recebimentos.</td></tr>{% endfor %}</tbody></table></div>
+  <h3>Pagamentos</h3>
+  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Fornecedor</th><th>Baixa</th><th>Pago</th></tr></thead><tbody>{% for r in detail.payables %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.paid_date }}</td><td><b data-money="{{ r.paid }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem pagamentos.</td></tr>{% endfor %}</tbody></table></div>
+{% elif detail.kind == 'agenda' %}
+  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Vencimento</th><th>Tipo</th><th>Cliente/Fornecedor</th><th>Documento</th><th>Saldo</th></tr></thead><tbody>{% for r in detail.rows %}<tr><td>{{ r.due }}</td><td><span class="bi-fast-type {{ 'receive' if r.kind=='RECEBER' else 'pay' }}">{{ 'Receber' if r.kind=='RECEBER' else 'Pagar' }}</span></td><td>{{ r.partner }}</td><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="5">Sem vencimentos.</td></tr>{% endfor %}</tbody></table></div>
+{% elif detail.kind == 'ranking' %}
+  <ol class="bi-fast-detail-ranking">{% for r in detail.rows %}<li><span>{{ loop.index }}. {{ r.name }}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li>Sem registros.</li>{% endfor %}</ol>
+{% else %}<div class="bi-fast-empty">Sem dados para este detalhamento.</div>{% endif %}
+</div>

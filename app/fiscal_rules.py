@@ -61,3 +61,29 @@ def invoice_cfops(db, invoice_ids: list[int] | set[int]) -> dict[int, list[str]]
         if cfop:
             grouped[int(invoice_id)].add(cfop)
     return {k: sorted(v) for k, v in grouped.items()}
+
+
+def excluded_invoice_ids_for_candidates(db, company_id: int, invoice_ids, excluded: set[str] | None = None) -> set[int]:
+    """Optimized fiscal exclusion for a known, usually small, invoice set.
+
+    Used by the lightweight BI so opening the dashboard does not scan every
+    historical sales item on each request. The safety rule is identical to
+    ``excluded_invoice_ids``: only fully identified invoices whose every CFOP
+    is in the exclusion list are removed.
+    """
+    ids = [int(x) for x in (invoice_ids or []) if x]
+    excluded = excluded if excluded is not None else active_excluded_cfops(db, company_id)
+    if not ids or not excluded:
+        return set()
+    rows = db.execute(
+        select(SalesInvoiceItem.sales_invoice_id, SalesInvoiceItem.cfop)
+        .where(SalesInvoiceItem.sales_invoice_id.in_(ids))
+    ).all()
+    grouped: dict[int, list[str]] = defaultdict(list)
+    for invoice_id, cfop in rows:
+        grouped[int(invoice_id)].append(normalize_cfop(cfop))
+    result: set[int] = set()
+    for invoice_id, cfops in grouped.items():
+        if cfops and all(cfops) and all(cfop in excluded for cfop in cfops):
+            result.add(invoice_id)
+    return result

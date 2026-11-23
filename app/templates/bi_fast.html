@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+{% block title %}BI Gerencial · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="bi-fast-shell" data-period="{{ period }}" data-from="{{ data.meta.start.isoformat() }}" data-to="{{ data.meta.end.isoformat() }}">
+  <header class="bi-fast-head">
+    <div>
+      <span class="bi-fast-eyebrow">VISÃO EXECUTIVA</span>
+      <h1>BI Gerencial</h1>
+      <p>Indicadores diretos. Clique em qualquer card para abrir os documentos que formam o resultado.</p>
+      <small>Última sincronização: {% if data.meta.latest_sync %}<b>{{ data.meta.latest_sync.strftime('%d/%m/%Y %H:%M') }}</b>{% else %}não identificada{% endif %} · painel gerado em {{ data.meta.generated_ms }} ms</small>
+    </div>
+    <form method="get" class="bi-fast-periods">
+      <div class="bi-fast-range-label">Período <b>{{ data.meta.start.strftime('%d/%m/%Y') }} a {{ data.meta.end.strftime('%d/%m/%Y') }}</b></div>
+      <div class="bi-fast-period-buttons">
+        {% for key,label in [('today','Hoje'),('yesterday','Ontem'),('week','Semana'),('month','Mês'),('year','Ano')] %}
+          <button type="submit" name="period" value="{{ key }}" class="{% if period==key %}active{% endif %}">{{ label }}</button>
+        {% endfor %}
+        <button type="button" class="bi-fast-custom-trigger {% if period=='custom' %}active{% endif %}">Personalizado</button>
+      </div>
+      <div class="bi-fast-custom" {% if period!='custom' %}hidden{% endif %}>
+        <label>De <input type="date" name="date_from" value="{{ data.meta.start.isoformat() }}"></label>
+        <label>Até <input type="date" name="date_to" value="{{ data.meta.end.isoformat() }}"></label>
+        <button type="submit" name="period" value="custom" class="primary">Aplicar</button>
+      </div>
+    </form>
+  </header>
+
+  <div class="bi-fast-executive-grid">
+    <button class="bi-fast-kpi tone-green" type="button" data-detail="ar-open">
+      <span class="bi-fast-kpi-icon">↓</span><span><small>A RECEBER · POSIÇÃO ATUAL</small><strong data-money="{{ data.cards.ar.open }}"></strong><em>Vencido <b data-money="{{ data.cards.ar.overdue }}"></b> · {{ '%.1f'|format(data.cards.ar.overdue_pct) }}%</em></span><i>›</i>
+    </button>
+    <button class="bi-fast-kpi tone-red" type="button" data-detail="ap-open">
+      <span class="bi-fast-kpi-icon">↑</span><span><small>A PAGAR · POSIÇÃO ATUAL</small><strong data-money="{{ data.cards.ap.open }}"></strong><em>Vencido <b data-money="{{ data.cards.ap.overdue }}"></b> · {{ '%.1f'|format(data.cards.ap.overdue_pct) }}%</em></span><i>›</i>
+    </button>
+    <button class="bi-fast-kpi tone-blue" type="button" data-detail="sales-period">
+      <span class="bi-fast-kpi-icon">↗</span><span><small>FATURAMENTO · PERÍODO</small><strong data-money="{{ data.cards.sales.value }}"></strong><em>{{ data.cards.sales.count }} NF-e{% if data.cards.sales.variation is not none %} · {{ '+' if data.cards.sales.variation >= 0 else '' }}{{ '%.1f'|format(data.cards.sales.variation) }}% vs. período anterior{% endif %}</em></span><i>›</i>
+    </button>
+    <button class="bi-fast-kpi tone-violet" type="button" data-detail="cash-period">
+      <span class="bi-fast-kpi-icon">⇄</span><span><small>FLUXO LÍQUIDO · PERÍODO</small><strong data-money="{{ data.cards.cash.net }}"></strong><em>Entradas <b data-money="{{ data.cards.cash.received }}"></b> · Saídas <b data-money="{{ data.cards.cash.paid }}"></b></em></span><i>›</i>
+    </button>
+  </div>
+
+  <div class="bi-fast-chart-grid">
+    <article class="bi-fast-panel">
+      <div class="bi-fast-panel-head"><div><span>CARTEIRA</span><h2>Contas a Receber × Contas a Pagar</h2></div><small>Posição atual por vencimento</small></div>
+      <div class="bi-fast-bars" role="img" aria-label="Comparação da carteira por faixa de vencimento">
+        {% set maxv = namespace(v=1) %}{% for r in data.open_buckets %}{% if r.receber > maxv.v %}{% set maxv.v=r.receber %}{% endif %}{% if r.pagar > maxv.v %}{% set maxv.v=r.pagar %}{% endif %}{% endfor %}
+        {% for r in data.open_buckets %}
+        <div class="bi-fast-bar-group">
+          <div class="bi-fast-bar-value"><span data-money="{{ r.receber }}"></span><span data-money="{{ r.pagar }}"></span></div>
+          <div class="bi-fast-bar-pair"><i class="receive" style="height:{{ (r.receber / maxv.v * 100)|round(1) }}%"></i><i class="pay" style="height:{{ (r.pagar / maxv.v * 100)|round(1) }}%"></i></div>
+          <b>{{ r.label }}</b>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="bi-fast-legend"><span><i class="receive"></i> A receber</span><span><i class="pay"></i> A pagar</span></div>
+    </article>
+
+    <article class="bi-fast-panel">
+      <div class="bi-fast-panel-head"><div><span>FATURAMENTO</span><h2>Evolução dos últimos 6 meses</h2></div><small>CFOPs excluídos não entram</small></div>
+      <div class="bi-fast-trend" data-values='{{ data.sales_trend|tojson }}'>
+        <svg viewBox="0 0 620 220" preserveAspectRatio="none" aria-label="Evolução do faturamento"><g class="grid"></g><polyline points="" class="line"></polyline><g class="points"></g></svg>
+        <div class="labels">{% for r in data.sales_trend %}<span>{{ r.label }}</span>{% endfor %}</div>
+      </div>
+    </article>
+  </div>
+
+  <div class="bi-fast-finance-grid">
+    <article class="bi-fast-summary tone-green">
+      <button type="button" class="bi-fast-summary-title" data-detail="ar-open"><span>↓</span><b>Contas a Receber</b><i>›</i></button>
+      <div class="bi-fast-summary-metrics">
+        <button type="button" data-detail="ar-overdue"><small>Vencido</small><strong data-money="{{ data.cards.ar.overdue }}"></strong></button>
+        <button type="button" data-detail="ar-due"><small>A vencer</small><strong data-money="{{ data.cards.ar.due }}"></strong></button>
+        <button type="button" data-detail="ar-open"><small>Total em aberto</small><strong data-money="{{ data.cards.ar.open }}"></strong></button>
+        <button type="button" data-detail="ar-received"><small>Recebido no período</small><strong data-money="{{ data.cards.cash.received }}"></strong></button>
+      </div>
+    </article>
+    <article class="bi-fast-summary tone-red">
+      <button type="button" class="bi-fast-summary-title" data-detail="ap-open"><span>↑</span><b>Contas a Pagar</b><i>›</i></button>
+      <div class="bi-fast-summary-metrics">
+        <button type="button" data-detail="ap-overdue"><small>Vencido</small><strong data-money="{{ data.cards.ap.overdue }}"></strong></button>
+        <button type="button" data-detail="ap-due"><small>A vencer</small><strong data-money="{{ data.cards.ap.due }}"></strong></button>
+        <button type="button" data-detail="ap-open"><small>Total em aberto</small><strong data-money="{{ data.cards.ap.open }}"></strong></button>
+        <button type="button" data-detail="ap-paid"><small>Pago no período</small><strong data-money="{{ data.cards.cash.paid }}"></strong></button>
+      </div>
+    </article>
+  </div>
+
+  <div class="bi-fast-bottom-grid">
+    <article class="bi-fast-panel bi-fast-ranking">
+      <button type="button" class="bi-fast-panel-title-button" data-detail="top-clients"><span>👥</span><b>Maiores clientes em aberto</b><i>›</i></button>
+      <ol>{% for r in data.top_clients %}<li><span>{{ r.name }}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li class="empty">Sem valores em aberto.</li>{% endfor %}</ol>
+    </article>
+    <article class="bi-fast-panel bi-fast-ranking">
+      <button type="button" class="bi-fast-panel-title-button" data-detail="top-suppliers"><span>▣</span><b>Maiores fornecedores em aberto</b><i>›</i></button>
+      <ol>{% for r in data.top_suppliers %}<li><span>{{ r.name }}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li class="empty">Sem valores em aberto.</li>{% endfor %}</ol>
+    </article>
+    <article class="bi-fast-panel bi-fast-agenda">
+      <button type="button" class="bi-fast-panel-title-button" data-detail="agenda-7"><span>▦</span><b>Agenda financeira · 7 dias</b><i>›</i></button>
+      <div class="bi-fast-agenda-list">{% for r in data.agenda[:6] %}<div><time>{{ r.due[8:10] }}/{{ r.due[5:7] }}</time><span>{{ r.partner }}</span><em class="{{ 'receive' if r.kind=='RECEBER' else 'pay' }}">{{ 'Receber' if r.kind=='RECEBER' else 'Pagar' }}</em><b data-money="{{ r.value }}"></b></div>{% else %}<p>Sem vencimentos nos próximos 7 dias.</p>{% endfor %}</div>
+    </article>
+  </div>
+
+  <details class="bi-fast-advanced">
+    <summary><span><b>Análises avançadas</b><small>DRE, Comercial, Produtos, Compras e Logística — carregadas somente quando abertas.</small></span><i>⌄</i></summary>
+    <div class="bi-fast-advanced-grid">
+      {% for key,label in [('faturamento','Faturamento detalhado'),('vendedores','Comercial — Vendedores'),('clientes','Comercial — Clientes'),('produtos','Produtos e Rentabilidade'),('compras','Compras e Fornecedores'),('estoque-logistica','Estoque e Logística'),('dre','DRE Gerencial'),('alertas','Alertas e Oportunidades')] %}
+      <a href="/bi/analise/{{ key }}?period={{ period }}&date_from={{ data.meta.start.isoformat() }}&date_to={{ data.meta.end.isoformat() }}"><b>{{ label }}</b><span>›</span></a>
+      {% endfor %}
+    </div>
+  </details>
+</section>
+
+<div class="bi-fast-drawer-backdrop" hidden></div>
+<aside class="bi-fast-drawer" aria-hidden="true" aria-label="Detalhamento do indicador">
+  <header><div><small>DETALHAMENTO</small><h2 id="bi-fast-drawer-title">Carregando…</h2></div><button type="button" class="bi-fast-drawer-close" aria-label="Fechar">×</button></header>
+  <div class="bi-fast-drawer-body"><div class="bi-fast-loading">Carregando detalhes…</div></div>
+</aside>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const root=document.querySelector('.bi-fast-shell'); if(!root) return;
+  const brl=v=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(v||0));
+  const formatMoney=scope=>(scope||document).querySelectorAll('[data-money]').forEach(el=>{if(el.tagName.toLowerCase()==='circle')return;el.textContent=brl(el.dataset.money);});
+  formatMoney(root);
+  const customTrigger=root.querySelector('.bi-fast-custom-trigger'), custom=root.querySelector('.bi-fast-custom');
+  if(customTrigger&&custom){customTrigger.addEventListener('click',()=>{custom.hidden=!custom.hidden;});}
+
+  const trend=root.querySelector('.bi-fast-trend');
+  if(trend){
+    try{
+      const data=JSON.parse(trend.dataset.values||'[]'), svg=trend.querySelector('svg'), line=trend.querySelector('.line'), points=trend.querySelector('.points');
+      const vals=data.map(x=>Number(x.value)||0), max=Math.max(...vals,1), min=Math.min(...vals,0), span=Math.max(max-min,1);
+      const coords=vals.map((v,i)=>{const x=25+(i*(570/Math.max(vals.length-1,1)));const y=190-((v-min)/span*150);return [x,y];});
+      line.setAttribute('points',coords.map(p=>p.join(',')).join(' '));
+      coords.forEach((p,i)=>{const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('cx',p[0]);c.setAttribute('cy',p[1]);c.setAttribute('r','5');c.setAttribute('data-money',vals[i]);points.appendChild(c);});
+      const grid=trend.querySelector('.grid');[40,90,140,190].forEach(y=>{const l=document.createElementNS('http://www.w3.org/2000/svg','line');l.setAttribute('x1','20');l.setAttribute('x2','600');l.setAttribute('y1',y);l.setAttribute('y2',y);grid.appendChild(l);});
+    }catch(e){}
+  }
+
+  const drawer=document.querySelector('.bi-fast-drawer'), backdrop=document.querySelector('.bi-fast-drawer-backdrop'), body=drawer?.querySelector('.bi-fast-drawer-body'), title=drawer?.querySelector('#bi-fast-drawer-title');
+  function closeDrawer(){if(!drawer)return;drawer.classList.remove('open');drawer.setAttribute('aria-hidden','true');if(backdrop)backdrop.hidden=true;}
+  async function openDetail(key){
+    if(!drawer||!body||!title)return;
+    if(backdrop)backdrop.hidden=false; drawer.classList.add('open'); drawer.setAttribute('aria-hidden','false'); title.textContent='Carregando…'; body.innerHTML='<div class="bi-fast-loading">Carregando detalhes…</div>';
+    const params=new URLSearchParams({period:root.dataset.period,date_from:root.dataset.from,date_to:root.dataset.to});
+    try{const res=await fetch('/bi/detalhe/'+encodeURIComponent(key)+'?'+params.toString(),{headers:{'X-Requested-With':'fetch'}});if(!res.ok)throw new Error('HTTP '+res.status);body.innerHTML=await res.text();formatMoney(body);const h=body.querySelector('[data-detail-title]');if(h)title.textContent=h.dataset.detailTitle;}catch(e){title.textContent='Detalhes';body.innerHTML='<div class="bi-fast-error">Não foi possível carregar o detalhe. Tente novamente.</div>';}
+  }
+  root.querySelectorAll('[data-detail]').forEach(el=>el.addEventListener('click',()=>openDetail(el.dataset.detail)));
+  drawer?.querySelector('.bi-fast-drawer-close')?.addEventListener('click',closeDrawer);backdrop?.addEventListener('click',closeDrawer);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+})();
+</script>
+{% endblock %}

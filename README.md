@@ -696,3 +696,19 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - mantém recebimentos, pagamentos, emissões, faturamento, compras, DRE, comercial, produtos e logística filtrados pelo período correspondente;
 - projeções de 7/15/30/60/90 dias continuam partindo da posição atual e passam a ser identificadas explicitamente como projeção;
 - sem alteração de schema (permanece 18).
+
+
+## V1.3.67 — BI executivo rápido com drill-down sob demanda
+
+- recria a tela principal do BI com layout executivo inspirado no mockup aprovado;
+- quatro cards principais: A Receber, A Pagar, Faturamento e Fluxo Líquido;
+- comparativo visual de Receber × Pagar por faixa de vencimento;
+- evolução de faturamento em seis meses;
+- resumos de Contas a Receber e Contas a Pagar com cards clicáveis;
+- maiores clientes, maiores fornecedores e agenda financeira de sete dias;
+- detalhes de títulos/NF-e são carregados via endpoint somente após o clique, evitando montar tabelas escondidas na abertura;
+- nova camada `bi_fast.py` usa agregações SQL e consulta somente registros necessários ao resumo;
+- CFOPs excluídos e cancelamentos continuam fora do faturamento;
+- análises completas antigas permanecem disponíveis em **Análises avançadas**, executadas apenas quando solicitadas;
+- benchmark sintético local (5.000 títulos + 1.800 NF-e): ~65 ms para o resumo novo contra ~2,3 s para o BI legado no mesmo cenário; resultados reais dependem do Railway/banco;
+- schema permanece 18.

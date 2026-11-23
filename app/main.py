@@ -43,6 +43,7 @@ from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, en
 from .logistics_import import import_logistics_file
 from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES
 from .bi_service import build_bi, SECTIONS, DRE_GROUPS
+from .bi_fast import build_fast_bi, build_fast_detail
 from .xml_parser import parse_nfe
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -59,7 +60,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.66")
+app = FastAPI(title=APP_NAME, version="1.3.67")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -227,7 +228,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.66", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.67", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -558,18 +559,35 @@ async def bi_dre_classificacao(request: Request):
     return RedirectResponse("/bi/dre?" + urlencode(query), status_code=303)
 
 
-@app.get("/bi/{section}", response_class=HTMLResponse)
-def bi_section(request: Request, section: str, period: str = "month", date_from: str = "", date_to: str = ""):
+@app.get("/bi/analise/{section}", response_class=HTMLResponse)
+def bi_advanced_analysis(request: Request, section: str, period: str = "month", date_from: str = "", date_to: str = ""):
     if section not in SECTIONS:
         return RedirectResponse("/bi/visao-geral", status_code=302)
-    # O painel de Faturamento abre no dia atual por padrão. As demais áreas mantêm o mês atual.
-    if section == "faturamento" and request.query_params.get("period") is None and not date_from and not date_to:
-        period = "today"
     filters = _bi_filters_from_request(request)
     with SessionLocal() as db:
         cid, company = company_context(db, request)
         data = build_bi(db, cid, period, date_from, date_to, filters)
-    return render(request, "bi.html", company=company, data=data, sections=SECTIONS, section=section, section_title=SECTIONS[section], period=period, filters=filters)
+    return render(request, "bi_legacy.html", company=company, data=data, sections=SECTIONS, section=section, section_title=SECTIONS[section], period=period, filters=filters)
+
+
+@app.get("/bi/detalhe/{detail_key}", response_class=HTMLResponse)
+def bi_fast_detail(request: Request, detail_key: str, period: str = "month", date_from: str = "", date_to: str = ""):
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        detail = build_fast_detail(db, cid, detail_key, period, date_from, date_to)
+    return render(request, "bi_fast_detail.html", company=company, detail=detail)
+
+
+@app.get("/bi/{section}", response_class=HTMLResponse)
+def bi_section(request: Request, section: str, period: str = "month", date_from: str = "", date_to: str = ""):
+    if section not in SECTIONS:
+        return RedirectResponse("/bi/visao-geral", status_code=302)
+    # V1.3.67: todo o BI principal usa a camada leve. O parâmetro section é
+    # preservado por compatibilidade com favoritos/menus antigos.
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        data = build_fast_bi(db, cid, period, date_from, date_to)
+    return render(request, "bi_fast.html", company=company, data=data, sections=SECTIONS, section=section, section_title="BI Gerencial", period=period)
 
 
 @app.get("/sincronizacao", response_class=HTMLResponse)
