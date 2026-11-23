@@ -36,7 +36,7 @@
       <span class="bi-fast-kpi-icon">↗</span><span><small>FATURAMENTO · PERÍODO</small><strong data-money="{{ data.cards.sales.value }}"></strong><em>{{ data.cards.sales.count }} NF-e{% if data.cards.sales.variation is not none %} · {{ '+' if data.cards.sales.variation >= 0 else '' }}{{ '%.1f'|format(data.cards.sales.variation) }}% vs. período anterior{% endif %}</em></span><i>›</i>
     </button>
     <button class="bi-fast-kpi tone-teal" type="button" data-detail="commercial">
-      <span class="bi-fast-kpi-icon">◎</span><span><small>COMERCIAL · PERÍODO</small><strong>{{ data.cards.sales.count }} NF-e</strong><em>Vendedor · categoria · subcategoria</em></span><i>›</i>
+      <span class="bi-fast-kpi-icon">◎</span><span><small>COMERCIAL · PERÍODO</small><strong>{{ data.cards.sales.count }} NF-e</strong><em>Indicadores comerciais diretos · toque para detalhar</em></span><i>›</i>
     </button>
     <button class="bi-fast-kpi tone-violet" type="button" data-detail="cash-period">
       <span class="bi-fast-kpi-icon">⇄</span><span><small>FLUXO LÍQUIDO · PERÍODO</small><strong data-money="{{ data.cards.cash.net }}"></strong><em>Entradas <b data-money="{{ data.cards.cash.received }}"></b> · Saídas <b data-money="{{ data.cards.cash.paid }}"></b></em></span><i>›</i>
@@ -67,6 +67,30 @@
       </div>
     </article>
   </div>
+
+  <section class="bi-fast-commercial-panel">
+    <div class="bi-fast-panel-head"><div><span>COMERCIAL</span><h2>Indicadores rápidos</h2></div><small>Resumo visível no painel principal</small></div>
+    <div class="bi-fast-commercial-grid">
+      <button type="button" class="bi-fast-commercial-card" data-detail="commercial-seller">
+        <small>Top vendedor</small>
+        <strong>{{ data.commercial.seller.name if data.commercial.seller else 'Sem vendedor identificado' }}</strong>
+        <em>{% if data.commercial.seller %}{{ data.commercial.seller.count }} NF-e · {{ '%.1f'|format(data.commercial.seller.share if data.commercial.seller.share is defined else 0) }}{% else %}Sem dados no período{% endif %}</em>
+        <b {% if data.commercial.seller %}data-money="{{ data.commercial.seller.value }}"{% endif %}>{{ '' if data.commercial.seller else '—' }}</b>
+      </button>
+      <button type="button" class="bi-fast-commercial-card" data-detail="commercial-category">
+        <small>Top categoria</small>
+        <strong>{{ data.commercial.category.name if data.commercial.category else 'Sem categoria' }}</strong>
+        <em>{% if data.commercial.category %}{{ data.commercial.category.count }} item(ns){% else %}Sem dados no período{% endif %}</em>
+        <b {% if data.commercial.category %}data-money="{{ data.commercial.category.value }}"{% endif %}>{{ '' if data.commercial.category else '—' }}</b>
+      </button>
+      <button type="button" class="bi-fast-commercial-card" data-detail="commercial-subcategory">
+        <small>Top subcategoria</small>
+        <strong>{{ data.commercial.subcategory.name if data.commercial.subcategory else 'Sem subcategoria' }}</strong>
+        <em>{% if data.commercial.subcategory %}{{ data.commercial.subcategory.count }} item(ns){% else %}Sem dados no período{% endif %}</em>
+        <b {% if data.commercial.subcategory %}data-money="{{ data.commercial.subcategory.value }}"{% endif %}>{{ '' if data.commercial.subcategory else '—' }}</b>
+      </button>
+    </div>
+  </section>
 
   <div class="bi-fast-finance-grid">
     <article class="bi-fast-summary tone-green">
@@ -119,6 +143,9 @@
   <header><div><small>DETALHAMENTO</small><h2 id="bi-fast-drawer-title">Carregando…</h2></div><button type="button" class="bi-fast-drawer-close" aria-label="Fechar">×</button></header>
   <div class="bi-fast-drawer-body"><div class="bi-fast-loading">Carregando detalhes…</div></div>
 </aside>
+<style>
+.bi-fast-commercial-panel{margin:18px 0 22px}.bi-fast-commercial-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.bi-fast-commercial-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:16px;border:1px solid #dbe4f0;border-radius:16px;background:#fff;color:#0f2745;text-align:left}.bi-fast-commercial-card small{font-size:.74rem;font-weight:800;color:#2563eb;text-transform:uppercase;letter-spacing:.04em}.bi-fast-commercial-card strong{font-size:1rem;line-height:1.25}.bi-fast-commercial-card em{font-style:normal;color:#64748b;font-size:.78rem}.bi-fast-commercial-card b{margin-top:4px;font-size:1.15rem}.bi-fast-commercial-card:hover{border-color:#93c5fd;box-shadow:0 8px 22px rgba(15,39,69,.08)}@media(max-width:900px){.bi-fast-commercial-grid{grid-template-columns:1fr}}.bi-fast-detail-table.nested{font-size:.78rem}.accordion-list .bi-fast-breakdown-row.grouped summary{list-style:none;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(120px,1fr) auto;gap:12px;align-items:center;cursor:pointer;padding:12px 0}.accordion-list .bi-fast-breakdown-row.grouped summary::-webkit-details-marker{display:none}.bi-fast-group-body{padding:0 0 10px 0}.bi-fast-breakdown-row.grouped{border-bottom:1px solid #e8edf4}.bi-fast-breakdown-row.grouped:last-child{border-bottom:0}@media(max-width:700px){.accordion-list .bi-fast-breakdown-row.grouped summary{grid-template-columns:1fr;gap:6px}.bi-fast-detail-table.nested th:nth-child(2),.bi-fast-detail-table.nested td:nth-child(2),.bi-fast-detail-table.nested th:nth-child(3),.bi-fast-detail-table.nested td:nth-child(3){white-space:nowrap}}
+</style>
 {% endblock %}
 {% block scripts %}
 <script>

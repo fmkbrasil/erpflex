@@ -1,3 +1,6 @@
+{% macro invoice_table(rows) -%}
+<div class="table-wrap"><table class="bi-fast-detail-table nested"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>{% if rows and rows[0].item is defined %}Item{% else %}Valor{% endif %}</th><th>Valor</th></tr></thead><tbody>{% for r in rows %}<tr><td>{% if r.id %}<a href="/faturamento/{{ r.id }}">{{ r.number }}</a>{% else %}{{ r.number }}{% endif %}</td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td>{% if r.item is defined %}{{ r.item }}{% else %}—{% endif %}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="5">Sem documentos.</td></tr>{% endfor %}</tbody></table></div>
+{%- endmacro %}
 <div data-detail-title="{{ detail.title }}">
 {% if detail.options %}
   <nav class="bi-fast-detail-tabs" aria-label="Formas de visualização">
@@ -13,11 +16,42 @@
   <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente/Fornecedor</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
   {% for r in detail.rows %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.issue }}</td><td>{{ r.due }}</td><td>{{ r.paid_date }}</td><td><span data-money="{{ r.value }}"></span></td><td><span data-money="{{ r.paid }}"></span></td><td><b data-money="{{ r.balance }}"></b></td></tr>{% else %}<tr><td colspan="8">Sem registros.</td></tr>{% endfor %}
   </tbody></table></div>
-{% elif detail.kind == 'contract_financial' %}
-  <div class="bi-fast-detail-meta">Mostrando até {{ detail.rows|length }} títulos de cobrança por contrato.</div>
-  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente</th><th>Vencimento</th><th>Bruto</th><th>Desconto</th><th>Líquido</th><th>Recebido</th><th>Saldo líquido</th></tr></thead><tbody>
-  {% for r in detail.rows %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.due }}</td><td><span data-money="{{ r.value }}"></span></td><td><b>{{ '%.2f'|format(r.discount_percent) }}%</b><small><span data-money="{{ r.discount }}"></span></small></td><td><b data-money="{{ r.net }}"></b></td><td><span data-money="{{ r.paid }}"></span></td><td><b data-money="{{ r.net_balance }}"></b></td></tr>{% else %}<tr><td colspan="8">Sem contratos em aberto.</td></tr>{% endfor %}
-  </tbody></table></div>
+{% elif detail.kind == 'grouped_financial' %}
+  <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
+  <div class="bi-fast-breakdown-list accordion-list">
+  {% for r in detail.rows %}
+    <details class="bi-fast-breakdown-row grouped" {% if loop.first %}open{% endif %}>
+      <summary>
+        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s)</small></div>
+        <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
+        <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
+      </summary>
+      <div class="bi-fast-group-body">
+        <div class="table-wrap"><table class="bi-fast-detail-table nested"><thead><tr><th>Documento</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
+        {% for t in r.titles %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.issue }}</td><td>{{ t.due }}</td><td>{{ t.paid_date }}</td><td><span data-money="{{ t.value }}"></span></td><td><span data-money="{{ t.paid }}"></span></td><td><b data-money="{{ t.balance }}"></b></td></tr>{% else %}<tr><td colspan="7">Sem títulos.</td></tr>{% endfor %}
+        </tbody></table></div>
+      </div>
+    </details>
+  {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}
+  </div>
+{% elif detail.kind == 'grouped_contract' %}
+  <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
+  <div class="bi-fast-breakdown-list accordion-list">
+  {% for r in detail.rows %}
+    <details class="bi-fast-breakdown-row grouped" {% if loop.first %}open{% endif %}>
+      <summary>
+        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s) · bruto <span data-money="{{ r.gross }}"></span></small></div>
+        <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
+        <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>saldo líquido</small></div>
+      </summary>
+      <div class="bi-fast-group-body">
+        <div class="table-wrap"><table class="bi-fast-detail-table nested"><thead><tr><th>Documento</th><th>Vencimento</th><th>Bruto</th><th>Desconto</th><th>Líquido</th><th>Recebido</th><th>Saldo líquido</th></tr></thead><tbody>
+        {% for t in r.titles %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.due }}</td><td><span data-money="{{ t.value }}"></span></td><td><b>{{ '%.2f'|format(t.discount_percent) }}%</b><small><span data-money="{{ t.discount }}"></span></small></td><td><b data-money="{{ t.net }}"></b></td><td><span data-money="{{ t.paid }}"></span></td><td><b data-money="{{ t.net_balance }}"></b></td></tr>{% else %}<tr><td colspan="7">Sem títulos.</td></tr>{% endfor %}
+        </tbody></table></div>
+      </div>
+    </details>
+  {% else %}<div class="bi-fast-empty">Sem contratos em aberto.</div>{% endfor %}
+  </div>
 {% elif detail.kind == 'breakdown' %}
   <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
   <div class="bi-fast-breakdown-list">
@@ -27,6 +61,20 @@
       <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
       <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
     </div>
+  {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}
+  </div>
+{% elif detail.kind == 'grouped_breakdown' %}
+  <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
+  <div class="bi-fast-breakdown-list accordion-list">
+  {% for r in detail.rows %}
+    <details class="bi-fast-breakdown-row grouped" {% if loop.first %}open{% endif %}>
+      <summary>
+        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} documento(s)</small></div>
+        <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
+        <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
+      </summary>
+      <div class="bi-fast-group-body">{{ invoice_table(r.invoices) }}</div>
+    </details>
   {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}
   </div>
 {% elif detail.kind == 'sales' %}

@@ -312,6 +312,7 @@ def build_fast_bi(db, cid: int, period: str = "month", date_from: str = "", date
         "top_clients": _top_open_partners(db, cid, "RECEBER", 5),
         "top_suppliers": _top_open_partners(db, cid, "PAGAR", 5),
         "agenda": _agenda(db, cid, 7, 12),
+        "commercial": _commercial_snapshot(db, cid, start, end),
     }
     result["meta"]["generated_ms"] = int((time.perf_counter() - started) * 1000)
     return result
@@ -375,7 +376,8 @@ DETAIL_OPTIONS = {
     ],
     "sales": [
         ("sales-client", "Por cliente"),
-        ("sales-region", "Por região"),
+        ("sales-zone", "Por zona"),
+        ("sales-state", "Por estado"),
         ("sales-terms", "Prazo de pagamento"),
         ("sales-period", "NF-e do período"),
     ],
@@ -645,59 +647,283 @@ def _product_breakdown(db, cid: int, start: date, end: date, mode: str) -> list[
 
 
 def _sales_invoice_detail(db, cid: int, start: date, end: date) -> dict:
+    rows = _sales_invoice_rows(db, cid, start, end)[:100]
+    return {"title": "NF-e do período", "kind": "sales", "rows": rows}
+
+
+
+
+def _grouped_financial_detail(title: str, rows: list[dict], note: str = "", aggregate_on: str = "balance", partner_label: str = "Cliente/Fornecedor") -> dict:
+    acc: dict[str, dict] = {}
+    for row in rows:
+        name = str(row.get("partner") or "Sem cadastro")
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "titles": []})
+        cell["count"] += 1
+        cell["value"] += _money(row.get(aggregate_on))
+        cell["titles"].append(row)
+    items = sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+    total = round(sum(_money(r["value"]) for r in items), 2)
+    for item in items:
+        item["share"] = _pct(_money(item["value"]), total) if total else 0.0
+    return {"title": title, "kind": "grouped_financial", "rows": items, "total": total, "note": note, "partner_label": partner_label}
+
+
+def _grouped_contract_detail(title: str, rows: list[dict], note: str = "") -> dict:
+    acc: dict[str, dict] = {}
+    for row in rows:
+        name = str(row.get("partner") or "Sem cadastro")
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "gross": 0.0, "discount": 0.0, "received": 0.0, "titles": []})
+        cell["count"] += 1
+        cell["value"] += _money(row.get("net_balance"))
+        cell["gross"] += _money(row.get("value"))
+        cell["discount"] += _money(row.get("discount"))
+        cell["received"] += _money(row.get("paid"))
+        cell["titles"].append(row)
+    items = sorted(({**v, "value": round(v["value"], 2), "gross": round(v["gross"], 2), "discount": round(v["discount"], 2), "received": round(v["received"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+    total = round(sum(_money(r["value"]) for r in items), 2)
+    for item in items:
+        item["share"] = _pct(_money(item["value"]), total) if total else 0.0
+    return {"title": title, "kind": "grouped_contract", "rows": items, "total": total, "note": note, "partner_label": "Cliente"}
+
+
+def _group_breakdown_with_children(title: str, rows: list[dict], note: str = "") -> dict:
+    total = round(sum(_money(r.get("value")) for r in rows), 2)
+    for row in rows:
+        row["share"] = _pct(_money(row.get("value")), total) if total else 0.0
+    return {"title": title, "kind": "grouped_breakdown", "rows": rows, "total": total, "note": note}
+
+
+def _classify_zone(name: str) -> str:
+    t = str(name or "").strip().lower()
+    if not t:
+        return "Sem zona classificada"
+    if "leste" in t:
+        return "Zona Leste"
+    if "oeste" in t:
+        return "Zona Oeste"
+    if "norte" in t:
+        return "Zona Norte"
+    if "sul" in t:
+        return "Zona Sul"
+    if "centro" in t or "central" in t:
+        return "Centro"
+    if "abc" in t:
+        return "ABC"
+    if "interior" in t:
+        return "Interior"
+    if "litoral" in t or "baixada" in t:
+        return "Litoral"
+    return str(name).strip()
+
+
+def _sales_invoice_rows(db, cid: int, start: date, end: date) -> list[dict]:
     sales = _sales_rows(db, cid, start, end)
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
-    rows = [
+    return [
         {"id": int(r.id), "number": r.number or "—", "date": r.issue_date or "—",
          "partner": ((partners.get(int(r.customer_id or 0)).trade_name or partners.get(int(r.customer_id or 0)).name) if partners.get(int(r.customer_id or 0)) else "Sem cadastro"),
          "value": _money(r.total)}
-        for r in sorted(sales, key=lambda x: str(x.issue_date or ""), reverse=True)[:100]
+        for r in sorted(sales, key=lambda x: str(x.issue_date or ""), reverse=True)
     ]
-    return {"title": "NF-e do período", "kind": "sales", "rows": rows}
 
+
+def _sales_grouped_by_partner(db, cid: int, start: date, end: date) -> list[dict]:
+    rows = _sales_invoice_rows(db, cid, start, end)
+    acc: dict[str, dict] = {}
+    for row in rows:
+        name = row["partner"]
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": []})
+        cell["count"] += 1
+        cell["value"] += _money(row["value"])
+        cell["invoices"].append(row)
+    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+
+
+def _sales_grouped_by_zone(db, cid: int, start: date, end: date) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    if not sales:
+        return []
+    ids = [int(r.id) for r in sales]
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    delivery_rows = db.execute(select(Delivery.sales_invoice_id, Delivery.region).where(Delivery.company_id == cid, Delivery.sales_invoice_id.in_(ids))).all()
+    region_by_invoice = {int(invoice_id): str(region or "").strip() for invoice_id, region in delivery_rows}
+    acc: dict[str, dict] = {}
+    for inv in sales:
+        raw_region = region_by_invoice.get(int(inv.id)) or "Sem zona classificada"
+        zone = _classify_zone(raw_region)
+        partner = partners.get(int(inv.customer_id or 0))
+        invoice = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": _money(inv.total), "region": raw_region}
+        cell = acc.setdefault(zone, {"name": zone, "count": 0, "value": 0.0, "invoices": []})
+        cell["count"] += 1
+        cell["value"] += _money(inv.total)
+        cell["invoices"].append(invoice)
+    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+
+
+def _sales_grouped_by_state(db, cid: int, start: date, end: date) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    if not sales:
+        return []
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    acc: dict[str, dict] = {}
+    for inv in sales:
+        partner = partners.get(int(inv.customer_id or 0))
+        state = str((partner.delivery_state if partner and partner.delivery_state else partner.state if partner else None) or "Sem estado").strip().upper()
+        invoice = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": _money(inv.total)}
+        cell = acc.setdefault(state, {"name": state, "count": 0, "value": 0.0, "invoices": []})
+        cell["count"] += 1
+        cell["value"] += _money(inv.total)
+        cell["invoices"].append(invoice)
+    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+
+
+def _sales_grouped_by_terms(db, cid: int, start: date, end: date) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    acc: dict[str, dict] = {}
+    for inv in sales:
+        partner = partners.get(int(inv.customer_id or 0))
+        name = str((partner.payment_terms if partner else None) or "Sem prazo cadastrado").strip()
+        invoice = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": _money(inv.total)}
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": []})
+        cell["count"] += 1
+        cell["value"] += _money(inv.total)
+        cell["invoices"].append(invoice)
+    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+
+
+def _commercial_grouped_by_seller(db, cid: int, start: date, end: date) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    if not sales:
+        return []
+    invoice_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in sales if r.raw_record_id])
+    order_rows = db.execute(select(SalesOrder.erpflex_id, SalesOrder.number, SalesOrder.seller_id, SalesOrder.seller_name, SalesOrder.raw_record_id).where(SalesOrder.company_id == cid)).all()
+    order_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in order_rows if r.raw_record_id])
+    by_id: dict[str, str] = {}
+    by_number: dict[str, list[str]] = defaultdict(list)
+    for order in order_rows:
+        info = _seller_info(order_payloads.get(int(order.raw_record_id), {}) if order.raw_record_id else {})
+        seller = str(order.seller_name or info.get("name") or (f"Vendedor ID {order.seller_id or info.get('id')}" if (order.seller_id or info.get("id")) else "")).strip()
+        if not seller:
+            continue
+        oid = str(order.erpflex_id or "").strip()
+        onum = str(order.number or "").strip()
+        if oid:
+            by_id[oid] = seller
+        if onum and seller not in by_number[onum]:
+            by_number[onum].append(seller)
+    def seller_for(inv) -> str:
+        payload = invoice_payloads.get(int(inv.raw_record_id), {}) if inv.raw_record_id else {}
+        direct = _seller_info(payload).get("display")
+        if direct:
+            return str(direct)
+        oid = str(_walk_find(payload, {"orcamento_id", "id_orcamento", "pedido_id", "id_pedido", "solicitacao_id", "id_solicitacao"}) or "").strip()
+        if oid and oid in by_id:
+            return by_id[oid]
+        onum = str(_walk_find(payload, {"numero_pedido", "pedido_numero", "numero_orcamento", "documento"}) or "").strip()
+        candidates = by_number.get(onum, []) if onum else []
+        return candidates[0] if len(candidates) == 1 else "Sem vendedor identificado"
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    acc: dict[str, dict] = {}
+    for inv in sales:
+        name = seller_for(inv)
+        partner = partners.get(int(inv.customer_id or 0))
+        invoice = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": _money(inv.total)}
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": []})
+        cell["count"] += 1
+        cell["value"] += _money(inv.total)
+        cell["invoices"].append(invoice)
+    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+
+
+def _commercial_grouped_by_product(db, cid: int, start: date, end: date, mode: str) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    invoice_ids = [int(r.id) for r in sales]
+    if not invoice_ids:
+        return []
+    items = db.execute(select(SalesInvoiceItem.product_id, SalesInvoiceItem.product_code, SalesInvoiceItem.description, SalesInvoiceItem.total, SalesInvoiceItem.sales_invoice_id).where(SalesInvoiceItem.sales_invoice_id.in_(invoice_ids))).all()
+    product_ids = {str(r.product_id or "").strip() for r in items if str(r.product_id or "").strip()}
+    codes = {str(r.product_code or "").strip() for r in items if str(r.product_code or "").strip()}
+    clauses = []
+    if product_ids:
+        clauses.append(Product.erpflex_id.in_(list(product_ids)))
+    if codes:
+        clauses.append(Product.code.in_(list(codes)))
+    products = db.scalars(select(Product).where(Product.company_id == cid, or_(*clauses))).all() if clauses else []
+    by_external = {str(p.erpflex_id or "").strip(): p for p in products if str(p.erpflex_id or "").strip()}
+    by_code = {str(p.code or "").strip(): p for p in products if str(p.code or "").strip()}
+    sales_map = {int(r.id): r for r in sales}
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    acc: dict[str, dict] = {}
+    for item in items:
+        product = by_external.get(str(item.product_id or "").strip()) or by_code.get(str(item.product_code or "").strip())
+        category = str((product.category if product else None) or "Sem categoria").strip()
+        subcategory = str((product.subcategory if product else None) or "Sem subcategoria").strip()
+        name = category if mode == "category" else f"{category} › {subcategory}"
+        inv = sales_map.get(int(item.sales_invoice_id or 0))
+        partner = partners.get(int(inv.customer_id or 0)) if inv else None
+        invoice = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": _money(item.total), "item": str(item.description or "Item sem descrição")} if inv else {"id": 0, "number": "—", "date": "—", "partner": "Sem cadastro", "value": _money(item.total), "item": str(item.description or "Item sem descrição")}
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": []})
+        cell["count"] += 1
+        cell["value"] += _money(item.total)
+        cell["invoices"].append(invoice)
+    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+
+
+def _commercial_snapshot(db, cid: int, start: date, end: date) -> dict:
+    sellers = _commercial_grouped_by_seller(db, cid, start, end)[:1]
+    categories = _commercial_grouped_by_product(db, cid, start, end, "category")[:1]
+    subcategories = _commercial_grouped_by_product(db, cid, start, end, "subcategory")[:1]
+    return {
+        "seller": sellers[0] if sellers else None,
+        "category": categories[0] if categories else None,
+        "subcategory": subcategories[0] if subcategories else None,
+    }
 
 def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: str = "", date_to: str = "") -> dict:
     start, end = _period_bounds(period, date_from, date_to)
     key = ROOT_DETAIL.get(key, key)
 
     if key == "ar-open":
-        detail = {"title": "Contas a receber em aberto", "kind": "financial", "rows": _title_rows(db, cid, "RECEBER", "open", limit=100)}
+        detail = _grouped_financial_detail("Contas a receber em aberto", _title_rows(db, cid, "RECEBER", "open", limit=200), "Agrupado por cliente. Toque no cliente para ver os títulos.", "balance", "Cliente")
     elif key == "ar-overdue":
-        detail = {"title": "Contas a receber · vencidos", "kind": "financial", "rows": _title_rows(db, cid, "RECEBER", "overdue", limit=100)}
+        detail = _grouped_financial_detail("Contas a receber · vencidos", _title_rows(db, cid, "RECEBER", "overdue", limit=200), "Agrupado por cliente. Toque no cliente para ver os títulos vencidos.", "balance", "Cliente")
     elif key == "ar-due":
-        detail = {"title": "Contas a receber · a vencer", "kind": "financial", "rows": _title_rows(db, cid, "RECEBER", "due", limit=100)}
+        detail = _grouped_financial_detail("Contas a receber · a vencer", _title_rows(db, cid, "RECEBER", "due", limit=200), "Agrupado por cliente. Toque no cliente para ver os títulos a vencer.", "balance", "Cliente")
     elif key == "ar-received":
-        detail = {"title": "Contas a receber · recebidos", "kind": "financial", "rows": _title_rows(db, cid, "RECEBER", "paid", start, end, 100)}
+        detail = _grouped_financial_detail("Contas a receber · recebidos", _title_rows(db, cid, "RECEBER", "paid", start, end, 200), "Agrupado por cliente. Toque no cliente para ver os recebimentos.", "paid", "Cliente")
     elif key == "ar-contract":
-        detail = {"title": "Contas a receber · contratos", "kind": "contract_financial", "rows": _contract_title_rows(db, cid, 100), "note": "Somente títulos em aberto de clientes marcados como cobrança por contrato."}
+        detail = _grouped_contract_detail("Contas a receber · contratos", _contract_title_rows(db, cid, 200), "Clientes marcados como cobrança por contrato. Toque no cliente para ver os títulos.")
     elif key == "ar-bank":
         detail = _breakdown("Contas a receber · por banco", _bank_breakdown(db, cid), "Posição atual dos títulos em aberto.")
     elif key == "ar-aging":
         detail = _breakdown("Contas a receber · aging", _aging_breakdown(db, cid), "Faixas calculadas sobre o saldo atual em aberto.")
     elif key == "ap-open":
-        detail = {"title": "Contas a pagar em aberto", "kind": "financial", "rows": _title_rows(db, cid, "PAGAR", "open", limit=100)}
+        detail = _grouped_financial_detail("Contas a pagar em aberto", _title_rows(db, cid, "PAGAR", "open", limit=200), "Agrupado por fornecedor. Toque no fornecedor para ver os títulos.", "balance", "Fornecedor")
     elif key == "ap-overdue":
-        detail = {"title": "Contas a pagar · vencidos", "kind": "financial", "rows": _title_rows(db, cid, "PAGAR", "overdue", limit=100)}
+        detail = _grouped_financial_detail("Contas a pagar · vencidos", _title_rows(db, cid, "PAGAR", "overdue", limit=200), "Agrupado por fornecedor. Toque no fornecedor para ver os títulos vencidos.", "balance", "Fornecedor")
     elif key == "ap-due":
-        detail = {"title": "Contas a pagar · a vencer", "kind": "financial", "rows": _title_rows(db, cid, "PAGAR", "due", limit=100)}
+        detail = _grouped_financial_detail("Contas a pagar · a vencer", _title_rows(db, cid, "PAGAR", "due", limit=200), "Agrupado por fornecedor. Toque no fornecedor para ver os títulos a vencer.", "balance", "Fornecedor")
     elif key == "ap-paid":
-        detail = {"title": "Contas a pagar · pagos", "kind": "financial", "rows": _title_rows(db, cid, ["PAGAR", "DESPESA"], "paid", start, end, 100)}
+        detail = _grouped_financial_detail("Contas a pagar · pagos", _title_rows(db, cid, ["PAGAR", "DESPESA"], "paid", start, end, 200), "Agrupado por fornecedor. Toque no fornecedor para ver os pagamentos.", "paid", "Fornecedor")
     elif key == "ap-supplier":
         detail = _breakdown("Contas a pagar · por fornecedor", _supplier_breakdown(db, cid), "Posição atual dos títulos em aberto.")
     elif key == "sales-client":
-        detail = _breakdown("Faturamento · por cliente", _sales_client_breakdown(db, cid, start, end), "Somente NF-e válidas do período e fora dos CFOPs excluídos.")
-    elif key == "sales-region":
-        detail = _breakdown("Faturamento · por região", _sales_region_breakdown(db, cid, start, end), "Região logística vinculada à NF-e. Notas sem classificação aparecem separadamente.")
+        detail = _group_breakdown_with_children("Faturamento · por cliente", _sales_grouped_by_partner(db, cid, start, end), "Agrupado por cliente. Toque no cliente para ver as NF-e válidas do período.")
+    elif key == "sales-zone":
+        detail = _group_breakdown_with_children("Faturamento · por zona", _sales_grouped_by_zone(db, cid, start, end), "Classificação por zona usando a região logística da entrega.")
+    elif key == "sales-state":
+        detail = _group_breakdown_with_children("Faturamento · por estado", _sales_grouped_by_state(db, cid, start, end), "Classificação por UF usando o estado de entrega/cadastro do cliente.")
     elif key == "sales-terms":
-        detail = _breakdown("Faturamento · por prazo de pagamento", _sales_terms_breakdown(db, cid, start, end), "Prazo atualmente cadastrado para o cliente da NF-e.")
+        detail = _group_breakdown_with_children("Faturamento · por prazo de pagamento", _sales_grouped_by_terms(db, cid, start, end), "Prazo atualmente cadastrado para o cliente da NF-e.")
     elif key == "sales-period":
         detail = _sales_invoice_detail(db, cid, start, end)
     elif key == "commercial-seller":
-        detail = _breakdown("Comercial · faturamento por vendedor", _seller_breakdown(db, cid, start, end), "Vendedor obtido do faturamento/pedido sincronizado; não identificado permanece separado.")
+        detail = _group_breakdown_with_children("Comercial · faturamento por vendedor", _commercial_grouped_by_seller(db, cid, start, end), "Toque no vendedor para ver as NF-e do período.")
     elif key == "commercial-category":
-        detail = _breakdown("Comercial · por categoria de produtos", _product_breakdown(db, cid, start, end, "category"), "Faturamento dos itens das NF-e válidas do período.")
+        detail = _group_breakdown_with_children("Comercial · por categoria de produtos", _commercial_grouped_by_product(db, cid, start, end, "category"), "Toque na categoria para ver os itens/NF-e relacionados.")
     elif key == "commercial-subcategory":
-        detail = _breakdown("Comercial · por subcategoria de produtos", _product_breakdown(db, cid, start, end, "subcategory"), "Faturamento dos itens das NF-e válidas do período.")
+        detail = _group_breakdown_with_children("Comercial · por subcategoria de produtos", _commercial_grouped_by_product(db, cid, start, end, "subcategory"), "Toque na subcategoria para ver os itens/NF-e relacionados.")
     elif key == "cash-period":
         return {
             "title": "Movimentação financeira do período",
