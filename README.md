@@ -712,3 +712,8 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - análises completas antigas permanecem disponíveis em **Análises avançadas**, executadas apenas quando solicitadas;
 - benchmark sintético local (5.000 títulos + 1.800 NF-e): ~65 ms para o resumo novo contra ~2,3 s para o BI legado no mesmo cenário; resultados reais dependem do Railway/banco;
 - schema permanece 18.
+
+
+## V1.3.68 — Drill-downs múltiplos no BI rápido
+
+O BI rápido passa a abrir um seletor de análises no painel lateral, mantendo o carregamento sob demanda. Receber, Pagar, Faturamento e Comercial possuem visões especializadas sem recalcular o BI completo na abertura. Schema 18.

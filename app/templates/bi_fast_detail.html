@@ -1,9 +1,34 @@
 <div data-detail-title="{{ detail.title }}">
+{% if detail.options %}
+  <nav class="bi-fast-detail-tabs" aria-label="Formas de visualização">
+    {% for opt in detail.options %}
+    <button type="button" data-detail-link="{{ opt.key }}" class="{% if detail.active==opt.key %}active{% endif %}">{{ opt.label }}</button>
+    {% endfor %}
+  </nav>
+{% endif %}
+{% if detail.note %}<div class="bi-fast-detail-note">{{ detail.note }}</div>{% endif %}
+
 {% if detail.kind == 'financial' %}
   <div class="bi-fast-detail-meta">Mostrando até {{ detail.rows|length }} títulos. Clique no documento para abrir o financeiro.</div>
   <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente/Fornecedor</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>
   {% for r in detail.rows %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.issue }}</td><td>{{ r.due }}</td><td>{{ r.paid_date }}</td><td><span data-money="{{ r.value }}"></span></td><td><span data-money="{{ r.paid }}"></span></td><td><b data-money="{{ r.balance }}"></b></td></tr>{% else %}<tr><td colspan="8">Sem registros.</td></tr>{% endfor %}
   </tbody></table></div>
+{% elif detail.kind == 'contract_financial' %}
+  <div class="bi-fast-detail-meta">Mostrando até {{ detail.rows|length }} títulos de cobrança por contrato.</div>
+  <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>Documento</th><th>Cliente</th><th>Vencimento</th><th>Bruto</th><th>Desconto</th><th>Líquido</th><th>Recebido</th><th>Saldo líquido</th></tr></thead><tbody>
+  {% for r in detail.rows %}<tr><td><a href="/financeiro/{{ r.id }}">{{ r.document }}</a></td><td>{{ r.partner }}</td><td>{{ r.due }}</td><td><span data-money="{{ r.value }}"></span></td><td><b>{{ '%.2f'|format(r.discount_percent) }}%</b><small><span data-money="{{ r.discount }}"></span></small></td><td><b data-money="{{ r.net }}"></b></td><td><span data-money="{{ r.paid }}"></span></td><td><b data-money="{{ r.net_balance }}"></b></td></tr>{% else %}<tr><td colspan="8">Sem contratos em aberto.</td></tr>{% endfor %}
+  </tbody></table></div>
+{% elif detail.kind == 'breakdown' %}
+  <div class="bi-fast-breakdown-total"><span>Total da visão</span><b data-money="{{ detail.total }}"></b></div>
+  <div class="bi-fast-breakdown-list">
+  {% for r in detail.rows %}
+    <div class="bi-fast-breakdown-row">
+      <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b>{% if r.count is not none %}<small>{{ r.count }} registro(s)</small>{% endif %}</div>
+      <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
+      <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
+    </div>
+  {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}
+  </div>
 {% elif detail.kind == 'sales' %}
   <div class="bi-fast-detail-meta">NF-e válidas do período, já considerando CFOPs excluídos.</div>
   <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in detail.rows %}<tr><td><a href="/faturamento/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem NF-e no período.</td></tr>{% endfor %}</tbody></table></div>

@@ -26,14 +26,17 @@
   </header>
 
   <div class="bi-fast-executive-grid">
-    <button class="bi-fast-kpi tone-green" type="button" data-detail="ar-open">
+    <button class="bi-fast-kpi tone-green" type="button" data-detail="ar">
       <span class="bi-fast-kpi-icon">↓</span><span><small>A RECEBER · POSIÇÃO ATUAL</small><strong data-money="{{ data.cards.ar.open }}"></strong><em>Vencido <b data-money="{{ data.cards.ar.overdue }}"></b> · {{ '%.1f'|format(data.cards.ar.overdue_pct) }}%</em></span><i>›</i>
     </button>
-    <button class="bi-fast-kpi tone-red" type="button" data-detail="ap-open">
+    <button class="bi-fast-kpi tone-red" type="button" data-detail="ap">
       <span class="bi-fast-kpi-icon">↑</span><span><small>A PAGAR · POSIÇÃO ATUAL</small><strong data-money="{{ data.cards.ap.open }}"></strong><em>Vencido <b data-money="{{ data.cards.ap.overdue }}"></b> · {{ '%.1f'|format(data.cards.ap.overdue_pct) }}%</em></span><i>›</i>
     </button>
-    <button class="bi-fast-kpi tone-blue" type="button" data-detail="sales-period">
+    <button class="bi-fast-kpi tone-blue" type="button" data-detail="sales">
       <span class="bi-fast-kpi-icon">↗</span><span><small>FATURAMENTO · PERÍODO</small><strong data-money="{{ data.cards.sales.value }}"></strong><em>{{ data.cards.sales.count }} NF-e{% if data.cards.sales.variation is not none %} · {{ '+' if data.cards.sales.variation >= 0 else '' }}{{ '%.1f'|format(data.cards.sales.variation) }}% vs. período anterior{% endif %}</em></span><i>›</i>
+    </button>
+    <button class="bi-fast-kpi tone-teal" type="button" data-detail="commercial">
+      <span class="bi-fast-kpi-icon">◎</span><span><small>COMERCIAL · PERÍODO</small><strong>{{ data.cards.sales.count }} NF-e</strong><em>Vendedor · categoria · subcategoria</em></span><i>›</i>
     </button>
     <button class="bi-fast-kpi tone-violet" type="button" data-detail="cash-period">
       <span class="bi-fast-kpi-icon">⇄</span><span><small>FLUXO LÍQUIDO · PERÍODO</small><strong data-money="{{ data.cards.cash.net }}"></strong><em>Entradas <b data-money="{{ data.cards.cash.received }}"></b> · Saídas <b data-money="{{ data.cards.cash.paid }}"></b></em></span><i>›</i>
@@ -67,7 +70,7 @@
 
   <div class="bi-fast-finance-grid">
     <article class="bi-fast-summary tone-green">
-      <button type="button" class="bi-fast-summary-title" data-detail="ar-open"><span>↓</span><b>Contas a Receber</b><i>›</i></button>
+      <button type="button" class="bi-fast-summary-title" data-detail="ar"><span>↓</span><b>Contas a Receber</b><i>›</i></button>
       <div class="bi-fast-summary-metrics">
         <button type="button" data-detail="ar-overdue"><small>Vencido</small><strong data-money="{{ data.cards.ar.overdue }}"></strong></button>
         <button type="button" data-detail="ar-due"><small>A vencer</small><strong data-money="{{ data.cards.ar.due }}"></strong></button>
@@ -76,7 +79,7 @@
       </div>
     </article>
     <article class="bi-fast-summary tone-red">
-      <button type="button" class="bi-fast-summary-title" data-detail="ap-open"><span>↑</span><b>Contas a Pagar</b><i>›</i></button>
+      <button type="button" class="bi-fast-summary-title" data-detail="ap"><span>↑</span><b>Contas a Pagar</b><i>›</i></button>
       <div class="bi-fast-summary-metrics">
         <button type="button" data-detail="ap-overdue"><small>Vencido</small><strong data-money="{{ data.cards.ap.overdue }}"></strong></button>
         <button type="button" data-detail="ap-due"><small>A vencer</small><strong data-money="{{ data.cards.ap.due }}"></strong></button>
@@ -148,6 +151,7 @@
     try{const res=await fetch('/bi/detalhe/'+encodeURIComponent(key)+'?'+params.toString(),{headers:{'X-Requested-With':'fetch'}});if(!res.ok)throw new Error('HTTP '+res.status);body.innerHTML=await res.text();formatMoney(body);const h=body.querySelector('[data-detail-title]');if(h)title.textContent=h.dataset.detailTitle;}catch(e){title.textContent='Detalhes';body.innerHTML='<div class="bi-fast-error">Não foi possível carregar o detalhe. Tente novamente.</div>';}
   }
   root.querySelectorAll('[data-detail]').forEach(el=>el.addEventListener('click',()=>openDetail(el.dataset.detail)));
+  body?.addEventListener('click',e=>{const btn=e.target.closest('[data-detail-link]');if(btn){e.preventDefault();openDetail(btn.dataset.detailLink);}});
   drawer?.querySelector('.bi-fast-drawer-close')?.addEventListener('click',closeDrawer);backdrop?.addEventListener('click',closeDrawer);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 })();
 </script>
