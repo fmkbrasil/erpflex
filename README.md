@@ -684,3 +684,15 @@ O BI passa a exibir apenas Hoje, Ontem, Semana, Mês, Ano e Período personaliza
 - NF-e permanece armazenada e pode ser consultada na tela de impacto da configuração fiscal;
 - regra conservadora: notas mistas ou com CFOP ausente não são excluídas automaticamente;
 - schema passa de **17 para 18** com nova tabela aditiva `sales_cfop_exclusions`.
+
+
+## V1.3.66 — Auditoria e clareza do período em todo o BI
+
+- audita o uso dos filtros Hoje, Ontem, Semana, Mês, Ano e Período personalizado em todos os módulos do BI;
+- diferencia visualmente indicadores de **PERÍODO**, **POSIÇÃO ATUAL**, **PROJEÇÃO** e **COMPARAÇÃO**;
+- Contas a Receber e Contas a Pagar passam a separar visualmente a posição atual da carteira da movimentação do período;
+- corrige o bloco **CONTRATO** em Resultado por carteira: desconto e valor líquido passam a usar o mesmo período do valor bruto emitido;
+- mantém saldos em aberto, vencidos, a vencer e aging como posição atual, pois a base sincronizada não possui histórico de saldos suficiente para reconstruir com segurança uma fotografia retroativa da carteira;
+- mantém recebimentos, pagamentos, emissões, faturamento, compras, DRE, comercial, produtos e logística filtrados pelo período correspondente;
+- projeções de 7/15/30/60/90 dias continuam partindo da posição atual e passam a ser identificadas explicitamente como projeção;
+- sem alteração de schema (permanece 18).

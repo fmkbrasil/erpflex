@@ -1294,7 +1294,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         open_value=sum(max(_money(t.value)-_money(t.paid_value),0) for t in open_titles)
         overdue_value=sum(max(_money(t.value)-_money(t.paid_value),0) for t in overdue_titles)
         is_contract_wallet = wallet_name == "CONTRATO"
-        contract_scope = [t for t in ar_all if title_wallet_name(t) == wallet_name] if is_contract_wallet else []
+        contract_scope = [t for t in ar_period if title_wallet_name(t) == wallet_name] if is_contract_wallet else []
         contract_open_scope = open_titles if is_contract_wallet else []
         contract_discount = round(sum(contract_values(t)["discount_value"] for t in contract_scope), 2) if is_contract_wallet else 0.0
         contract_net = round(sum(contract_values(t)["net_value"] for t in contract_scope), 2) if is_contract_wallet else 0.0
@@ -1940,7 +1940,7 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
     }
 
     result={
-        "meta":{"start":start,"end":end,"previous_start":ps,"previous_end":pe,"year_start":ys,"year_end":ye,"period":period,"latest_sync":latest_sync,"filters":filters,"options":options,"data_quality":{"date_coverage":date_coverage,"receivables_total":len(ar_all),"payables_total":len(ap_all),"expenses_total":len(exp_all)}},
+        "meta":{"start":start,"end":end,"as_of":today,"previous_start":ps,"previous_end":pe,"year_start":ys,"year_end":ye,"period":period,"latest_sync":latest_sync,"filters":filters,"options":options,"data_quality":{"date_coverage":date_coverage,"receivables_total":len(ar_all),"payables_total":len(ap_all),"expenses_total":len(exp_all)}},
         "overview":{
             "sales":round(sales_total,2),"sales_prev":round(sales_prev_total,2),"sales_var":_variation(sales_total,sales_prev_total),
             "sales_year_ago":round(sales_year_total,2),"sales_yoy":_variation(sales_total,sales_year_total),"sales_docs":len(sales),"sales_ticket":round(sales_total/len(sales),2) if sales else 0,
