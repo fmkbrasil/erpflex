@@ -60,7 +60,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.71")
+app = FastAPI(title=APP_NAME, version="1.3.72")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -127,6 +127,8 @@ def required_permission(method: str, path: str) -> str | None:
         ("/administracao", "admin.manage"),
         ("/aparencia", "ui.customize"),
         ("/dashboard-gerencial", "bi.view"),
+        ("/bi/sincronizar", "sync.manage"),
+        ("/bi/sincronizacao-status", "sync.manage"),
         ("/bi", "bi.view"),
         ("/sincronizacao", "sync.manage"),
         ("/integracoes", "sync.manage"),
@@ -228,7 +230,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.71", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.72", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -588,6 +590,74 @@ def bi_section(request: Request, section: str, period: str = "month", date_from:
         cid, company = company_context(db, request)
         data = build_fast_bi(db, cid, period, date_from, date_to)
     return render(request, "bi_fast.html", company=company, data=data, sections=SECTIONS, section=section, section_title="BI Gerencial", period=period)
+
+
+@app.post("/bi/sincronizar")
+def bi_sync_now(request: Request):
+    now = datetime.utcnow()
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        ac = access_context(db, request)
+        cfg = db.scalar(select(SyncAutomationConfig).where(SyncAutomationConfig.company_id == cid).limit(1))
+        if not cfg or not cfg.active:
+            return JSONResponse({
+                "ok": False,
+                "error": "A sincronização automática está pausada. Ative-a em Sistema → Sincronização antes de usar este botão.",
+            }, status_code=409)
+        rows = db.scalars(select(SyncAutomationModule).where(
+            SyncAutomationModule.company_id == cid,
+            SyncAutomationModule.enabled.is_(True),
+        ).order_by(SyncAutomationModule.id.asc())).all()
+        if not rows:
+            return JSONResponse({
+                "ok": False,
+                "error": "Nenhum módulo está habilitado para sincronização. Configure os módulos em Sistema → Sincronização.",
+            }, status_code=409)
+        modules = [str(row.module) for row in rows]
+        for row in rows:
+            row.next_run_at = now
+        add_audit(db, ac, "SYNC_DASHBOARD_SOLICITADO", "sync", None, "Módulos: " + ", ".join(modules))
+        db.commit()
+    return JSONResponse({
+        "ok": True,
+        "queued": modules,
+        "queued_at": now.isoformat(),
+        "message": f"Sincronização solicitada para {len(modules)} módulo(s).",
+    }, status_code=202)
+
+
+@app.get("/bi/sincronizacao-status")
+def bi_sync_status(request: Request):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        cfg = db.scalar(select(SyncAutomationConfig).where(SyncAutomationConfig.company_id == cid).limit(1))
+        heartbeat = db.scalar(select(SyncWorkerHeartbeat).where(
+            SyncWorkerHeartbeat.company_id == cid
+        ).order_by(SyncWorkerHeartbeat.heartbeat_at.desc()).limit(1))
+        active_runs = db.scalars(select(SyncRun).where(
+            SyncRun.company_id == cid, SyncRun.status.in_(["PENDENTE", "EM_EXECUCAO"])
+        ).order_by(SyncRun.id.desc()).limit(20)).all()
+        latest = db.scalar(select(SyncRun).where(SyncRun.company_id == cid).order_by(SyncRun.id.desc()).limit(1))
+        enabled_count = db.scalar(select(func.count(SyncAutomationModule.id)).where(
+            SyncAutomationModule.company_id == cid, SyncAutomationModule.enabled.is_(True)
+        )) or 0
+        return JSONResponse({
+            "ok": True,
+            "automation_active": bool(cfg.active) if cfg else False,
+            "enabled_modules": int(enabled_count),
+            "worker": {
+                "status": heartbeat.status if heartbeat else "SEM SINAL",
+                "module": heartbeat.current_module if heartbeat else None,
+                "heartbeat_at": heartbeat.heartbeat_at.isoformat() if heartbeat and heartbeat.heartbeat_at else None,
+                "message": heartbeat.message if heartbeat else None,
+            },
+            "active_runs": len(active_runs),
+            "latest_run": {
+                "id": latest.id, "module": latest.module, "status": latest.status,
+                "started_at": latest.started_at.isoformat() if latest and latest.started_at else None,
+                "finished_at": latest.finished_at.isoformat() if latest and latest.finished_at else None,
+            } if latest else None,
+        })
 
 
 @app.get("/sincronizacao", response_class=HTMLResponse)

@@ -7,7 +7,14 @@
       <span class="bi-fast-eyebrow">VISÃO EXECUTIVA</span>
       <h1>BI Gerencial</h1>
       <p>Indicadores diretos. Clique em qualquer card para abrir os documentos que formam o resultado.</p>
-      <small>Última sincronização: {% if data.meta.latest_sync %}<b>{{ data.meta.latest_sync.strftime('%d/%m/%Y %H:%M') }}</b>{% else %}não identificada{% endif %} · painel gerado em {{ data.meta.generated_ms }} ms</small>
+      <small>Última sincronização: {% if data.meta.latest_sync %}<b id="bi-fast-last-sync">{{ data.meta.latest_sync.strftime('%d/%m/%Y %H:%M') }}</b>{% else %}<b id="bi-fast-last-sync">não identificada</b>{% endif %} · painel gerado em {{ data.meta.generated_ms }} ms</small>
+      {% if can_perm('sync.manage') %}
+      <div class="bi-fast-sync-actions">
+        <button type="button" class="bi-fast-sync-button" id="bi-fast-sync-button"><span>↻</span><b>Sincronizar</b></button>
+        <span class="bi-fast-sync-status" id="bi-fast-sync-status">Pronto para sincronizar</span>
+        <a href="/sincronizacao" class="bi-fast-sync-link">Ver sincronização</a>
+      </div>
+      {% endif %}
     </div>
     <form method="get" class="bi-fast-periods">
       <div class="bi-fast-range-label">Período <b>{{ data.meta.start.strftime('%d/%m/%Y') }} a {{ data.meta.end.strftime('%d/%m/%Y') }}</b></div>
@@ -143,6 +150,7 @@
   .financial-nested{min-width:430px!important}.sales-nested{min-width:430px!important}.sales-nested th:nth-child(2),.sales-nested td:nth-child(2){display:none}
   .bi-fast-group-body .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 }
+.bi-fast-sync-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}.bi-fast-sync-button{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:8px 13px;border:1px solid #b7cbe5;border-radius:10px;background:#fff;color:#173251;font-weight:800;cursor:pointer}.bi-fast-sync-button span{font-size:16px}.bi-fast-sync-button:hover{border-color:#2463eb;background:#f5f9ff}.bi-fast-sync-button[disabled]{opacity:.65;cursor:wait}.bi-fast-sync-button.syncing span{animation:biFastSpin .8s linear infinite}.bi-fast-sync-status{font-size:10px;color:#64748b}.bi-fast-sync-status.ok{color:#087a52;font-weight:800}.bi-fast-sync-status.error{color:#b42318;font-weight:800}.bi-fast-sync-link{font-size:10px;font-weight:800;color:#2463eb;text-decoration:none}.bi-fast-sync-link:hover{text-decoration:underline}@keyframes biFastSpin{to{transform:rotate(360deg)}}@media(max-width:700px){.bi-fast-sync-actions{display:grid;grid-template-columns:auto 1fr;gap:6px 8px}.bi-fast-sync-button{min-height:44px;justify-content:center}.bi-fast-sync-status{font-size:9px}.bi-fast-sync-link{grid-column:1/-1;font-size:9px}}
 </style>
 {% endblock %}
 {% block scripts %}
@@ -178,6 +186,61 @@
   root.querySelectorAll('[data-detail]').forEach(el=>el.addEventListener('click',()=>openDetail(el.dataset.detail)));
   body?.addEventListener('click',e=>{const btn=e.target.closest('[data-detail-link]');if(btn){e.preventDefault();openDetail(btn.dataset.detailLink);}});
   drawer?.querySelector('.bi-fast-drawer-close')?.addEventListener('click',closeDrawer);backdrop?.addEventListener('click',closeDrawer);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+
+  const syncButton=document.getElementById('bi-fast-sync-button'), syncStatus=document.getElementById('bi-fast-sync-status');
+  let syncPollTimer=null, syncQueuedAt=null;
+  function setSyncState(message,kind=''){
+    if(syncStatus){syncStatus.textContent=message;syncStatus.className='bi-fast-sync-status'+(kind?' '+kind:'');}
+  }
+  async function pollSyncStatus(){
+    if(!syncButton)return;
+    try{
+      const res=await fetch('/bi/sincronizacao-status',{cache:'no-store',headers:{'X-Requested-With':'fetch'}});
+      const j=await res.json();
+      if(!res.ok||!j.ok)throw new Error(j.error||'Falha ao consultar sincronização');
+      const active=Number(j.active_runs||0)>0;
+      const worker=j.worker||{};
+      if(active){
+        syncButton.disabled=true;syncButton.classList.add('syncing');
+        setSyncState('Sincronizando'+(worker.module?' · '+worker.module:'')+'…');
+      }else{
+        const latest=j.latest_run||null;
+        const latestStarted=latest&&latest.started_at?Date.parse(latest.started_at):0;
+        const queuedMs=syncQueuedAt?Date.parse(syncQueuedAt):0;
+        const completedAfterRequest=queuedMs&&latestStarted>=queuedMs&&['CONCLUIDO','CONCLUIDO_COM_ERROS','ERRO','INTERROMPIDO'].includes(String(latest.status||''));
+        if(completedAfterRequest){
+          syncButton.disabled=false;syncButton.classList.remove('syncing');
+          setSyncState(latest.status==='CONCLUIDO'?'Sincronização concluída':(latest.status==='CONCLUIDO_COM_ERROS'?'Concluída com erros':'Sincronização finalizada com '+latest.status),latest.status==='CONCLUIDO'?'ok':'error');
+          clearInterval(syncPollTimer);syncPollTimer=null;
+          if(latest.status==='CONCLUIDO')setTimeout(()=>location.reload(),1200);
+        }else if(syncQueuedAt){
+          syncButton.disabled=true;syncButton.classList.add('syncing');
+          setSyncState('Aguardando o worker'+(worker.status?' · '+worker.status:'')+'…');
+        }else{
+          syncButton.disabled=false;syncButton.classList.remove('syncing');
+          if(worker.status)setSyncState('Worker: '+worker.status+(worker.module?' · '+worker.module:''));
+        }
+      }
+    }catch(e){
+      syncButton.disabled=false;syncButton.classList.remove('syncing');setSyncState(e.message||'Falha ao consultar sincronização','error');
+      if(syncPollTimer){clearInterval(syncPollTimer);syncPollTimer=null;}
+    }
+  }
+  syncButton?.addEventListener('click',async()=>{
+    if(syncButton.disabled)return;
+    syncButton.disabled=true;syncButton.classList.add('syncing');setSyncState('Solicitando sincronização…');
+    try{
+      const res=await fetch('/bi/sincronizar',{method:'POST',headers:{'X-Requested-With':'fetch'}});
+      const j=await res.json();
+      if(!res.ok||!j.ok)throw new Error(j.error||'Não foi possível iniciar a sincronização');
+      setSyncState(j.message||'Sincronização solicitada','ok');
+      syncQueuedAt=j.queued_at||new Date().toISOString();
+      await pollSyncStatus();
+      if(!syncPollTimer)syncPollTimer=setInterval(pollSyncStatus,1500);
+    }catch(e){
+      syncButton.disabled=false;syncButton.classList.remove('syncing');setSyncState(e.message||'Erro ao sincronizar','error');
+    }
+  });
 })();
 </script>
 {% endblock %}
