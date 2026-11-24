@@ -928,7 +928,8 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         pct = 0.0
         if rule:
             try:
-                pct = max(0.0, min(float(rule.contract_discount_percent or 0), 100.0))
+                if str(rule.contract_discount_application or "FINANCEIRO").upper() == "FINANCEIRO":
+                    pct = max(0.0, min(float(rule.contract_discount_percent or 0), 100.0))
             except Exception:
                 pct = 0.0
         discount = round(gross * pct / 100.0, 2)

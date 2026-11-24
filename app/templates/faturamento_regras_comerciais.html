@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}Regras comerciais · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><h1>Regras comerciais especiais</h1><p>Condições autorizadas usadas pela auditoria de preço para diferenciar negociação válida de divergência real.</p></div>
+  <div class="hero-actions"><a class="btn" href="/bi/visao-geral">← BI</a><a class="btn" href="/financeiro/cobranca/configuracao">Contratos de cobrança</a></div>
+</section>
+{% if saved %}<div class="alert ok">{% if saved=='1' %}Regra comercial salva.{% elif saved=='contrato' %}Aplicação do desconto do contrato atualizada.{% elif saved=='escopo-obrigatorio' %}Informe o produto/categoria/subcategoria para este escopo.{% else %}Não foi possível salvar a regra: {{ saved }}.{% endif %}</div>{% endif %}
+<section class="panel commercial-rule-help">
+  <h2>Prioridade usada na auditoria</h2>
+  <p class="hint"><b>Produto</b> → <b>Subcategoria</b> → <b>Categoria</b> → <b>Regra geral do cliente</b> → <b>Desconto de contrato aplicado ao preço</b> → preço normal da tabela indicada na venda.</p>
+  <p class="hint">Desconto de contrato marcado como <b>Financeiro</b> continua reduzindo o título no Contas a Receber e não altera o preço esperado do item.</p>
+</section>
+<section class="panel">
+  <div class="panel-title"><div><h2>Nova regra</h2><p class="hint">Cadastre exceções comerciais previamente autorizadas.</p></div></div>
+  <form method="post" class="commercial-rule-form">
+    <label><span>Cliente</span><select name="partner_id" required><option value="">Selecione…</option>{% for p in customers %}<option value="{{ p.id }}">{{ p.trade_name or p.name }}{% if p.cnpj_cpf %} · {{ p.cnpj_cpf }}{% endif %}</option>{% endfor %}</select></label>
+    <label><span>Escopo</span><select name="scope_type" id="rule-scope"><option value="GENERAL">Geral do cliente</option><option value="PRODUCT">Produto</option><option value="CATEGORY">Categoria</option><option value="SUBCATEGORY">Subcategoria</option></select></label>
+    <label class="scope-value"><span>Produto / Categoria / Subcategoria</span><input name="scope_value" placeholder="Ex.: 001234, PADARIA ou TORRADAS"><small>Para produto, use preferencialmente código, EAN ou ID do produto.</small></label>
+    <label><span>Tipo da regra</span><select name="rule_type"><option value="DISCOUNT_PERCENT">Desconto (%)</option><option value="SURCHARGE_PERCENT">Acréscimo (%)</option><option value="FIXED_PRICE">Preço fixo negociado (R$)</option></select></label>
+    <label><span>Valor</span><input name="rule_value" type="number" min="0" step="0.01" required value="0"></label>
+    <label><span>Vigência de</span><input name="valid_from" type="date"></label>
+    <label><span>Vigência até</span><input name="valid_to" type="date"></label>
+    <label><span>Observação</span><input name="notes" placeholder="Ex.: acordo comercial 2026"></label>
+    <input type="hidden" name="active" value="1">
+    <div class="form-actions"><button class="btn primary" type="submit">Salvar regra</button></div>
+  </form>
+</section>
+<section class="panel">
+  <div class="panel-title"><div><h2>Descontos de contratos existentes</h2><p class="hint">Escolha se o desconto já cadastrado atua no financeiro ou no preço esperado da auditoria.</p></div></div>
+  <div class="commercial-rule-cards">
+  {% for rule,p in contract_rows %}
+    <article class="commercial-rule-card"><div><b>{{ p.trade_name or p.name }}</b><small>Desconto {{ '%.2f'|format(rule.contract_discount_percent or 0) }}%</small></div><form method="post" action="/faturamento/regras-comerciais/contrato/{{ p.id }}"><select name="application"><option value="FINANCEIRO" {% if (rule.contract_discount_application or 'FINANCEIRO')=='FINANCEIRO' %}selected{% endif %}>Financeiro após faturamento</option><option value="PRECO" {% if rule.contract_discount_application=='PRECO' %}selected{% endif %}>Preço de venda / auditoria</option></select><button class="btn small" type="submit">Aplicar</button></form></article>
+  {% else %}<p class="empty">Nenhum cliente com contrato de cobrança cadastrado.</p>{% endfor %}
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-title"><div><h2>Regras cadastradas</h2><p class="hint">Regras inativas permanecem registradas para rastreabilidade.</p></div></div>
+  <div class="commercial-rule-cards">
+  {% for r,p in rule_rows %}
+    <article class="commercial-rule-card {% if not r.active %}is-inactive{% endif %}">
+      <div class="commercial-rule-main"><b>{{ p.trade_name or p.name }}</b><small>{% if r.scope_type=='GENERAL' %}Geral{% elif r.scope_type=='PRODUCT' %}Produto: {{ r.scope_value }}{% elif r.scope_type=='CATEGORY' %}Categoria: {{ r.scope_value }}{% else %}Subcategoria: {{ r.scope_value }}{% endif %}</small><span>{% if r.rule_type=='DISCOUNT_PERCENT' %}Desconto {{ '%.2f'|format(r.rule_value) }}%{% elif r.rule_type=='SURCHARGE_PERCENT' %}Acréscimo {{ '%.2f'|format(r.rule_value) }}%{% else %}Preço fixo R$ {{ '%.2f'|format(r.rule_value) }}{% endif %}</span><small>Vigência: {{ r.valid_from or 'sem início' }} → {{ r.valid_to or 'sem fim' }}{% if r.notes %} · {{ r.notes }}{% endif %}</small></div>
+      <div class="commercial-rule-actions"><form method="post" action="/faturamento/regras-comerciais/{{ r.id }}/toggle"><button class="btn small" type="submit">{{ 'Desativar' if r.active else 'Ativar' }}</button></form><form method="post" action="/faturamento/regras-comerciais/{{ r.id }}/excluir" onsubmit="return confirm('Excluir esta regra comercial?')"><button class="btn small danger" type="submit">Excluir</button></form></div>
+    </article>
+  {% else %}<p class="empty">Nenhuma regra comercial específica cadastrada.</p>{% endfor %}
+  </div>
+</section>
+<style>
+.commercial-rule-form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.commercial-rule-form label{display:flex;flex-direction:column;gap:5px}.commercial-rule-form label span{font-size:.76rem;font-weight:800;color:#52667f}.commercial-rule-form input,.commercial-rule-form select,.commercial-rule-card select{min-height:40px}.commercial-rule-form .form-actions{display:flex;align-items:end}.commercial-rule-cards{display:flex;flex-direction:column;gap:9px}.commercial-rule-card{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid #dce5f0;border-radius:12px;padding:12px;background:#fff}.commercial-rule-card.is-inactive{opacity:.58;background:#f7f8fa}.commercial-rule-card>div:first-child,.commercial-rule-main{display:flex;flex-direction:column;gap:3px;min-width:0}.commercial-rule-card small{color:#708198}.commercial-rule-card form{display:flex;gap:7px;align-items:center}.commercial-rule-actions{display:flex;gap:7px}.commercial-rule-actions form{margin:0}@media(max-width:900px){.commercial-rule-form{grid-template-columns:1fr 1fr}.commercial-rule-card{align-items:stretch;flex-direction:column}.commercial-rule-card form{width:100%;flex-wrap:wrap}.commercial-rule-card select{flex:1;min-width:200px}}@media(max-width:560px){.commercial-rule-form{grid-template-columns:1fr}.commercial-rule-card form{display:grid;grid-template-columns:1fr auto}.commercial-rule-card select{min-width:0;width:100%}}
+</style>
+{% endblock %}

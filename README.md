@@ -738,3 +738,31 @@ O BI rápido passa a abrir um seletor de análises no painel lateral, mantendo o
 ## V1.3.73 — Prazo praticado, faixa de faturamento e preço por tabela
 
 Inclui novas análises sob demanda no BI rápido para condição de pagamento efetivamente praticada, faturamento por faixa de valor e consulta de preços sincronizados por tabela/lista de preço. Schema 18.
+
+
+## V1.3.74 — Identificação das tabelas de preço
+
+- Substitui os nomes genéricos `tabela_0`, `tabela_1` ... `tabela_26` pelos nomes reais informados para a operação.
+- `tabela_0` passa a ser exibida como **Tabela Padrão**.
+- Mantém o identificador técnico da tabela abaixo do nome, por exemplo **CIF · Tabela 1**.
+- O campo contêiner `tabelas` deixa de ser interpretado como uma tabela de preço.
+- O mapeamento abrange as tabelas 0 a 26.
+- Sem alteração de banco; schema permanece 18.
+
+
+## V1.3.75 — Auditoria de preço de venda
+
+O BI de Faturamento passa a auditar o preço praticado no item da NF-e contra o preço do produto na tabela indicada na venda. A análise identifica diferenças acima/abaixo da tabela, calcula percentual e impacto financeiro, mantém itens sem referência separados e permite detalhar a venda por NF-e, cliente, vendedor e produto. O carregamento ocorre apenas quando a auditoria é aberta. Schema 18.
+
+
+## V1.3.76 — Regras comerciais especiais na auditoria de preço
+
+- Cria regras comerciais autorizadas por cliente para a auditoria de preço.
+- Escopos: geral do cliente, produto, categoria e subcategoria.
+- Tipos: desconto percentual, acréscimo percentual e preço fixo negociado.
+- Suporta vigência inicial/final, ativação/desativação e observações.
+- A auditoria usa prioridade: produto → subcategoria → categoria → regra geral → contrato aplicado ao preço → tabela da venda.
+- Contratos existentes passam a distinguir `FINANCEIRO` de `PRECO`; por segurança, a migração mantém todos os existentes como `FINANCEIRO`.
+- Desconto financeiro continua reduzindo o título no Contas a Receber; desconto no preço ajusta apenas o preço esperado da auditoria.
+- A auditoria passa a mostrar preço de tabela, preço esperado ajustado, preço praticado, divergência real e regra autorizada aplicada.
+- Schema 19.

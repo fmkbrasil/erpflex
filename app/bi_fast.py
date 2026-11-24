@@ -13,6 +13,7 @@ from sqlalchemy import and_, case, func, or_, select
 from .bi_service import _is_cancelled, _period_bounds, _previous_period, _seller_info, _walk_find, _product_row_meta
 from .db import (
     CollectionCustomerRule,
+    CommercialPriceRule,
     Delivery,
     FinancialTitle,
     Partner,
@@ -384,6 +385,7 @@ DETAIL_OPTIONS = {
         ("sales-payment-practiced", "Prazo praticado"),
         ("sales-terms", "Prazo cadastrado"),
         ("sales-value-range", "Faixa de valor"),
+        ("sales-price-audit", "Auditoria de preço"),
         ("sales-period", "NF-e do período"),
     ],
     "commercial": [
@@ -435,7 +437,7 @@ def _contract_title_rows(db, cid: int, limit: int | None = None) -> list[dict]:
         CollectionCustomerRule.company_id == cid,
         CollectionCustomerRule.has_collection_contract == True,
     )).all()
-    rule_map = {int(r.partner_id): max(0.0, min(float(r.contract_discount_percent or 0), 100.0)) for r in rules}
+    rule_map = {int(r.partner_id): (max(0.0, min(float(r.contract_discount_percent or 0), 100.0)) if str(r.contract_discount_application or "FINANCEIRO").upper() == "FINANCEIRO" else 0.0) for r in rules}
     if not rule_map:
         return []
     bal = _balance_expr()
@@ -992,6 +994,61 @@ def _sales_grouped_by_value_range(db, cid: int, start: date, end: date) -> list[
     return result
 
 
+
+PRICE_TABLE_LABELS = {
+    0: "Tabela Padrão",
+    1: "CIF",
+    2: "Contrato 10%",
+    3: "Natural do libano",
+    4: "Casa Santa Luiza",
+    5: "Carrefour",
+    6: "Zaffari 14%",
+    7: "WalMart RS e PR",
+    8: "WalMart SP e MG",
+    9: "Mambo",
+    10: "Pão de Açucar",
+    11: "Lebanon",
+    12: "Imigrantes",
+    13: "St Marche",
+    14: "11%",
+    15: "15%",
+    16: "Confianca 13%",
+    17: "PegPese 5% + torrada",
+    18: "Comper",
+    19: "Pastorinho",
+    20: "Rede Oba",
+    21: "Hirota 10%",
+    22: "5%",
+    23: "6%",
+    24: "7%",
+    25: "Clube Monte Libano",
+    26: "8%",
+}
+
+
+def _price_table_label(raw_name: Any) -> tuple[str, str | None]:
+    raw = str(raw_name or "").strip()
+    if not raw:
+        return "", None
+    norm = _norm_key(raw)
+    if norm in {"tabelas", "tabela", "prices", "precos"}:
+        return "", None
+    idx = None
+    for prefix in ("tabela_", "tabela", "table_", "table"):
+        if norm.startswith(prefix):
+            tail = norm[len(prefix):].strip("_- ")
+            if tail.isdigit():
+                idx = int(tail)
+                break
+    if idx is None and norm.isdigit():
+        idx = int(norm)
+    if idx is not None and idx in PRICE_TABLE_LABELS:
+        technical = "Padrão" if idx == 0 else f"Tabela {idx}"
+        return PRICE_TABLE_LABELS[idx], technical
+    if norm in {"padrao", "padrão", "tabela_padrao", "tabela_padrão"}:
+        return PRICE_TABLE_LABELS[0], "Padrão"
+    return raw, None
+
 def _price_number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return round(float(value), 4)
@@ -1018,10 +1075,10 @@ def _extract_price_tables(payload: dict) -> list[dict]:
 
     def add(name: Any, price: Any, source: str):
         num = _price_number(price)
-        label = str(name or "").strip()
+        label, technical = _price_table_label(name)
         if num is None or num < 0 or not label:
             return
-        found[(label, num)] = {"table": label, "price": num, "source": source}
+        found[(label, num)] = {"table": label, "table_code": technical, "price": num, "source": source}
 
     def walk(obj: Any, context: str = ""):
         if isinstance(obj, dict):
@@ -1056,6 +1113,416 @@ def _extract_price_tables(payload: dict) -> list[dict]:
             add("Preço de venda / API", root[key], key)
             break
     return sorted(found.values(), key=lambda r: (r["table"].lower(), r["price"]))
+
+
+def _canonical_price_table_ref(value: Any) -> dict | None:
+    """Normaliza a referência de tabela encontrada em NF/pedido para o mapa conhecido."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, dict):
+        norm = {_norm_key(k): v for k, v in value.items()}
+        for key in ("nome_tabela", "descricao_tabela", "descricao", "nome", "label", "legenda"):
+            if norm.get(key) not in (None, ""):
+                result = _canonical_price_table_ref(norm.get(key))
+                if result:
+                    # completar o índice quando o objeto também o trouxer
+                    for ikey in ("id_tabela_preco", "tabela_preco_id", "id", "codigo", "numero", "tabela"):
+                        if norm.get(ikey) not in (None, ""):
+                            idx_ref = _canonical_price_table_ref(norm.get(ikey))
+                            if idx_ref and idx_ref.get("index") is not None:
+                                result["index"] = idx_ref["index"]
+                                result["technical"] = idx_ref.get("technical")
+                                break
+                    return result
+        for key in ("id_tabela_preco", "tabela_preco_id", "codigo_tabela_preco", "cod_tabela_preco", "id", "codigo", "numero", "tabela"):
+            if norm.get(key) not in (None, ""):
+                result = _canonical_price_table_ref(norm.get(key))
+                if result:
+                    return result
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            idx = int(value)
+        except Exception:
+            return None
+        if idx in PRICE_TABLE_LABELS:
+            return {"index": idx, "label": PRICE_TABLE_LABELS[idx], "technical": "Padrão" if idx == 0 else f"Tabela {idx}", "raw": str(value)}
+        return {"index": idx, "label": f"Tabela {idx}", "technical": f"Tabela {idx}", "raw": str(value)}
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    norm = _norm_key(raw)
+    # descrição conhecida
+    for idx, label in PRICE_TABLE_LABELS.items():
+        if _norm_key(label) == norm:
+            return {"index": idx, "label": label, "technical": "Padrão" if idx == 0 else f"Tabela {idx}", "raw": raw}
+    # formatos tabela_10 / Tabela 10 / apenas 10
+    label, technical = _price_table_label(raw)
+    if label:
+        idx = None
+        if technical == "Padrão":
+            idx = 0
+        elif technical and re.search(r"(\d+)$", technical):
+            idx = int(re.search(r"(\d+)$", technical).group(1))
+        return {"index": idx, "label": label, "technical": technical, "raw": raw}
+    digits = re.fullmatch(r"0*(\d+)", norm)
+    if digits:
+        idx = int(digits.group(1))
+        return {"index": idx, "label": PRICE_TABLE_LABELS.get(idx, f"Tabela {idx}"), "technical": "Padrão" if idx == 0 else f"Tabela {idx}", "raw": raw}
+    return {"index": None, "label": raw, "technical": None, "raw": raw}
+
+
+def _extract_sale_price_table(payload: dict | None) -> dict | None:
+    """Localiza a tabela de preço efetivamente indicada na venda.
+
+    Prioriza campos explícitos de tabela/lista de preço e evita interpretar o
+    contêiner genérico ``tabelas`` como uma referência de venda.
+    """
+    if not isinstance(payload, dict):
+        return None
+    exact_priority = {
+        "tabela_preco": 100, "tabela_de_preco": 100, "tabelapreco": 100,
+        "price_table": 100, "price_list": 100, "pricelist": 100,
+        "nome_tabela_preco": 98, "descricao_tabela_preco": 98,
+        "id_tabela_preco": 95, "tabela_preco_id": 95,
+        "codigo_tabela_preco": 95, "cod_tabela_preco": 95,
+        "lista_preco": 92, "lista_de_preco": 92, "id_lista_preco": 90,
+        "tabela_venda": 90, "tabela_comercial": 90,
+    }
+    candidates: list[tuple[int, int, dict]] = []
+
+    def walk(obj: Any, depth: int = 0):
+        if depth > 8:
+            return
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                nk = _norm_key(key)
+                if nk in exact_priority and value not in (None, "", [], {}):
+                    ref = _canonical_price_table_ref(value)
+                    if ref:
+                        candidates.append((exact_priority[nk], -depth, {**ref, "source": nk}))
+                # alguns retornos usam somente `tabela`, mas só aceitar valor escalar
+                elif nk == "tabela" and not isinstance(value, (dict, list)) and value not in (None, ""):
+                    ref = _canonical_price_table_ref(value)
+                    if ref and (_norm_key(str(value)) not in {"tabelas", "tabela"}):
+                        candidates.append((70, -depth, {**ref, "source": nk}))
+                walk(value, depth + 1)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value, depth + 1)
+    walk(payload)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return candidates[0][2]
+
+
+def _product_price_reference_context(db, cid: int, item_rows: list) -> Any:
+    """Retorna função que resolve os preços de tabela de um item faturado."""
+    product_ids = {str(r.product_id or "").strip() for r in item_rows if str(r.product_id or "").strip()}
+    codes = {str(r.product_code or "").strip() for r in item_rows if str(r.product_code or "").strip()}
+    clauses = []
+    if product_ids:
+        clauses.append(Product.erpflex_id.in_(list(product_ids)))
+    if codes:
+        clauses.append(Product.code.in_(list(codes)))
+    products = db.scalars(select(Product).where(Product.company_id == cid, or_(*clauses))).all() if clauses else []
+    by_external = {str(p.erpflex_id or "").strip(): p for p in products if str(p.erpflex_id or "").strip()}
+    by_code = {str(p.code or "").strip(): p for p in products if str(p.code or "").strip()}
+    ext_ids = {str(p.erpflex_id or "").strip() for p in products if str(p.erpflex_id or "").strip()} | product_ids
+    raw_by_external: dict[str, dict] = {}
+    raw_by_code: dict[str, dict] = {}
+    if ext_ids:
+        raw_rows = db.execute(select(RawRecord.external_id, RawRecord.payload_json).where(
+            RawRecord.company_id == cid,
+            func.upper(RawRecord.source) == "ERPFLEX",
+            func.lower(RawRecord.module) == "products",
+            RawRecord.external_id.in_(list(ext_ids)),
+        ).order_by(RawRecord.id.desc())).all()
+        for external_id, payload_json in raw_rows:
+            ext = str(external_id or "").strip()
+            if ext in raw_by_external:
+                continue
+            try:
+                payload = json.loads(payload_json or "{}")
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if ext:
+                raw_by_external[ext] = payload
+            raw_code = _walk_find(payload, {"codigo", "codigo_produto", "sku", "referencia"})
+            if raw_code not in (None, ""):
+                raw_by_code[str(raw_code).strip()] = payload
+
+    def resolve(item) -> dict:
+        pid = str(item.product_id or "").strip()
+        code = str(item.product_code or "").strip()
+        product = by_external.get(pid) or by_code.get(code)
+        payload = raw_by_external.get(pid) or raw_by_code.get(code)
+        if not payload and product:
+            payload = raw_by_external.get(str(product.erpflex_id or "").strip())
+        prices = _extract_price_tables(payload or {}) if payload else []
+        return {"product": product, "payload": payload or {}, "prices": prices}
+    return resolve
+
+
+def _price_for_table(prices: list[dict], table_ref: dict | None) -> dict | None:
+    if not table_ref:
+        return None
+    idx = table_ref.get("index")
+    label_norm = _norm_key(table_ref.get("label") or "")
+    technical_norm = _norm_key(table_ref.get("technical") or "")
+    # prioridade 1: índice/technical code; prioridade 2: descrição normalizada
+    for pr in prices:
+        code = _norm_key(pr.get("table_code") or "")
+        if idx == 0 and code == "padrao":
+            return pr
+        if idx is not None and code == _norm_key(f"Tabela {idx}"):
+            return pr
+    for pr in prices:
+        if label_norm and _norm_key(pr.get("table") or "") == label_norm:
+            return pr
+        if technical_norm and _norm_key(pr.get("table_code") or "") == technical_norm:
+            return pr
+    return None
+
+
+
+def _rule_text(value: Any) -> str:
+    return _norm_key(str(value or "")).strip()
+
+
+def _commercial_price_rule_context(db, cid: int, partner_ids: set[int]) -> tuple[dict[int, list[CommercialPriceRule]], dict[int, CollectionCustomerRule]]:
+    by_partner: dict[int, list[CommercialPriceRule]] = defaultdict(list)
+    contract_by_partner: dict[int, CollectionCustomerRule] = {}
+    if not partner_ids:
+        return by_partner, contract_by_partner
+    rules = db.scalars(select(CommercialPriceRule).where(
+        CommercialPriceRule.company_id == cid,
+        CommercialPriceRule.partner_id.in_(list(partner_ids)),
+        CommercialPriceRule.active == True,
+    ).order_by(CommercialPriceRule.id.desc())).all()
+    for rule in rules:
+        by_partner[int(rule.partner_id)].append(rule)
+    contracts = db.scalars(select(CollectionCustomerRule).where(
+        CollectionCustomerRule.company_id == cid,
+        CollectionCustomerRule.partner_id.in_(list(partner_ids)),
+        CollectionCustomerRule.has_collection_contract == True,
+    )).all()
+    contract_by_partner = {int(r.partner_id): r for r in contracts}
+    return by_partner, contract_by_partner
+
+
+def _rule_in_force(rule: CommercialPriceRule, sale_date: str | None) -> bool:
+    current = str(sale_date or "")[:10]
+    if rule.valid_from and current and current < str(rule.valid_from)[:10]:
+        return False
+    if rule.valid_to and current and current > str(rule.valid_to)[:10]:
+        return False
+    return True
+
+
+def _resolve_authorized_price_rule(
+    item,
+    product_info: dict,
+    base_price: float | None,
+    sale_date: str | None,
+    partner_id: int | None,
+    rules_by_partner: dict[int, list[CommercialPriceRule]],
+    contract_by_partner: dict[int, CollectionCustomerRule],
+) -> dict | None:
+    if not partner_id:
+        return None
+    meta = _product_row_meta(product_info.get("product"), item.product_code, item.description, product_info.get("payload") or {})
+    product = product_info.get("product")
+    product_keys = {
+        _rule_text(item.product_code), _rule_text(item.product_id), _rule_text(item.ean), _rule_text(item.description),
+        _rule_text(getattr(product, "code", "")), _rule_text(getattr(product, "erpflex_id", "")), _rule_text(getattr(product, "ean", "")), _rule_text(getattr(product, "description", "")),
+    }
+    product_keys.discard("")
+    category = _rule_text(meta.get("category"))
+    subcategory = _rule_text(meta.get("subcategory"))
+    candidates: list[tuple[int, int, CommercialPriceRule]] = []
+    priority = {"PRODUCT": 400, "SUBCATEGORY": 300, "CATEGORY": 200, "GENERAL": 100}
+    for rule in rules_by_partner.get(int(partner_id), []):
+        if not _rule_in_force(rule, sale_date):
+            continue
+        scope = str(rule.scope_type or "GENERAL").upper()
+        ref = _rule_text(rule.scope_value)
+        matches = (
+            scope == "GENERAL" or
+            (scope == "PRODUCT" and ref and ref in product_keys) or
+            (scope == "CATEGORY" and ref and ref == category) or
+            (scope == "SUBCATEGORY" and ref and ref == subcategory)
+        )
+        if matches:
+            candidates.append((priority.get(scope, 0), int(rule.id or 0), rule))
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    for prio, _rid, rule in candidates:
+        kind = str(rule.rule_type or "DISCOUNT_PERCENT").upper()
+        value = float(rule.rule_value or 0)
+        expected = None
+        if kind == "FIXED_PRICE":
+            expected = max(value, 0.0)
+        elif base_price is not None and base_price > 0:
+            if kind == "SURCHARGE_PERCENT":
+                expected = base_price * (1.0 + value / 100.0)
+            else:
+                expected = base_price * (1.0 - value / 100.0)
+        if expected is None:
+            continue
+        scope_label = {"PRODUCT":"Produto", "SUBCATEGORY":"Subcategoria", "CATEGORY":"Categoria", "GENERAL":"Cliente"}.get(str(rule.scope_type or "GENERAL").upper(), "Cliente")
+        if kind == "FIXED_PRICE":
+            label = f"Preço fixo autorizado · {scope_label}"
+        elif kind == "SURCHARGE_PERCENT":
+            label = f"Acréscimo autorizado {value:.2f}% · {scope_label}"
+        else:
+            label = f"Desconto autorizado {value:.2f}% · {scope_label}"
+        return {
+            "source": "REGRA_COMERCIAL", "rule_id": int(rule.id), "label": label,
+            "scope": str(rule.scope_type or "GENERAL").upper(), "scope_value": rule.scope_value or "",
+            "rule_type": kind, "rule_value": round(value, 4), "expected": round(max(expected, 0.0), 4),
+            "notes": rule.notes or "", "priority": prio,
+        }
+    contract = contract_by_partner.get(int(partner_id))
+    if contract and str(contract.contract_discount_application or "FINANCEIRO").upper() == "PRECO" and base_price is not None and base_price > 0:
+        pct = max(0.0, min(float(contract.contract_discount_percent or 0), 100.0))
+        if pct > 0:
+            return {
+                "source": "CONTRATO", "rule_id": int(contract.id), "label": f"Contrato · desconto autorizado {pct:.2f}%",
+                "scope": "CONTRACT", "scope_value": "", "rule_type": "DISCOUNT_PERCENT", "rule_value": round(pct, 4),
+                "expected": round(base_price * (1.0 - pct / 100.0), 4), "notes": contract.notes or "", "priority": 50,
+            }
+    return None
+
+
+def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
+    sales = _sales_rows(db, cid, start, end)
+    if not sales:
+        return {"title": "Faturamento · auditoria de preço", "kind": "price_audit", "summary": {"invoices": 0, "items": 0, "audited": 0, "divergent": 0, "below": 0, "above": 0, "missing": 0, "authorized": 0, "authorized_ok": 0, "impact": 0.0}, "rows": [], "note": "Sem NF-e válidas no período."}
+    invoice_ids = [int(r.id) for r in sales]
+    items = db.execute(select(
+        SalesInvoiceItem.id, SalesInvoiceItem.sales_invoice_id, SalesInvoiceItem.product_id,
+        SalesInvoiceItem.product_code, SalesInvoiceItem.ean, SalesInvoiceItem.description,
+        SalesInvoiceItem.qty, SalesInvoiceItem.unit_price, SalesInvoiceItem.total,
+    ).where(SalesInvoiceItem.sales_invoice_id.in_(invoice_ids))).all()
+    if not items:
+        return {"title": "Faturamento · auditoria de preço", "kind": "price_audit", "summary": {"invoices": len(sales), "items": 0, "audited": 0, "divergent": 0, "below": 0, "above": 0, "missing": 0, "authorized": 0, "authorized_ok": 0, "impact": 0.0}, "rows": [], "note": "As NF-e do período não possuem itens sincronizados para auditoria."}
+    invoice_by_id = {int(r.id): r for r in sales}
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    seller_for = _seller_resolver_context(db, cid, sales)
+    invoice_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in sales if r.raw_record_id])
+    product_resolver = _product_price_reference_context(db, cid, items)
+    rules_by_partner, contract_by_partner = _commercial_price_rule_context(db, cid, {int(r.customer_id) for r in sales if r.customer_id})
+
+    # tabela da venda por NF. A mesma tabela é aplicada aos itens daquela venda.
+    # Quando a NF não trouxer a referência diretamente, tenta o pedido vinculado.
+    order_rows = db.execute(select(SalesOrder.erpflex_id, SalesOrder.number, SalesOrder.raw_record_id).where(SalesOrder.company_id == cid)).all()
+    order_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in order_rows if r.raw_record_id])
+    order_by_id: dict[str, dict] = {}
+    order_by_number: dict[str, dict] = {}
+    for order in order_rows:
+        payload = order_payloads.get(int(order.raw_record_id), {}) if order.raw_record_id else {}
+        if not payload:
+            continue
+        oid = str(order.erpflex_id or "").strip()
+        onum = str(order.number or "").strip()
+        if oid:
+            order_by_id[oid] = payload
+        if onum:
+            order_by_number[onum] = payload
+    table_by_invoice: dict[int, dict | None] = {}
+    for inv in sales:
+        payload = invoice_payloads.get(int(inv.raw_record_id), {}) if inv.raw_record_id else {}
+        ref = _extract_sale_price_table(payload)
+        if not ref:
+            oid = str(_walk_find(payload, {"orcamento_id", "id_orcamento", "pedido_id", "id_pedido", "solicitacao_id", "id_solicitacao"}) or "").strip()
+            onum = str(_walk_find(payload, {"numero_pedido", "pedido_numero", "numero_orcamento"}) or "").strip()
+            order_payload = order_by_id.get(oid) if oid else None
+            if not order_payload and onum:
+                order_payload = order_by_number.get(onum)
+            if order_payload:
+                ref = _extract_sale_price_table(order_payload)
+                if ref:
+                    ref = {**ref, "source": f"pedido:{ref.get('source') or 'tabela_preco'}"}
+        table_by_invoice[int(inv.id)] = ref
+
+    summary = {"invoices": len(sales), "items": len(items), "audited": 0, "divergent": 0, "below": 0, "above": 0, "missing": 0, "authorized": 0, "authorized_ok": 0, "impact": 0.0}
+    grouped: dict[int, dict] = {}
+    for item in items:
+        inv = invoice_by_id.get(int(item.sales_invoice_id))
+        if not inv:
+            continue
+        table_ref = table_by_invoice.get(int(inv.id))
+        product_info = product_resolver(item)
+        reference = _price_for_table(product_info["prices"], table_ref)
+        actual = round(float(item.unit_price or 0), 4)
+        qty = float(item.qty or 0)
+        base_expected = round(float(reference.get("price") or 0), 4) if reference and float(reference.get("price") or 0) > 0 else None
+        special_rule = _resolve_authorized_price_rule(
+            item, product_info, base_expected, inv.issue_date, int(inv.customer_id) if inv.customer_id else None,
+            rules_by_partner, contract_by_partner,
+        )
+        expected = round(float(special_rule.get("expected") or 0), 4) if special_rule else base_expected
+        if expected is None or expected <= 0:
+            summary["missing"] += 1
+            continue
+        if special_rule:
+            summary["authorized"] += 1
+        summary["audited"] += 1
+        diff_unit = round(actual - expected, 4)
+        # preço monetário é comparado por centavo para evitar falso positivo de arredondamento
+        if abs(diff_unit) < 0.005:
+            if special_rule:
+                summary["authorized_ok"] += 1
+            continue
+        diff_pct = round((diff_unit / expected) * 100.0, 2) if expected else 0.0
+        impact = round(diff_unit * qty, 2)
+        summary["divergent"] += 1
+        summary["below" if diff_unit < 0 else "above"] += 1
+        summary["impact"] += impact
+        partner = partners.get(int(inv.customer_id or 0))
+        client = (partner.trade_name or partner.name) if partner else "Sem cliente identificado"
+        row = {
+            "item_id": int(item.id), "invoice_id": int(inv.id), "invoice": inv.number or "—",
+            "date": inv.issue_date or "—", "client": client, "seller": seller_for(inv),
+            "table": (table_ref.get("label") or table_ref.get("raw") or "Não identificada") if table_ref else "Sem tabela identificada",
+            "table_code": (table_ref.get("technical") or (f"Tabela {table_ref.get('index')}" if table_ref.get("index") is not None else "")) if table_ref else "",
+            "product_code": item.product_code or "—", "ean": item.ean or "—",
+            "product": item.description or "Sem descrição", "qty": round(qty, 3),
+            "table_expected": base_expected, "expected": expected, "actual": actual, "diff_unit": diff_unit,
+            "diff_pct": diff_pct, "impact": impact, "direction": "below" if diff_unit < 0 else "above",
+            "authorized_rule": special_rule.get("label") if special_rule else "",
+            "authorized_source": special_rule.get("source") if special_rule else "",
+            "authorized_notes": special_rule.get("notes") if special_rule else "",
+            "line_total": _money(item.total),
+        }
+        cell = grouped.setdefault(int(inv.id), {
+            "invoice_id": int(inv.id), "invoice": inv.number or "—", "date": inv.issue_date or "—",
+            "client": client, "seller": seller_for(inv),
+            "table": (table_ref.get("label") or table_ref.get("raw") or "Não identificada") if table_ref else "Sem tabela identificada",
+            "table_code": (table_ref.get("technical") or "") if table_ref else "", "count": 0, "below": 0, "above": 0,
+            "authorized": 0, "impact": 0.0, "items": [],
+        })
+        cell["count"] += 1
+        if special_rule:
+            cell["authorized"] += 1
+        cell[row["direction"]] += 1
+        cell["impact"] += impact
+        cell["items"].append(row)
+    summary["impact"] = round(summary["impact"], 2)
+    rows = []
+    for cell in grouped.values():
+        cell["impact"] = round(cell["impact"], 2)
+        cell["items"].sort(key=lambda r: abs(r["diff_pct"]), reverse=True)
+        rows.append(cell)
+    rows.sort(key=lambda r: abs(r["impact"]), reverse=True)
+    return {
+        "title": "Faturamento · auditoria de preço", "kind": "price_audit",
+        "summary": summary, "rows": rows,
+        "note": "Compara o preço praticado com o preço esperado após aplicar a política comercial autorizada. Prioridade: produto → subcategoria → categoria → regra geral do cliente → desconto de contrato aplicado ao preço → tabela da venda. Desconto de contrato marcado como financeiro não altera esta auditoria. Diferenças inferiores a meio centavo são tratadas como arredondamento.",
+    }
 
 
 def _product_price_lookup(db, cid: int, query: str = "") -> dict:
@@ -1460,6 +1927,8 @@ def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: 
         detail = _group_breakdown_with_children("Faturamento · prazo cadastrado do cliente", _sales_grouped_by_terms(db, cid, start, end), "Prazo atualmente cadastrado no cliente; pode diferir da condição realmente praticada na venda.")
     elif key == "sales-value-range":
         detail = _group_breakdown_with_children("Faturamento · por faixa de valor", _sales_grouped_by_value_range(db, cid, start, end), "Faixas calculadas sobre o valor total de cada NF-e válida do período.")
+    elif key == "sales-price-audit":
+        detail = _sales_price_audit(db, cid, start, end)
     elif key == "sales-period":
         detail = _group_breakdown_with_children("NF-e do período · por data", _sales_grouped_by_date(db, cid, start, end), "Agrupado por data de emissão. Toque na data para ver as NF-e.")
     elif key == "commercial-seller":

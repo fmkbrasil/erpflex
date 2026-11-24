@@ -26,7 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .connectors import ERPFlexClient, NFStockClient
 from .db import (
-    AccessProfile, AppUser, AuditLog, BoxType, Branch, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, Delivery, DeliveryAssignment, DeliveryMovement,
+    AccessProfile, AppUser, AuditLog, BoxType, Branch, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, CommercialPriceRule, Delivery, DeliveryAssignment, DeliveryMovement,
     DeliveryOccurrence, DeliveryRule, DreExpenseMapping, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesCfopExclusion, SalesInvoiceItem,
     Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat,
     UserBranchAccess, UserCompanyAccess, UserViewPreference, UIThemeSetting, UILabelOverride, create_sqlite_backup, database_status, init_db
@@ -60,7 +60,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.73")
+app = FastAPI(title=APP_NAME, version="1.3.76")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -137,6 +137,7 @@ def required_permission(method: str, path: str) -> str | None:
         ("/financeiro/enriquecer", "financeiro.manage"),
         ("/financeiro/lote", "financeiro.manage"),
         ("/faturamento/cfops-excluidos", "faturamento.manage"),
+        ("/faturamento/regras-comerciais", "faturamento.manage"),
         ("/faturamento/atualizar-itens", "faturamento.manage"),
         ("/compras/atualizar-itens", "compras.manage"),
         ("/cadastros", "cadastros.view"),
@@ -230,7 +231,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.73", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.76", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1656,6 +1657,7 @@ def _collection_contract_rule_map(db, cid: int, partner_ids: list[int]) -> dict[
     return {int(r.partner_id): {
         "has_contract": bool(r.has_collection_contract),
         "discount_percent": max(0.0, min(float(r.contract_discount_percent or 0), 100.0)),
+        "discount_application": str(r.contract_discount_application or "FINANCEIRO").upper(),
     } for r in rows}
 
 
@@ -2154,7 +2156,9 @@ def _financial_display(db, title: FinancialTitle, partner: Partner | None, bank_
             CollectionCustomerRule.partner_id == title.partner_id,
             CollectionCustomerRule.has_collection_contract == True
         ).limit(1))
-    discount_percent = max(0.0, min(float(contract_rule.contract_discount_percent or 0), 100.0)) if contract_rule else 0.0
+    discount_percent = 0.0
+    if contract_rule and str(contract_rule.contract_discount_application or "FINANCEIRO").upper() == "FINANCEIRO":
+        discount_percent = max(0.0, min(float(contract_rule.contract_discount_percent or 0), 100.0))
     gross_value = max(0.0, float(title.value or 0))
     contract_discount_value = gross_value * discount_percent / 100.0
     net_value = max(0.0, gross_value - contract_discount_value)
@@ -2560,6 +2564,113 @@ def faturamento_imprimir(request: Request, invoice_id: int):
                   payload=payload, header=header, document_kind="saida")
 
 
+@app.get("/faturamento/regras-comerciais", response_class=HTMLResponse)
+def faturamento_regras_comerciais(request: Request, saved: str = "", q: str = ""):
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        customer_stmt = select(Partner).where(Partner.company_id == cid, Partner.role_customer == True)
+        if q.strip():
+            term = f"%{q.strip()}%"
+            customer_stmt = customer_stmt.where(or_(Partner.name.ilike(term), Partner.trade_name.ilike(term), Partner.cnpj_cpf.ilike(term)))
+        customers = db.scalars(customer_stmt.order_by(Partner.name).limit(500)).all()
+        contract_rows = db.execute(
+            select(CollectionCustomerRule, Partner)
+            .join(Partner, Partner.id == CollectionCustomerRule.partner_id)
+            .where(CollectionCustomerRule.company_id == cid, CollectionCustomerRule.has_collection_contract == True)
+            .order_by(Partner.name)
+        ).all()
+        rule_rows = db.execute(
+            select(CommercialPriceRule, Partner)
+            .join(Partner, Partner.id == CommercialPriceRule.partner_id)
+            .where(CommercialPriceRule.company_id == cid)
+            .order_by(CommercialPriceRule.active.desc(), Partner.name, CommercialPriceRule.id.desc())
+        ).all()
+    return render(request, "faturamento_regras_comerciais.html", company=company, customers=customers, contract_rows=contract_rows, rule_rows=rule_rows, saved=saved, q=q)
+
+
+@app.post("/faturamento/regras-comerciais")
+async def faturamento_regras_comerciais_salvar(request: Request):
+    form = await request.form()
+    try:
+        partner_id = int(form.get("partner_id") or 0)
+    except Exception:
+        partner_id = 0
+    scope_type = str(form.get("scope_type") or "GENERAL").upper()
+    rule_type = str(form.get("rule_type") or "DISCOUNT_PERCENT").upper()
+    scope_value = str(form.get("scope_value") or "").strip() or None
+    valid_from = str(form.get("valid_from") or "").strip() or None
+    valid_to = str(form.get("valid_to") or "").strip() or None
+    notes = str(form.get("notes") or "").strip() or None
+    active = str(form.get("active") or "1") == "1"
+    try:
+        rule_value = float(str(form.get("rule_value") or "0").replace(",", "."))
+    except Exception:
+        rule_value = 0.0
+    if scope_type not in {"GENERAL", "PRODUCT", "CATEGORY", "SUBCATEGORY"}:
+        scope_type = "GENERAL"
+    if rule_type not in {"DISCOUNT_PERCENT", "SURCHARGE_PERCENT", "FIXED_PRICE"}:
+        rule_type = "DISCOUNT_PERCENT"
+    if rule_type in {"DISCOUNT_PERCENT", "SURCHARGE_PERCENT"}:
+        rule_value = max(0.0, min(rule_value, 100.0))
+    else:
+        rule_value = max(0.0, rule_value)
+    if scope_type != "GENERAL" and not scope_value:
+        return RedirectResponse("/faturamento/regras-comerciais?saved=escopo-obrigatorio", status_code=303)
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        partner = db.scalar(select(Partner).where(Partner.id == partner_id, Partner.company_id == cid, Partner.role_customer == True).limit(1))
+        if not partner:
+            return RedirectResponse("/faturamento/regras-comerciais?saved=cliente-invalido", status_code=303)
+        row = CommercialPriceRule(company_id=cid, partner_id=partner_id, scope_type=scope_type, scope_value=scope_value, rule_type=rule_type, rule_value=rule_value, valid_from=valid_from, valid_to=valid_to, active=active, notes=notes)
+        db.add(row); db.flush()
+        ac = access_context(db, request)
+        add_audit(db, ac, "REGRA_COMERCIAL_CRIADA", "commercial_price_rule", row.id, f"cliente={partner.name}; escopo={scope_type}:{scope_value or '*'}; regra={rule_type}:{rule_value}")
+        db.commit()
+    return RedirectResponse("/faturamento/regras-comerciais?saved=1", status_code=303)
+
+
+@app.post("/faturamento/regras-comerciais/{rule_id}/toggle")
+def faturamento_regra_comercial_toggle(request: Request, rule_id: int):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        row = db.scalar(select(CommercialPriceRule).where(CommercialPriceRule.id == rule_id, CommercialPriceRule.company_id == cid).limit(1))
+        if row:
+            row.active = not bool(row.active)
+            ac = access_context(db, request)
+            add_audit(db, ac, "REGRA_COMERCIAL_TOGGLE", "commercial_price_rule", row.id, f"ativo={row.active}")
+            db.commit()
+    return RedirectResponse("/faturamento/regras-comerciais", status_code=303)
+
+
+@app.post("/faturamento/regras-comerciais/{rule_id}/excluir")
+def faturamento_regra_comercial_excluir(request: Request, rule_id: int):
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        row = db.scalar(select(CommercialPriceRule).where(CommercialPriceRule.id == rule_id, CommercialPriceRule.company_id == cid).limit(1))
+        if row:
+            ac = access_context(db, request)
+            add_audit(db, ac, "REGRA_COMERCIAL_REMOVIDA", "commercial_price_rule", row.id, f"escopo={row.scope_type}:{row.scope_value or '*'}")
+            db.delete(row); db.commit()
+    return RedirectResponse("/faturamento/regras-comerciais", status_code=303)
+
+
+@app.post("/faturamento/regras-comerciais/contrato/{partner_id}")
+async def faturamento_regra_contrato_aplicacao(request: Request, partner_id: int):
+    form = await request.form()
+    application = str(form.get("application") or "FINANCEIRO").upper()
+    if application not in {"FINANCEIRO", "PRECO"}:
+        application = "FINANCEIRO"
+    with SessionLocal() as db:
+        cid, _company = company_context(db, request)
+        row = db.scalar(select(CollectionCustomerRule).where(CollectionCustomerRule.company_id == cid, CollectionCustomerRule.partner_id == partner_id, CollectionCustomerRule.has_collection_contract == True).limit(1))
+        if row:
+            row.contract_discount_application = application
+            ac = access_context(db, request)
+            add_audit(db, ac, "CONTRATO_DESCONTO_APLICACAO", "collection_customer_rule", row.id, f"aplicacao={application}")
+            db.commit()
+    return RedirectResponse("/faturamento/regras-comerciais?saved=contrato", status_code=303)
+
+
 @app.get("/compras", response_class=HTMLResponse)
 def compras(request: Request, status: str = "", q: str = "", period: str = "all", date_from: str = "", date_to: str = "", nf_filter: str = "valid",
             page: int = 1, per_page: int = 0, cols: str = "", save_view: int = 0, items_updated: int = 0, items_failed: int = 0):
@@ -2774,7 +2885,7 @@ def cobranca_configuracao(request: Request, saved: int = 0, auto_sent: int = 0, 
 
 
 @app.post("/financeiro/cobranca/configuracao")
-def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_before_due: int = Form(3), include_overdue: str = Form(""), resend_interval_hours: int = Form(24), subject_template: str = Form(""), body_template: str = Form(""), contract_customer_ids: list[int] = Form(default=[]), visible_customer_ids: list[int] = Form(default=[]), contract_discount_partner_ids: list[int] = Form(default=[]), contract_discount_values: list[str] = Form(default=[]), q: str = Form("")):
+def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_before_due: int = Form(3), include_overdue: str = Form(""), resend_interval_hours: int = Form(24), subject_template: str = Form(""), body_template: str = Form(""), contract_customer_ids: list[int] = Form(default=[]), visible_customer_ids: list[int] = Form(default=[]), contract_discount_partner_ids: list[int] = Form(default=[]), contract_discount_values: list[str] = Form(default=[]), contract_discount_applications: list[str] = Form(default=[]), q: str = Form("")):
     with SessionLocal() as db:
         cid, _company = company_context(db, request)
         cfg = _collection_config(db, cid)
@@ -2795,6 +2906,14 @@ def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_
             except (TypeError, ValueError):
                 continue
             discount_by_partner[pid] = max(0.0, min(value, 100.0))
+        application_by_partner = {}
+        for raw_pid, raw_app in zip(contract_discount_partner_ids, contract_discount_applications):
+            try:
+                pid = int(raw_pid)
+            except (TypeError, ValueError):
+                continue
+            app_value = str(raw_app or "FINANCEIRO").upper()
+            application_by_partner[pid] = app_value if app_value in {"FINANCEIRO", "PRECO"} else "FINANCEIRO"
         # Segurança do filtro: altera somente clientes exibidos na tela. Clientes fora da pesquisa
         # preservam a configuração já gravada. Se um POST antigo não enviar visible_customer_ids,
         # atualiza somente os explicitamente selecionados e nunca limpa contratos silenciosamente.
@@ -2804,11 +2923,13 @@ def cobranca_configuracao_salvar(request: Request, active: str = Form(""), days_
             rule = current.get(pid)
             should_have = pid in selected
             discount_percent = discount_by_partner.get(pid, 0.0) if should_have else 0.0
+            application = application_by_partner.get(pid, "FINANCEIRO") if should_have else "FINANCEIRO"
             if not rule and should_have:
-                db.add(CollectionCustomerRule(company_id=cid, partner_id=pid, has_collection_contract=True, contract_discount_percent=discount_percent))
+                db.add(CollectionCustomerRule(company_id=cid, partner_id=pid, has_collection_contract=True, contract_discount_percent=discount_percent, contract_discount_application=application))
             elif rule:
                 rule.has_collection_contract = should_have
                 rule.contract_discount_percent = discount_percent
+                rule.contract_discount_application = application
         db.commit()
     suffix = "&q=" + quote_plus(q.strip()) if q.strip() else ""
     return RedirectResponse(f"/financeiro/cobranca/configuracao?saved=1{suffix}", status_code=303)

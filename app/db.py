@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 class SchemaState(Base):
@@ -108,6 +108,7 @@ class CollectionCustomerRule(Base):
     partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id", ondelete="CASCADE"), index=True)
     has_collection_contract: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     contract_discount_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    contract_discount_application: Mapped[str] = mapped_column(String(20), default="FINANCEIRO", index=True)
     notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (UniqueConstraint("company_id", "partner_id", name="uq_collection_customer_rule"),)
@@ -475,6 +476,25 @@ class Product(Base):
     __table_args__ = (
         UniqueConstraint("company_id", "erpflex_id", name="uq_product_erpflex"),
         Index("ix_product_company_code", "company_id", "code"),
+    )
+
+
+class CommercialPriceRule(Base):
+    __tablename__ = "commercial_price_rules"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id", ondelete="CASCADE"), index=True)
+    scope_type: Mapped[str] = mapped_column(String(30), default="GENERAL", index=True)
+    scope_value: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    rule_type: Mapped[str] = mapped_column(String(30), default="DISCOUNT_PERCENT", index=True)
+    rule_value: Mapped[float] = mapped_column(Float, default=0.0)
+    valid_from: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    valid_to: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    notes: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (
+        Index("ix_commercial_price_rule_company_partner_active", "company_id", "partner_id", "active"),
     )
 
 
@@ -932,6 +952,7 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V16: desconto comercial por cliente com contrato de cobrança.
     # V17: separação entre permissões de consulta e operação nos módulos comerciais/financeiros.
     # V18: CFOPs configuráveis que não compõem faturamento/vendas comerciais.
+    # V19: regras comerciais especiais para auditoria de preço e distinção entre desconto financeiro e desconto no preço.
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
     if "partners" in inspect(engine).get_table_names():
@@ -976,9 +997,11 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
                 conn.execute(sql_text("ALTER TABLE sales_orders ADD COLUMN seller_name VARCHAR(180)"))
     if "collection_customer_rules" in inspect(engine).get_table_names():
         rule_existing = {c["name"] for c in inspect(engine).get_columns("collection_customer_rules")}
-        if "contract_discount_percent" not in rule_existing:
-            with engine.begin() as conn:
+        with engine.begin() as conn:
+            if "contract_discount_percent" not in rule_existing:
                 conn.execute(sql_text("ALTER TABLE collection_customer_rules ADD COLUMN contract_discount_percent FLOAT DEFAULT 0"))
+            if "contract_discount_application" not in rule_existing:
+                conn.execute(sql_text("ALTER TABLE collection_customer_rules ADD COLUMN contract_discount_application VARCHAR(20) DEFAULT 'FINANCEIRO'"))
     # V15 preserva o acesso ao BI de perfis legados que antes dependiam de dashboard.view.
     if previous_version < 15:
         with SessionLocal() as db:
