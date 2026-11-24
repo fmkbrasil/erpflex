@@ -786,14 +786,21 @@ def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | Non
     row = db.get(Partner, preferred_partner_id) if preferred_partner_id else None
     hinted_id = text(erpflex_id_hint).strip() if erpflex_id_hint not in (None, "") else ""
     if not hinted_id:
-        id_names = ("fornecedor_id", "id_fornecedor", "codigo_fornecedor", "Codigo", "codigo", "id") if role == "supplier" else ("cliente_id", "id_cliente", "codigo_cliente", "Codigo", "codigo", "id")
+        # Não usar o campo genérico ``id`` como identidade do cliente/fornecedor.
+        # Em módulos financeiros ele normalmente é o ID do título, e isso pode
+        # vincular lançamentos de clientes diferentes ao mesmo cadastro.
+        id_names = ("fornecedor_id", "id_fornecedor", "codigo_fornecedor", "fornecedor_codigo", "idfornecedor") if role == "supplier" else ("cliente_id", "id_cliente", "codigo_cliente", "cliente_codigo", "idcliente")
         hinted_id = text(deep_find(record, id_names)).strip()
     if not row and hinted_id:
         row = db.scalar(select(Partner).where(Partner.company_id == company_id, Partner.erpflex_id == hinted_id).limit(1))
     if not row and cnpj:
         row = db.scalar(select(Partner).where(Partner.company_id == company_id, Partner.cnpj_cpf == cnpj).limit(1))
-    if not row and name:
-        row = db.scalar(select(Partner).where(Partner.company_id == company_id, func.lower(Partner.name) == name.lower()).limit(1))
+    # Nome é apenas rótulo, nunca uma chave segura quando a API trouxe CNPJ ou
+    # ID do parceiro. Assim duas lojas com a mesma fantasia não são consolidadas.
+    if not row and name and not (hinted_id or cnpj):
+        candidates = db.scalars(select(Partner).where(Partner.company_id == company_id, func.lower(Partner.name) == name.lower()).limit(2)).all()
+        if len(candidates) == 1:
+            row = candidates[0]
     if not row:
         row = Partner(company_id=company_id, cnpj_cpf=cnpj, name=name or "Não identificado", trade_name=trade)
         db.add(row)

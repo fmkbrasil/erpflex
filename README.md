@@ -795,3 +795,8 @@ V1.3.77 — Região comercial, prazo praticado e identidade de clientes
 - Corrige a linha-resumo da Auditoria de preço que exibiria o método interno `items` do dicionário no lugar da quantidade de itens.
 
 Banco de dados: sem alteração de schema (permanece 19).
+
+
+## V1.3.78 — Auditoria de preço e identidade financeira
+
+Corrige o cruzamento entre tabela praticada na venda e tabela do produto, adiciona diagnóstico de cobertura da auditoria, separa clientes financeiros por identidade fiscal/ERP diretamente do registro bruto e substitui o submenu horizontal por navegação responsiva. Schema 19.

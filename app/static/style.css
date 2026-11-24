@@ -356,3 +356,20 @@
 
 /* V1.3.77 · identificação fiscal nos rankings financeiros */
 .bi-fast-ranking li span small{display:block;margin-top:2px;font-size:10px;font-weight:600;color:#718096;letter-spacing:.01em}
+
+/* V1.3.78 · submenu responsivo, diagnóstico da auditoria e identificação financeira bruta */
+.bi-fast-detail-nav{position:sticky;top:-14px;z-index:5;margin:0 0 12px;padding:10px 0 9px;background:#fff;border-bottom:1px solid #e8eef5}
+.bi-fast-detail-nav .bi-fast-detail-tabs{position:static;top:auto;margin:0;padding:0;border:0;background:transparent;display:flex;flex-wrap:wrap;overflow:visible;scrollbar-width:auto;gap:7px}
+.bi-fast-detail-select-wrap{display:none}
+.bi-fast-audit-diagnostic{margin:8px 0 12px;padding:11px 12px;border:1px solid #d8e5f5;border-radius:10px;background:#f7fbff;color:#294864}
+.bi-fast-audit-diagnostic.critical{border-color:#efc17c;background:#fff9ef}
+.bi-fast-audit-diagnostic>div:first-child{display:flex;flex-direction:column;gap:2px}.bi-fast-audit-diagnostic>div:first-child>b{font-size:10px;color:#173b63}.bi-fast-audit-diagnostic>div:first-child>small{font-size:8.5px;color:#6a7d93}
+.audit-diag-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:9px}.audit-diag-grid>span{display:flex;flex-direction:column;gap:2px;padding:7px 8px;border:1px solid #e1e9f3;border-radius:8px;background:#fff}.audit-diag-grid small{font-size:7.5px;text-transform:uppercase;letter-spacing:.03em;color:#75869a}.audit-diag-grid b{font-size:11px;color:#173b63}.audit-diag-reasons{margin-top:8px;font-size:8.5px;line-height:1.5;color:#62758d}.bi-fast-empty.warning{border:1px solid #efcf9d;background:#fffaf1;color:#79531a;border-radius:10px;padding:14px}
+@media(max-width:700px){
+  .bi-fast-detail-nav{top:-10px;padding:7px 0 9px}
+  .bi-fast-detail-nav .bi-fast-detail-tabs{display:none}
+  .bi-fast-detail-select-wrap{display:flex;flex-direction:column;gap:4px}
+  .bi-fast-detail-select-wrap>span{font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:#6d7f95}
+  .bi-fast-detail-select-wrap select{width:100%;min-height:44px;border:1px solid #cfdbea;border-radius:10px;background:#f8fbff;color:#173251;padding:9px 36px 9px 11px;font-size:14px;font-weight:800}
+  .audit-diag-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}

@@ -195,6 +195,7 @@
   }
   root.querySelectorAll('[data-detail]').forEach(el=>el.addEventListener('click',()=>openDetail(el.dataset.detail)));
   body?.addEventListener('click',e=>{const btn=e.target.closest('[data-detail-link]');if(btn){e.preventDefault();openDetail(btn.dataset.detailLink);}});
+  body?.addEventListener('change',e=>{const sel=e.target.closest('[data-detail-select]');if(sel&&sel.value){openDetail(sel.value);}});
   body?.addEventListener('submit',e=>{const form=e.target.closest('[data-price-search]');if(!form)return;e.preventDefault();const q=form.querySelector('input[name=q]')?.value||'';openDetail('commercial-price-table',{q});});
   drawer?.querySelector('.bi-fast-drawer-close')?.addEventListener('click',closeDrawer);backdrop?.addEventListener('click',closeDrawer);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 

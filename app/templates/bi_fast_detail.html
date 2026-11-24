@@ -4,11 +4,19 @@
 {%- endmacro %}
 <div data-detail-title="{{ detail.title }}">
 {% if detail.options %}
-  <nav class="bi-fast-detail-tabs" aria-label="Formas de visualização">
-    {% for opt in detail.options %}
-    <button type="button" data-detail-link="{{ opt.key }}" class="{% if detail.active==opt.key %}active{% endif %}">{{ opt.label }}</button>
-    {% endfor %}
-  </nav>
+  <div class="bi-fast-detail-nav">
+    <label class="bi-fast-detail-select-wrap">
+      <span>Visualização</span>
+      <select data-detail-select aria-label="Escolher análise">
+        {% for opt in detail.options %}<option value="{{ opt.key }}" {% if detail.active==opt.key %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <nav class="bi-fast-detail-tabs" aria-label="Formas de visualização">
+      {% for opt in detail.options %}
+      <button type="button" data-detail-link="{{ opt.key }}" class="{% if detail.active==opt.key %}active{% endif %}">{{ opt.label }}</button>
+      {% endfor %}
+    </nav>
+  </div>
 {% endif %}
 {% if detail.note %}<div class="bi-fast-detail-note">{{ detail.note }}</div>{% endif %}
 
@@ -118,6 +126,18 @@
   </div>
 {% elif detail.kind == 'price_audit' %}
   <div class="bi-fast-detail-meta">{{ detail.summary['items'] }} item(ns) faturado(s) em {{ detail.summary.invoices }} NF-e · {{ detail.summary.audited }} item(ns) auditado(s) · {{ detail.summary.authorized }} com condição comercial especial · {{ detail.summary.missing }} sem referência disponível. <a href="/faturamento/regras-comerciais">Gerenciar regras comerciais ›</a></div>
+  {% if detail.summary.missing and detail.summary.missing > 0 %}
+  <div class="bi-fast-audit-diagnostic {{ 'critical' if detail.summary.audited == 0 else '' }}">
+    <div><b>Diagnóstico da referência de preço</b><small>{% if detail.summary.audited == 0 %}A auditoria ainda não possui base suficiente para concluir que não há divergências.{% else %}Os itens sem referência não entram no cálculo de divergência.{% endif %}</small></div>
+    <div class="audit-diag-grid">
+      <span><small>NF-e com tabela identificada</small><b>{{ detail.summary.get('invoice_table_identified', 0) }} / {{ detail.summary.invoices }}</b></span>
+      <span><small>Itens com produto localizado</small><b>{{ detail.summary.get('product_matched', 0) }} / {{ detail.summary['items'] }}</b></span>
+      <span><small>Itens com preços de tabela</small><b>{{ detail.summary.get('product_with_prices', 0) }}</b></span>
+      <span><small>Tabela × preço conciliados</small><b>{{ detail.summary.get('table_price_matched', 0) }}</b></span>
+    </div>
+    <div class="audit-diag-reasons">Sem tabela na venda: <b>{{ detail.summary.get('missing_no_table', 0) }}</b> · Produto não localizado: <b>{{ detail.summary.get('missing_no_product', 0) }}</b> · Produto sem preços sincronizados: <b>{{ detail.summary.get('missing_no_prices', 0) }}</b> · Tabela da venda sem correspondência no produto: <b>{{ detail.summary.get('missing_table_mismatch', 0) }}</b></div>
+  </div>
+  {% endif %}
   <div class="bi-fast-audit-summary">
     <div><small>Itens auditados</small><b>{{ detail.summary.audited }}</b></div>
     <div class="danger"><small>Divergentes</small><b>{{ detail.summary.divergent }}</b></div>
@@ -156,7 +176,10 @@
     </details>
     {% endfor %}
   </div>
-  {% else %}<div class="bi-fast-empty">Nenhuma divergência de preço identificada no período com referência de tabela disponível.</div>{% endif %}
+  {% else %}
+    {% if detail.summary.audited == 0 and detail.summary.missing > 0 %}<div class="bi-fast-empty warning">Auditoria inconclusiva: nenhum item teve referência de preço suficiente para comparação. Consulte o diagnóstico acima.</div>
+    {% else %}<div class="bi-fast-empty">Nenhuma divergência de preço identificada entre os {{ detail.summary.audited }} item(ns) efetivamente auditados.</div>{% endif %}
+  {% endif %}
 {% elif detail.kind == 'sales' %}
   <div class="bi-fast-detail-meta">NF-e válidas do período, já considerando CFOPs excluídos.</div>
   <div class="table-wrap"><table class="bi-fast-detail-table"><thead><tr><th>NF-e</th><th>Emissão</th><th>Cliente</th><th>Valor</th></tr></thead><tbody>{% for r in detail.rows %}<tr><td><a href="/faturamento/{{ r.id }}">{{ r.number }}</a></td><td>{{ r.date }}</td><td>{{ r.partner }}</td><td><b data-money="{{ r.value }}"></b></td></tr>{% else %}<tr><td colspan="4">Sem NF-e no período.</td></tr>{% endfor %}</tbody></table></div>

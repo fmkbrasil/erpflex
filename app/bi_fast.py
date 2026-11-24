@@ -676,6 +676,8 @@ def _sales_invoice_detail(db, cid: int, start: date, end: date) -> dict:
 
 
 def _financial_partner_key(row: dict) -> tuple[str, str]:
+    if row.get("identity_key"):
+        return str(row.get("identity_key")), str(row.get("identity_subtitle") or "")
     cnpj = re.sub(r"\D", "", str(row.get("partner_cnpj") or ""))
     if cnpj:
         return f"tax:{cnpj}", f"CNPJ/CPF {_format_cnpj_cpf(cnpj)}"
@@ -1378,19 +1380,26 @@ def _canonical_price_table_ref(value: Any) -> dict | None:
     for idx, label in PRICE_TABLE_LABELS.items():
         if _norm_key(label) == norm:
             return {"index": idx, "label": label, "technical": "Padrão" if idx == 0 else f"Tabela {idx}", "raw": raw}
-    # formatos tabela_10 / Tabela 10 / apenas 10
+    # formatos tabela_10 / Tabela 10 / Padrão. Para texto livre, continua
+    # abaixo para tentar extrair um índice embutido antes de assumir o rótulo cru.
     label, technical = _price_table_label(raw)
-    if label:
+    if technical:
         idx = None
         if technical == "Padrão":
             idx = 0
-        elif technical and re.search(r"(\d+)$", technical):
+        elif re.search(r"(\d+)$", technical):
             idx = int(re.search(r"(\d+)$", technical).group(1))
         return {"index": idx, "label": label, "technical": technical, "raw": raw}
     digits = re.fullmatch(r"0*(\d+)", norm)
     if digits:
         idx = int(digits.group(1))
         return {"index": idx, "label": PRICE_TABLE_LABELS.get(idx, f"Tabela {idx}"), "technical": "Padrão" if idx == 0 else f"Tabela {idx}", "raw": raw}
+    # Formatos comuns do ERP: "10 - Pão de Açucar", "Tabela 10 - ...", "10|...".
+    mixed = re.search(r"(?:^|tabela[_\s-]*)(\d{1,2})(?:\D|$)", norm)
+    if mixed:
+        idx = int(mixed.group(1))
+        if idx in PRICE_TABLE_LABELS:
+            return {"index": idx, "label": PRICE_TABLE_LABELS[idx], "technical": "Padrão" if idx == 0 else f"Tabela {idx}", "raw": raw}
     return {"index": None, "label": raw, "technical": None, "raw": raw}
 
 
@@ -1405,11 +1414,11 @@ def _extract_sale_price_table(payload: dict | None) -> dict | None:
     exact_priority = {
         "tabela_preco": 100, "tabela_de_preco": 100, "tabelapreco": 100,
         "price_table": 100, "price_list": 100, "pricelist": 100,
-        "nome_tabela_preco": 98, "descricao_tabela_preco": 98,
-        "id_tabela_preco": 95, "tabela_preco_id": 95,
-        "codigo_tabela_preco": 95, "cod_tabela_preco": 95,
-        "lista_preco": 92, "lista_de_preco": 92, "id_lista_preco": 90,
-        "tabela_venda": 90, "tabela_comercial": 90,
+        "nome_tabela_preco": 98, "descricao_tabela_preco": 98, "tabela_preco_desc": 98, "tabelapreco_desc": 98,
+        "id_tabela_preco": 95, "tabela_preco_id": 95, "idtabelapreco": 95,
+        "codigo_tabela_preco": 95, "cod_tabela_preco": 95, "numero_tabela_preco": 95, "nr_tabela_preco": 95,
+        "lista_preco": 92, "lista_de_preco": 92, "id_lista_preco": 90, "lista_preco_id": 90,
+        "tabela_venda": 90, "tabela_comercial": 90, "tab_preco": 90, "tabpreco": 90,
     }
     candidates: list[tuple[int, int, dict]] = []
 
@@ -1423,11 +1432,18 @@ def _extract_sale_price_table(payload: dict | None) -> dict | None:
                     ref = _canonical_price_table_ref(value)
                     if ref:
                         candidates.append((exact_priority[nk], -depth, {**ref, "source": nk}))
-                # alguns retornos usam somente `tabela`, mas só aceitar valor escalar
-                elif nk == "tabela" and not isinstance(value, (dict, list)) and value not in (None, ""):
+                # Alguns retornos usam somente `tabela`; aceitar escalar ou objeto
+                # identificável, mas nunca o contêiner genérico de tabelas do produto.
+                elif nk == "tabela" and not isinstance(value, list) and value not in (None, "", {}):
                     ref = _canonical_price_table_ref(value)
                     if ref and (_norm_key(str(value)) not in {"tabelas", "tabela"}):
-                        candidates.append((70, -depth, {**ref, "source": nk}))
+                        candidates.append((72, -depth, {**ref, "source": nk}))
+                # Variações não documentadas: qualquer campo escalar cujo nome contenha
+                # simultaneamente tabela/lista e preço, sem interpretar arrays de preços.
+                elif not isinstance(value, (dict, list)) and value not in (None, "") and (("tabela" in nk and "preco" in nk) or ("lista" in nk and "preco" in nk)):
+                    ref = _canonical_price_table_ref(value)
+                    if ref:
+                        candidates.append((80, -depth, {**ref, "source": nk}))
                 walk(value, depth + 1)
         elif isinstance(obj, list):
             for value in obj:
@@ -1440,26 +1456,56 @@ def _extract_sale_price_table(payload: dict | None) -> dict | None:
 
 
 def _product_price_reference_context(db, cid: int, item_rows: list) -> Any:
-    """Retorna função que resolve os preços de tabela de um item faturado."""
+    """Retorna função que resolve produto + preços de tabela para itens faturados.
+
+    Usa ID, código e EAN; em seguida usa descrição apenas quando o cadastro é único.
+    Isso evita que a auditoria perca referência quando a NF não grava o mesmo ID usado
+    no cadastro mestre do produto.
+    """
     product_ids = {str(r.product_id or "").strip() for r in item_rows if str(r.product_id or "").strip()}
     codes = {str(r.product_code or "").strip() for r in item_rows if str(r.product_code or "").strip()}
-    clauses = []
-    if product_ids:
-        clauses.append(Product.erpflex_id.in_(list(product_ids)))
-    if codes:
-        clauses.append(Product.code.in_(list(codes)))
-    products = db.scalars(select(Product).where(Product.company_id == cid, or_(*clauses))).all() if clauses else []
+    eans = {re.sub(r"\D", "", str(r.ean or "")) for r in item_rows if re.sub(r"\D", "", str(r.ean or ""))}
+    descriptions = {_norm_key(str(r.description or "")) for r in item_rows if _norm_key(str(r.description or ""))}
+
+    products_by_id: dict[int, Product] = {}
+    # Consultas em blocos para funcionar também no SQLite (limite de parâmetros).
+    def collect(field, values):
+        vals = list(values)
+        for i in range(0, len(vals), 400):
+            chunk = vals[i:i+400]
+            if not chunk:
+                continue
+            for prod in db.scalars(select(Product).where(Product.company_id == cid, field.in_(chunk))).all():
+                products_by_id[int(prod.id)] = prod
+    collect(Product.erpflex_id, product_ids)
+    collect(Product.code, codes)
+    # EAN é armazenado como texto; consulta exata e complementa com mapa normalizado.
+    collect(Product.ean, {str(r.ean or "").strip() for r in item_rows if str(r.ean or "").strip()})
+    products = list(products_by_id.values())
+
     by_external = {str(p.erpflex_id or "").strip(): p for p in products if str(p.erpflex_id or "").strip()}
-    by_code = {str(p.code or "").strip(): p for p in products if str(p.code or "").strip()}
+    by_code = {_norm_key(str(p.code or "")): p for p in products if _norm_key(str(p.code or ""))}
+    by_ean = {re.sub(r"\D", "", str(p.ean or "")): p for p in products if re.sub(r"\D", "", str(p.ean or ""))}
+    desc_candidates: dict[str, list[Product]] = defaultdict(list)
+    for prod in products:
+        if prod.description:
+            desc_candidates[_norm_key(prod.description)].append(prod)
+    by_desc = {k: vals[0] for k, vals in desc_candidates.items() if len(vals) == 1 and k in descriptions}
+
     ext_ids = {str(p.erpflex_id or "").strip() for p in products if str(p.erpflex_id or "").strip()} | product_ids
     raw_by_external: dict[str, dict] = {}
     raw_by_code: dict[str, dict] = {}
-    if ext_ids:
+    raw_by_ean: dict[str, dict] = {}
+    ext_list = list(ext_ids)
+    for i in range(0, len(ext_list), 400):
+        chunk = ext_list[i:i+400]
+        if not chunk:
+            continue
         raw_rows = db.execute(select(RawRecord.external_id, RawRecord.payload_json).where(
             RawRecord.company_id == cid,
             func.upper(RawRecord.source) == "ERPFLEX",
             func.lower(RawRecord.module) == "products",
-            RawRecord.external_id.in_(list(ext_ids)),
+            RawRecord.external_id.in_(chunk),
         ).order_by(RawRecord.id.desc())).all()
         for external_id, payload_json in raw_rows:
             ext = str(external_id or "").strip()
@@ -1475,37 +1521,49 @@ def _product_price_reference_context(db, cid: int, item_rows: list) -> Any:
                 raw_by_external[ext] = payload
             raw_code = _walk_find(payload, {"codigo", "codigo_produto", "sku", "referencia"})
             if raw_code not in (None, ""):
-                raw_by_code[str(raw_code).strip()] = payload
+                raw_by_code[_norm_key(str(raw_code))] = payload
+            raw_ean = _walk_find(payload, {"ean", "gtin", "codigo_barras", "cean"})
+            raw_ean_digits = re.sub(r"\D", "", str(raw_ean or ""))
+            if raw_ean_digits:
+                raw_by_ean[raw_ean_digits] = payload
 
     def resolve(item) -> dict:
         pid = str(item.product_id or "").strip()
-        code = str(item.product_code or "").strip()
-        product = by_external.get(pid) or by_code.get(code)
-        payload = raw_by_external.get(pid) or raw_by_code.get(code)
+        code = _norm_key(str(item.product_code or ""))
+        ean = re.sub(r"\D", "", str(item.ean or ""))
+        desc = _norm_key(str(item.description or ""))
+        product = by_external.get(pid) or by_code.get(code) or by_ean.get(ean) or by_desc.get(desc)
+        payload = raw_by_external.get(pid) or raw_by_code.get(code) or raw_by_ean.get(ean)
         if not payload and product:
             payload = raw_by_external.get(str(product.erpflex_id or "").strip())
         prices = _extract_price_tables(payload or {}) if payload else []
-        return {"product": product, "payload": payload or {}, "prices": prices}
+        return {"product": product, "payload": payload or {}, "prices": prices, "matched": bool(product or payload)}
     return resolve
 
-
 def _price_for_table(prices: list[dict], table_ref: dict | None) -> dict | None:
-    if not table_ref:
+    if not table_ref or not prices:
         return None
     idx = table_ref.get("index")
     label_norm = _norm_key(table_ref.get("label") or "")
     technical_norm = _norm_key(table_ref.get("technical") or "")
-    # prioridade 1: índice/technical code; prioridade 2: descrição normalizada
+    raw_norm = _norm_key(table_ref.get("raw") or "")
+
+    # Canonicaliza cada preço usando tanto a descrição quanto o código técnico.
     for pr in prices:
-        code = _norm_key(pr.get("table_code") or "")
-        if idx == 0 and code == "padrao":
-            return pr
-        if idx is not None and code == _norm_key(f"Tabela {idx}"):
+        refs = []
+        for value in (pr.get("table_code"), pr.get("table")):
+            ref = _canonical_price_table_ref(value) if value not in (None, "") else None
+            if ref:
+                refs.append(ref)
+        if idx is not None and any(ref.get("index") == idx for ref in refs):
             return pr
     for pr in prices:
-        if label_norm and _norm_key(pr.get("table") or "") == label_norm:
+        candidates = {_norm_key(pr.get("table") or ""), _norm_key(pr.get("table_code") or "")}
+        if label_norm and label_norm in candidates:
             return pr
-        if technical_norm and _norm_key(pr.get("table_code") or "") == technical_norm:
+        if technical_norm and technical_norm in candidates:
+            return pr
+        if raw_norm and raw_norm in candidates:
             return pr
     return None
 
@@ -1670,7 +1728,14 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
                     ref = {**ref, "source": f"pedido:{ref.get('source') or 'tabela_preco'}"}
         table_by_invoice[int(inv.id)] = ref
 
-    summary = {"invoices": len(sales), "items": len(items), "audited": 0, "divergent": 0, "below": 0, "above": 0, "missing": 0, "authorized": 0, "authorized_ok": 0, "impact": 0.0}
+    summary = {
+        "invoices": len(sales), "items": len(items), "audited": 0, "divergent": 0, "below": 0, "above": 0,
+        "missing": 0, "authorized": 0, "authorized_ok": 0, "impact": 0.0,
+        "invoice_table_identified": sum(1 for ref in table_by_invoice.values() if ref),
+        "invoice_table_missing": sum(1 for ref in table_by_invoice.values() if not ref),
+        "product_matched": 0, "product_with_prices": 0, "table_price_matched": 0, "table_price_unmatched": 0,
+        "missing_no_table": 0, "missing_no_product": 0, "missing_no_prices": 0, "missing_table_mismatch": 0,
+    }
     grouped: dict[int, dict] = {}
     for item in items:
         inv = invoice_by_id.get(int(item.sales_invoice_id))
@@ -1678,7 +1743,16 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
             continue
         table_ref = table_by_invoice.get(int(inv.id))
         product_info = product_resolver(item)
+        if product_info.get("matched"):
+            summary["product_matched"] += 1
+        if product_info.get("prices"):
+            summary["product_with_prices"] += 1
         reference = _price_for_table(product_info["prices"], table_ref)
+        if table_ref and product_info.get("prices"):
+            if reference:
+                summary["table_price_matched"] += 1
+            else:
+                summary["table_price_unmatched"] += 1
         actual = round(float(item.unit_price or 0), 4)
         qty = float(item.qty or 0)
         base_expected = round(float(reference.get("price") or 0), 4) if reference and float(reference.get("price") or 0) > 0 else None
@@ -1689,6 +1763,14 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
         expected = round(float(special_rule.get("expected") or 0), 4) if special_rule else base_expected
         if expected is None or expected <= 0:
             summary["missing"] += 1
+            if not table_ref:
+                summary["missing_no_table"] += 1
+            elif not product_info.get("matched"):
+                summary["missing_no_product"] += 1
+            elif not product_info.get("prices"):
+                summary["missing_no_prices"] += 1
+            elif not reference:
+                summary["missing_table_mismatch"] += 1
             continue
         if special_rule:
             summary["authorized"] += 1
@@ -1920,9 +2002,67 @@ def _product_meta_context(db, cid: int):
     return resolve
 
 
+def _financial_raw_partner_identity(payload: dict, kind: str, fallback: dict) -> dict:
+    """Resolve a identidade do parceiro diretamente do título bruto.
+
+    O partner_id legado pode estar consolidado por nome em bases antigas. Para o BI,
+    CNPJ/CPF e ID específico do cliente/fornecedor do próprio lançamento têm prioridade.
+    """
+    role_customer = str(kind or "").upper() == "RECEBER"
+    if role_customer:
+        tax_keys = {"cliente_cnpj", "cnpj_cliente", "cpf_cnpj_cliente", "cpf_cnpj", "cnpj_cpf", "cnpjcpf", "documento_cliente"}
+        id_keys = {"cliente_id", "id_cliente", "codigo_cliente", "cliente_codigo", "idcliente"}
+        name_keys = {"cliente_desc", "cliente_nome", "nome_cliente", "razao_social_cliente", "fantasia_cliente"}
+        nested_keys = {"cliente", "customer"}
+    else:
+        tax_keys = {"fornecedor_cnpj", "cnpj_fornecedor", "cpf_cnpj_fornecedor", "cnpj_cpf", "cnpjcpf", "documento_fornecedor"}
+        id_keys = {"fornecedor_id", "id_fornecedor", "codigo_fornecedor", "fornecedor_codigo", "idfornecedor"}
+        name_keys = {"fornecedor_desc", "fornecedor_nome", "nome_fornecedor", "razao_social_fornecedor", "fantasia_fornecedor"}
+        nested_keys = {"fornecedor", "supplier"}
+
+    tax_raw = _walk_find(payload or {}, tax_keys)
+    erp_raw = _walk_find(payload or {}, id_keys)
+    name_raw = _walk_find(payload or {}, name_keys)
+    nested = _walk_find(payload or {}, nested_keys)
+    if isinstance(nested, dict):
+        low = {str(k).lower(): v for k, v in nested.items()}
+        if tax_raw in (None, ""):
+            for key in ("cnpj", "cpf", "cnpj_cpf", "cnpjcpf", "cpf_cnpj", "documento"):
+                if low.get(key) not in (None, ""):
+                    tax_raw = low.get(key); break
+        if erp_raw in (None, ""):
+            for key in ("id", "codigo", "erpflex_id", "cliente_id", "fornecedor_id"):
+                if low.get(key) not in (None, ""):
+                    erp_raw = low.get(key); break
+        if name_raw in (None, ""):
+            for key in ("nome_fantasia", "fantasia", "razao_social", "nome", "descricao", "desc"):
+                if low.get(key) not in (None, ""):
+                    name_raw = low.get(key); break
+
+    tax = re.sub(r"\D", "", str(tax_raw or ""))
+    erp = str(erp_raw or "").strip()
+    name = str(name_raw or fallback.get("partner") or "Sem cadastro").strip() or "Sem cadastro"
+    if tax:
+        return {"key": f"tax:{tax}", "name": name, "subtitle": f"CNPJ/CPF {_format_cnpj_cpf(tax)}", "cnpj": tax, "erp": erp}
+    if erp:
+        return {"key": f"rawerp:{erp}", "name": name, "subtitle": f"Cliente/Fornecedor ERP {erp}", "cnpj": "", "erp": erp}
+
+    fallback_cnpj = re.sub(r"\D", "", str(fallback.get("partner_cnpj") or ""))
+    if fallback_cnpj:
+        return {"key": f"tax:{fallback_cnpj}", "name": name, "subtitle": f"CNPJ/CPF {_format_cnpj_cpf(fallback_cnpj)}", "cnpj": fallback_cnpj, "erp": str(fallback.get("partner_erpflex_id") or "")}
+    fallback_erp = str(fallback.get("partner_erpflex_id") or "").strip()
+    if fallback_erp:
+        return {"key": f"erp:{fallback_erp}", "name": name, "subtitle": f"Cadastro ERP {fallback_erp}", "cnpj": "", "erp": fallback_erp}
+    pid = fallback.get("partner_id")
+    if pid not in (None, ""):
+        return {"key": f"id:{pid}", "name": name, "subtitle": f"Cadastro {pid}", "cnpj": "", "erp": ""}
+    return {"key": f"name:{_norm_key(name)}", "name": name, "subtitle": "Sem identificador fiscal/ERP no título", "cnpj": "", "erp": ""}
+
+
 def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "open", start: date | None = None, end: date | None = None) -> list[dict]:
-    # Carrega os títulos sem limitar antes do agrupamento. A identidade do cliente/fornecedor
-    # é preservada por CNPJ/CPF/ID; nomes iguais não são mais fundidos.
+    # Carrega todos os títulos da visão e resolve a identidade pelo payload bruto.
+    # Isso corrige bases antigas onde parceiros com a mesma razão/fantasia foram
+    # associados ao mesmo Partner antes de o CNPJ/ID específico estar disponível.
     bal = _balance_expr()
     label = _partner_label_expr()
     kind_condition = FinancialTitle.kind.in_(kind) if isinstance(kind, list) else (FinancialTitle.kind == kind)
@@ -1938,19 +2078,32 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
         conditions.extend([FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005])
     rows = db.execute(select(
         FinancialTitle.id, FinancialTitle.document, FinancialTitle.issue_date, FinancialTitle.due_date,
-        FinancialTitle.paid_date, FinancialTitle.partner_id, label.label("partner"),
+        FinancialTitle.paid_date, FinancialTitle.partner_id, FinancialTitle.raw_record_id, FinancialTitle.kind, label.label("partner"),
         Partner.cnpj_cpf.label("partner_cnpj"), Partner.erpflex_id.label("partner_erpflex_id"),
         FinancialTitle.value, FinancialTitle.paid_value, FinancialTitle.bank, bal.label("balance")
     ).outerjoin(Partner, Partner.id == FinancialTitle.partner_id).where(*conditions)).all()
-    return [{
-        "id": int(r.id), "document": r.document or "—", "partner": str(r.partner or "Sem cadastro"),
-        "partner_id": int(r.partner_id) if r.partner_id else None,
-        "partner_cnpj": str(r.partner_cnpj or "").strip(), "partner_erpflex_id": str(r.partner_erpflex_id or "").strip(),
-        "issue": r.issue_date or "—", "due": r.due_date or "—", "paid_date": r.paid_date or "—",
-        "value": _money(r.value), "paid": _money(r.paid_value), "balance": _money(r.balance),
-        "bank": str(r.bank or "Sem banco").strip() or "Sem banco",
-    } for r in rows]
-
+    raw_map = _load_raw_payloads(db, [int(r.raw_record_id) for r in rows if r.raw_record_id])
+    out = []
+    for r in rows:
+        base = {
+            "id": int(r.id), "document": r.document or "—", "partner": str(r.partner or "Sem cadastro"),
+            "partner_id": int(r.partner_id) if r.partner_id else None,
+            "partner_cnpj": str(r.partner_cnpj or "").strip(), "partner_erpflex_id": str(r.partner_erpflex_id or "").strip(),
+            "issue": r.issue_date or "—", "due": r.due_date or "—", "paid_date": r.paid_date or "—",
+            "value": _money(r.value), "paid": _money(r.paid_value), "balance": _money(r.balance),
+            "bank": str(r.bank or "Sem banco").strip() or "Sem banco",
+        }
+        payload = raw_map.get(int(r.raw_record_id), {}) if r.raw_record_id else {}
+        ident = _financial_raw_partner_identity(payload, str(r.kind or kind), base)
+        base["partner"] = ident["name"]
+        base["identity_key"] = ident["key"]
+        base["identity_subtitle"] = ident["subtitle"]
+        if ident.get("cnpj"):
+            base["partner_cnpj"] = ident["cnpj"]
+        if ident.get("erp"):
+            base["partner_erpflex_id"] = ident["erp"]
+        out.append(base)
+    return out
 
 def _group_rows_by_field(rows: list[dict], field: str, value_field: str = "balance") -> list[dict]:
     acc: dict[str, dict] = {}
