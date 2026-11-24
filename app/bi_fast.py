@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy import and_, case, func, or_, select
 
-from .bi_service import _is_cancelled, _period_bounds, _previous_period, _seller_info, _walk_find, _product_row_meta
+from .bi_service import _is_cancelled, _period_bounds, _previous_period, _seller_info, _walk_find, _product_row_meta, _bank_catalog
 from .db import (
     CollectionCustomerRule,
     CommercialPriceRule,
@@ -27,6 +27,7 @@ from .db import (
 )
 from .fiscal_rules import active_excluded_cfops, excluded_invoice_ids_for_candidates
 from .logistics import classificar_regiao
+from .utils import VERIFIED_BANK_NAMES, financial_bank_wallet_fields
 
 
 def _money(v: Any) -> float:
@@ -2194,6 +2195,39 @@ def _financial_raw_partner_identity(payload: dict, kind: str, fallback: dict) ->
     return {"key": f"name:{_norm_key(name)}", "name": name, "subtitle": "Sem identificador fiscal/ERP no título", "cnpj": "", "erp": ""}
 
 
+def _fast_bank_catalog(db, cid: int) -> dict[str, str]:
+    raws = db.scalars(select(RawRecord).where(
+        RawRecord.company_id == cid, RawRecord.source == "ERPFLEX",
+        RawRecord.module.in_(["banks", "bank_detail"])
+    )).all()
+    raw_map = {int(r.id): r for r in raws}
+    catalog = dict(VERIFIED_BANK_NAMES)
+    catalog.update(_bank_catalog(raws, raw_map))
+    return catalog
+
+
+def _resolved_financial_bank(stored: str, payload: dict, detail: dict, catalog: dict[str, str]) -> tuple[str, str]:
+    dref = financial_bank_wallet_fields(detail or {})
+    pref = financial_bank_wallet_fields(payload or {})
+    bank_id = str(dref.get("bank_id") or pref.get("bank_id") or "").strip()
+    bank_desc = str(dref.get("bank_desc") or pref.get("bank_desc") or "").strip()
+    stored_text = str(stored or "").strip()
+    low = stored_text.lower()
+    if not bank_id and low.startswith("banco "):
+        possible = stored_text.split(" ", 1)[1].strip()
+        if possible.isdigit():
+            bank_id = possible
+    elif not bank_id and stored_text.isdigit():
+        bank_id = stored_text
+    stored_specific = ""
+    if stored_text and not (low.startswith("banco ") or low.startswith("sem banco") or low.startswith("banco id ") or stored_text.isdigit()):
+        stored_specific = stored_text
+    label = bank_desc or catalog.get(bank_id, "") or stored_specific
+    if not label:
+        label = "Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}"
+    return label, bank_id
+
+
 def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "open", start: date | None = None, end: date | None = None) -> list[dict]:
     # Carrega todos os títulos da visão e resolve a identidade pelo payload bruto.
     # Isso corrige bases antigas onde parceiros com a mesma razão/fantasia foram
@@ -2212,12 +2246,27 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
     elif status == "paid" and start and end:
         conditions.extend([FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005])
     rows = db.execute(select(
-        FinancialTitle.id, FinancialTitle.document, FinancialTitle.issue_date, FinancialTitle.due_date,
+        FinancialTitle.id, FinancialTitle.erpflex_id, FinancialTitle.document, FinancialTitle.issue_date, FinancialTitle.due_date,
         FinancialTitle.paid_date, FinancialTitle.partner_id, FinancialTitle.raw_record_id, FinancialTitle.kind, label.label("partner"),
         Partner.cnpj_cpf.label("partner_cnpj"), Partner.erpflex_id.label("partner_erpflex_id"),
         FinancialTitle.value, FinancialTitle.paid_value, FinancialTitle.bank, bal.label("balance")
     ).outerjoin(Partner, Partner.id == FinancialTitle.partner_id).where(*conditions)).all()
     raw_map = _load_raw_payloads(db, [int(r.raw_record_id) for r in rows if r.raw_record_id])
+    ext_ids = [str(r.erpflex_id or "").strip() for r in rows if str(r.erpflex_id or "").strip()]
+    detail_map: dict[str, dict] = {}
+    if ext_ids and (kind == "RECEBER" or (isinstance(kind, list) and "RECEBER" in kind)):
+        details = db.scalars(select(RawRecord).where(
+            RawRecord.company_id == cid, RawRecord.source == "ERPFLEX",
+            RawRecord.module == "receber_detalhe", RawRecord.external_id.in_(ext_ids)
+        ).order_by(RawRecord.id)).all()
+        for raw in details:
+            try:
+                payload = json.loads(raw.payload_json or "{}")
+                if isinstance(payload, dict):
+                    detail_map[str(raw.external_id or "")] = payload
+            except Exception:
+                pass
+    bank_catalog = _fast_bank_catalog(db, cid)
     out = []
     for r in rows:
         base = {
@@ -2229,6 +2278,10 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
             "bank": str(r.bank or "Sem banco").strip() or "Sem banco",
         }
         payload = raw_map.get(int(r.raw_record_id), {}) if r.raw_record_id else {}
+        detail = detail_map.get(str(r.erpflex_id or ""), {})
+        resolved_bank, resolved_bank_id = _resolved_financial_bank(str(r.bank or ""), payload, detail, bank_catalog)
+        base["bank"] = resolved_bank
+        base["bank_id"] = resolved_bank_id
         ident = _financial_raw_partner_identity(payload, str(r.kind or kind), base)
         base["partner"] = ident["name"]
         base["identity_key"] = ident["key"]

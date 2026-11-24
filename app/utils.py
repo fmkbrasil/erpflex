@@ -29,6 +29,59 @@ def text(value: Any) -> str:
     return str(value).strip()
 
 
+def financial_bank_wallet_fields(record: Any) -> dict[str, str]:
+    """Extrai banco/carteira sem confundir ID numérico com descrição.
+
+    O ERPFlex varia entre campos explícitos (``id_banco``/``nome_banco``) e
+    campos genéricos (``banco``/``carteira``). Em alguns retornos o campo
+    genérico contém o ID interno, não o nome. Esta função preserva essa
+    distinção para evitar gravar/mostrar ``25325`` como se fosse nome do banco.
+    """
+    payload = record if isinstance(record, (dict, list)) else {}
+
+    def scalar(names: tuple[str, ...]) -> str:
+        return text(deep_find(payload, names)).strip()
+
+    bank_id = scalar((
+        "id_banco", "banco_id", "idBanco", "bank_id", "idBank", "SA6_ID",
+    ))
+    bank_desc = scalar((
+        "banco_desc", "nome_banco", "descricao_banco", "bank_name", "nomeBanco", "SA6_Desc",
+    ))
+    bank_generic = scalar(("banco", "bank"))
+    if bank_generic:
+        if re.fullmatch(r"\d+", bank_generic):
+            bank_id = bank_id or bank_generic
+        elif not bank_desc:
+            bank_desc = bank_generic
+
+    wallet_id = scalar((
+        "id_carteira", "carteira_id", "idCarteira", "wallet_id", "idWallet",
+    ))
+    wallet_desc = scalar((
+        "carteira_desc", "nome_carteira", "descricao_carteira", "wallet_name", "nomeCarteira",
+    ))
+    wallet_generic = scalar(("carteira", "wallet"))
+    if wallet_generic:
+        if re.fullmatch(r"\d+", wallet_generic):
+            wallet_id = wallet_id or wallet_generic
+        elif not wallet_desc:
+            wallet_desc = wallet_generic
+
+    # Se um campo rotulado como descrição vier numérico, ele é tecnicamente um ID.
+    if bank_desc and re.fullmatch(r"\d+", bank_desc):
+        bank_id = bank_id or bank_desc
+        bank_desc = ""
+    if wallet_desc and re.fullmatch(r"\d+", wallet_desc):
+        wallet_id = wallet_id or wallet_desc
+        wallet_desc = ""
+
+    return {
+        "bank_id": bank_id, "bank_desc": bank_desc,
+        "wallet_id": wallet_id, "wallet_desc": wallet_desc,
+    }
+
+
 def fnum(value: Any) -> float:
     if value is None or value == "":
         return 0.0

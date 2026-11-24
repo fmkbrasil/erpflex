@@ -15,7 +15,7 @@ from .db import (
 )
 from .utils import (
     access_key_from, deep_find, digits, external_id, fnum, normalize_date, payload_hash,
-    pick, safe_json, text, key_norm, VERIFIED_BANK_NAMES
+    pick, safe_json, text, key_norm, VERIFIED_BANK_NAMES, financial_bank_wallet_fields
 )
 from .xml_parser import parse_nfe
 from .logistics import classificar_regiao, regiao_especial, alerta_endereco
@@ -841,8 +841,8 @@ def _partner(db, company_id: int, role: str, record: dict, *, nf_xml: dict | Non
     return row
 
 
-def _raw_upsert(db, company_id: int, source: str, module: str, record: dict):
-    ext = external_id(module if source == "ERPFLEX" else "nfstock", record)
+def _raw_upsert(db, company_id: int, source: str, module: str, record: dict, external_id_override: str | None = None):
+    ext = str(external_id_override or external_id(module if source == "ERPFLEX" else "nfstock", record))
     h = payload_hash(record)
     row = db.scalar(select(RawRecord).where(
         RawRecord.company_id == company_id,
@@ -1208,6 +1208,57 @@ def _bank_name_from_cache(db, company_id: int, bank_id: str) -> str:
     return ""
 
 
+def _wallet_name_from_cache(db, company_id: int, bank_id: str, wallet_id: str) -> str:
+    bid, wid = text(bank_id).strip(), text(wallet_id).strip()
+    if not wid or wid == "0":
+        return ""
+    raws = db.scalars(select(RawRecord).where(
+        RawRecord.company_id == company_id, RawRecord.source == "ERPFLEX",
+        RawRecord.module.in_(["boleto_options", "banks", "bank_detail"])
+    ).order_by(RawRecord.id.desc())).all()
+
+    def local(node, names):
+        if not isinstance(node, dict):
+            return ""
+        lower = {str(k).lower(): v for k, v in node.items()}
+        for name in names:
+            v = lower.get(str(name).lower())
+            if v not in (None, "", [], {}):
+                return text(v).strip()
+        return ""
+
+    found = ""
+    def walk(node, bank_ctx="", wallet_ctx=False):
+        nonlocal found
+        if found:
+            return
+        if isinstance(node, dict):
+            here_bank = local(node, ("id_banco", "banco_id", "idBanco", "bank_id", "SA6_ID")) or bank_ctx
+            here_wallet = local(node, ("id_carteira", "carteira_id", "idCarteira", "wallet_id", "value"))
+            label = local(node, ("carteira_desc", "nome_carteira", "descricao_carteira", "carteira", "label", "text", "nome", "descricao"))
+            if wallet_ctx and here_wallet == wid and label and label != wid and (not bid or not here_bank or here_bank == bid):
+                found = label
+                return
+            for key, child in node.items():
+                lk = str(key).lower()
+                walk(child, here_bank, wallet_ctx or "carteir" in lk or "wallet" in lk)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child, bank_ctx, wallet_ctx)
+                if found:
+                    return
+
+    for raw in raws:
+        try:
+            payload = json.loads(raw.payload_json or "{}")
+        except Exception:
+            continue
+        walk(payload)
+        if found:
+            return found
+    return ""
+
+
 def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     module = "receber" if kind == "RECEBER" else "pagar" if kind == "PAGAR" else "despesas"
     eid = str(deep_find(record, ("id", "id_titulo", "id_receita", "id_despesa", "documento", "numero")) or external_id(module, record))
@@ -1228,13 +1279,23 @@ def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     row.value = fnum(deep_find(record, ("valor", "valor_titulo", "valor_total", "total"))) or row.value
     row.paid_value = fnum(deep_find(record, ("valor_pago", "valor_baixado", "valor_recebido"))) or row.paid_value
     row.status = text(deep_find(record, ("status", "situacao"))) or row.status
-    bank_desc = text(deep_find(record, ("banco_desc", "nome_banco", "banco")))
-    bank_id = text(deep_find(record, ("banco_id", "id_banco", "idBanco")))
-    wallet_desc = text(deep_find(record, ("carteira_desc", "nome_carteira", "carteira")))
-    wallet_id = text(deep_find(record, ("id_carteira", "carteira_id", "idCarteira")))
+    fin_ref = financial_bank_wallet_fields(record)
+    bank_desc = fin_ref["bank_desc"]
+    bank_id = fin_ref["bank_id"]
+    wallet_desc = fin_ref["wallet_desc"]
+    wallet_id = fin_ref["wallet_id"]
     known_bank = _bank_name_from_cache(db, company_id, bank_id)
-    row.bank = bank_desc or known_bank or row.bank or (("Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}") if bank_id or not row.bank else row.bank)
-    row.wallet = wallet_desc or row.wallet or (("Sem carteira identificada" if wallet_id in {"", "0"} else f"Carteira {wallet_id}") if wallet_id or not row.wallet else row.wallet)
+    known_wallet = _wallet_name_from_cache(db, company_id, bank_id, wallet_id)
+    # Catálogo/descrição real sempre prevalece sobre rótulos genéricos antigos
+    # como "Banco 25325". Assim uma nova sincronização também repara a base.
+    current_bank = text(row.bank)
+    if current_bank.lower().startswith("banco ") or current_bank.lower().startswith("sem banco") or current_bank.isdigit():
+        current_bank = ""
+    current_wallet = text(row.wallet)
+    if current_wallet.lower().startswith("carteira ") or current_wallet.lower().startswith("sem carteira") or current_wallet.isdigit():
+        current_wallet = ""
+    row.bank = bank_desc or known_bank or current_bank or ("Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}")
+    row.wallet = wallet_desc or known_wallet or current_wallet or ("Sem carteira identificada" if wallet_id in {"", "0"} else f"Carteira {wallet_id}")
     row.raw_record_id = raw_id
 
 
@@ -1477,6 +1538,27 @@ def _run_erp(run_id: int, module: str, params: dict):
                         "receber", limit, None if recent else int(params.get("start_pos") or 1),
                         first_invalid=cursor.get("first_invalid") if cursor.get("initialized") else None,
                     )
+                # V1.3.82: atualiza junto o catálogo real de bancos/carteiras.
+                # Assim os IDs presentes nos títulos (ex.: 25325) são resolvidos
+                # antes da gravação e não viram grupos "Banco 25325" no BI.
+                try:
+                    bank_rows = client.banks() or []
+                except Exception:
+                    bank_rows = []
+                try:
+                    boleto_options = client.boleto_options()
+                except Exception:
+                    boleto_options = None
+                if bank_rows or boleto_options not in (None, "", [], {}):
+                    with SessionLocal() as cdb:
+                        for bank_rec in bank_rows:
+                            if isinstance(bank_rec, dict):
+                                _raw_upsert(cdb, company_id, "ERPFLEX", "banks", bank_rec)
+                        if isinstance(boleto_options, dict):
+                            _raw_upsert(cdb, company_id, "ERPFLEX", "boleto_options", boleto_options, "default")
+                        elif isinstance(boleto_options, list):
+                            _raw_upsert(cdb, company_id, "ERPFLEX", "boleto_options", {"data": boleto_options}, "default")
+                        cdb.commit()
             elif module == "pagar":
                 if mode in {"period", "force_period"} and start_date and end_date:
                     records, cursor_meta = client.finance_period(

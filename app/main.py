@@ -41,7 +41,7 @@ from .integration_settings import (
 )
 from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, endereco_busca, endereco_entrega_efetivo, maps_url, raw_channel, regiao_especial, waze_url
 from .logistics_import import import_logistics_file
-from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES
+from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES, financial_bank_wallet_fields
 from .bi_service import build_bi, SECTIONS, DRE_GROUPS
 from .bi_fast import build_fast_bi, build_fast_detail
 from .xml_parser import parse_nfe
@@ -60,7 +60,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.81")
+app = FastAPI(title=APP_NAME, version="1.3.82")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -231,7 +231,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.81", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.82", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2174,19 +2174,28 @@ def _financial_display(db, title: FinancialTitle, partner: Partner | None, bank_
         partner_name = text(deep_find(detail, fields)) or text(deep_find(payload, fields)) or "—"
     issue = title.issue_date or normalize_date(deep_find(detail, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data"))) or normalize_date(deep_find(payload, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data"))) or "—"
 
-    bank_id = text(deep_find(detail, ("id_banco", "banco_id", "idBanco", "SA6_ID"))) or text(deep_find(payload, ("banco_id", "id_banco", "idBanco", "SA6_ID")))
+    detail_ref = financial_bank_wallet_fields(detail)
+    payload_ref = financial_bank_wallet_fields(payload)
+    bank_id = detail_ref["bank_id"] or payload_ref["bank_id"]
     if not bank_id and text(title.bank).lower().startswith("banco "):
         bank_id = text(title.bank).split(" ", 1)[1].strip()
-    bank_desc = text(deep_find(detail, ("banco_desc", "nome_banco", "SA6_Desc", "banco"))) or text(deep_find(payload, ("banco_desc", "nome_banco", "SA6_Desc", "banco")))
-    stored_bank = "" if _generic_financial_label(title.bank, ("Sem banco", "Banco ", "Banco ID ")) else text(title.bank)
-    bank = bank_desc or stored_bank or bank_names.get(bank_id, "")
+    elif not bank_id and text(title.bank).isdigit():
+        bank_id = text(title.bank)
+    bank_desc = detail_ref["bank_desc"] or payload_ref["bank_desc"]
+    stored_bank = "" if (_generic_financial_label(title.bank, ("Sem banco", "Banco ", "Banco ID ")) or text(title.bank).isdigit()) else text(title.bank)
+    bank = bank_desc or bank_names.get(bank_id, "") or stored_bank
     if not bank:
         bank = "Sem banco informado pela API" if bank_id in {"", "0"} else f"Banco {bank_id}"
 
-    wallet_id = text(deep_find(detail, ("id_carteira", "carteira_id", "idCarteira"))) or text(deep_find(payload, ("id_carteira", "carteira_id", "idCarteira")))
-    wallet_desc = text(deep_find(detail, ("carteira_desc", "nome_carteira", "carteira"))) or text(deep_find(payload, ("carteira_desc", "nome_carteira", "carteira")))
-    stored_wallet = "" if _generic_financial_label(title.wallet, ("Sem carteira", "Carteira ", "Carteira não ")) else text(title.wallet)
-    wallet = wallet_desc or stored_wallet or wallet_names.get((bank_id, wallet_id), "") or wallet_names.get(("", wallet_id), "")
+    wallet_id = detail_ref["wallet_id"] or payload_ref["wallet_id"]
+    if not wallet_id and text(title.wallet).lower().startswith("carteira "):
+        possible = text(title.wallet).split(" ", 1)[1].strip()
+        wallet_id = possible if possible.isdigit() else ""
+    elif not wallet_id and text(title.wallet).isdigit():
+        wallet_id = text(title.wallet)
+    wallet_desc = detail_ref["wallet_desc"] or payload_ref["wallet_desc"]
+    stored_wallet = "" if (_generic_financial_label(title.wallet, ("Sem carteira", "Carteira ", "Carteira não ")) or text(title.wallet).isdigit()) else text(title.wallet)
+    wallet = wallet_desc or wallet_names.get((bank_id, wallet_id), "") or wallet_names.get(("", wallet_id), "") or stored_wallet
     if not wallet:
         wallet = "Carteira não informada pela API" if wallet_id in {"", "0"} else f"Carteira {wallet_id}"
     merged_fin = {**(payload or {}), **(detail or {})}
@@ -2224,10 +2233,11 @@ def _save_receivable_detail(db, title: FinancialTitle, detail: dict, bank_names:
     _save_raw_detail(db, title.company_id, "receber_detalhe", ext, detail)
     if bank_names is None or wallet_names is None:
         bank_names, wallet_names = _finance_maps(db, title.company_id)
-    bank_id = text(deep_find(detail, ("id_banco", "banco_id", "idBanco", "SA6_ID")))
-    bank_desc = text(deep_find(detail, ("banco_desc", "nome_banco", "SA6_Desc", "banco")))
-    wallet_id = text(deep_find(detail, ("id_carteira", "carteira_id", "idCarteira")))
-    wallet_desc = text(deep_find(detail, ("carteira_desc", "nome_carteira", "carteira")))
+    fin_ref = financial_bank_wallet_fields(detail)
+    bank_id = fin_ref["bank_id"]
+    bank_desc = fin_ref["bank_desc"]
+    wallet_id = fin_ref["wallet_id"]
+    wallet_desc = fin_ref["wallet_desc"]
     if bank_desc:
         title.bank = bank_desc
     elif bank_id:
