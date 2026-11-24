@@ -127,7 +127,7 @@
 </main>
 {% if can_perm('ui.customize') %}<button type="button" class="label-editor-toggle" id="label-editor-toggle" title="Ative para editar textos e ocultar/exibir botões da interface">✎ Editar interface</button>{% endif %}
 <script>window.UI_LABEL_OVERRIDES={{ ui_label_overrides|tojson }};window.UI_HIDDEN_CONTROLS={{ ui_hidden_controls|tojson }};window.UI_CAN_CUSTOMIZE={{ 'true' if can_perm('ui.customize') else 'false' }};</script>
-<script src="/static/ui.js?v=36"></script>
+<script src="/static/ui.js?v=37"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -40,10 +40,10 @@
       <span class="bi-fast-kpi-icon">↑</span><span><small>A PAGAR · POSIÇÃO ATUAL</small><strong data-money="{{ data.cards.ap.open }}"></strong><em>Vencido <b data-money="{{ data.cards.ap.overdue }}"></b> · {{ '%.1f'|format(data.cards.ap.overdue_pct) }}%</em></span><i>›</i>
     </button>
     <button class="bi-fast-kpi tone-blue" type="button" data-detail="sales">
-      <span class="bi-fast-kpi-icon">↗</span><span><small>FATURAMENTO · PERÍODO</small><strong data-money="{{ data.cards.sales.value }}"></strong><em>{{ data.cards.sales.count }} NF-e{% if data.cards.sales.variation is not none %} · {{ '+' if data.cards.sales.variation >= 0 else '' }}{{ '%.1f'|format(data.cards.sales.variation) }}% vs. período anterior{% endif %}</em></span><i>›</i>
+      <span class="bi-fast-kpi-icon">↗</span><span><small>FATURAMENTO · PERÍODO</small><strong data-money="{{ data.cards.sales.value }}"></strong><em><span data-ui-data>{{ data.cards.sales.count }}</span> <span data-ui-label>NF-e</span>{% if data.cards.sales.variation is not none %} <span data-ui-label>·</span> <span data-ui-data>{{ '+' if data.cards.sales.variation >= 0 else '' }}{{ '%.1f'|format(data.cards.sales.variation) }}%</span> <span data-ui-label>vs. período anterior</span>{% endif %}</em></span><i>›</i>
     </button>
     <button class="bi-fast-kpi tone-teal" type="button" data-detail="commercial">
-      <span class="bi-fast-kpi-icon">◎</span><span><small>COMERCIAL · PERÍODO</small><strong>{{ data.cards.sales.count }} NF-e</strong><em>Indicadores comerciais diretos · toque para detalhar</em></span><i>›</i>
+      <span class="bi-fast-kpi-icon">◎</span><span><small>COMERCIAL · PERÍODO</small><strong><span data-ui-data>{{ data.cards.sales.count }}</span> <span data-ui-label>NF-e</span></strong><em data-ui-label>Indicadores comerciais diretos · toque para detalhar</em></span><i>›</i>
     </button>
     <button class="bi-fast-kpi tone-violet" type="button" data-detail="cash-period">
       <span class="bi-fast-kpi-icon">⇄</span><span><small>FLUXO LÍQUIDO · PERÍODO</small><strong data-money="{{ data.cards.cash.net }}"></strong><em>Entradas <b data-money="{{ data.cards.cash.received }}"></b> · Saídas <b data-money="{{ data.cards.cash.paid }}"></b></em></span><i>›</i>

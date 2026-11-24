@@ -828,3 +828,6 @@ Corrige o cruzamento entre tabela praticada na venda e tabela do produto, adicio
 - Conteúdo carregado sob demanda no drawer do BI passa a receber automaticamente as substituições e o modo Editar interface via MutationObserver.
 
 Banco de dados: sem alteração de schema (permanece 19).
+
+## V1.3.81 — Editor de textos internos dos cards
+O editor visual agora prioriza o texto exato clicado dentro de cards e botões. Textos estáticos misturados com valores dinâmicos foram separados para permitir personalização sem congelar indicadores.

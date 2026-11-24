@@ -11,7 +11,7 @@
     '.alert','.status-tabs a','.mobile-menu-divider','.mobile-bottom-nav a span','.mobile-home-card b','.mobile-home-card small','.mobile-home-feature b','.mobile-home-feature small','.mobile-home-feature em','.mobile-home-bi-shortcuts a','.bi-kpi>span','.bi-kpi>small','.metric>span',
     '.info-card>span','.theme-color-field span','select option[value=""]','select[name="situation"] option',
     // BI rápido: rótulos/títulos de interface. Valores, documentos e dados operacionais ficam fora.
-    '.bi-fast-eyebrow','.bi-fast-head p','.bi-fast-kpi small','.bi-fast-panel-head span','.bi-fast-panel-head h2','.bi-fast-panel-head>small',
+    '.bi-fast-eyebrow','.bi-fast-head p','.bi-fast-kpi small','.bi-fast-kpi em','.bi-fast-kpi [data-ui-label]','.bi-fast-panel-head span','.bi-fast-panel-head h2','.bi-fast-panel-head>small',
     '.bi-fast-commercial-card small','.bi-fast-commercial-card strong','.bi-fast-commercial-card em','.bi-fast-commercial-card>b',
     '.bi-fast-summary-title b','.bi-fast-summary-metrics small','.bi-fast-legend span',
     '.bi-fast-period-buttons button','.bi-fast-custom-trigger','.bi-fast-sync-button b','.bi-fast-sync-status','.bi-fast-sync-link',
@@ -202,9 +202,15 @@
     toggle.addEventListener('click',()=>{editMode=!editMode;removeEditPopover();document.body.classList.toggle('label-edit-mode',editMode);toggle.classList.toggle('active',editMode);toggle.textContent=editMode?'✓ Finalizar edição':'✎ Editar interface';markEditable(editMode);});
     document.addEventListener('click',e=>{
       if(!editMode || e.target.closest('.label-edit-popover'))return;
+      // V1.3.81: quando o usuário toca diretamente em um texto dentro de um
+      // botão/card, o texto exato tem prioridade sobre o controle inteiro.
+      // Isso permite editar título, unidade/rótulo e subtítulo separadamente.
+      const el=closestEditable(e.target);
+      if(el && el!==toggle && !el.closest('.label-editor-toggle')){
+        e.preventDefault();e.stopPropagation();promptTextEdit(el);return;
+      }
       const control=e.target.closest('[data-ui-control-key]');
       if(control && control!==toggle && !control.closest('.label-editor-toggle')){e.preventDefault();e.stopPropagation();openControlPopover(control);return;}
-      const el=closestEditable(e.target);if(!el||el===toggle||el.closest('.label-editor-toggle'))return;e.preventDefault();e.stopPropagation();promptTextEdit(el);
     },true);
   }
 
