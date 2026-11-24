@@ -70,7 +70,7 @@
   {% for r in detail.rows %}
     <details class="bi-fast-breakdown-row grouped">
       <summary>
-        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} documento(s)</small></div>
+        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} documento(s){% if r.subtitle is defined and r.subtitle %} · {{ r.subtitle }}{% endif %}</small></div>
         <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
         <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
       </summary>
@@ -101,6 +101,20 @@
       </div>
     </details>
   {% else %}<div class="bi-fast-empty">Sem registros para esta análise.</div>{% endfor %}
+  </div>
+{% elif detail.kind == 'price_lookup' %}
+  <form class="bi-fast-price-search" data-price-search>
+    <input type="search" name="q" value="{{ detail.query }}" placeholder="Código, descrição ou EAN" autocomplete="off" aria-label="Buscar produto">
+    <button type="submit">Buscar</button>
+  </form>
+  {% if detail.query and not detail.rows %}<div class="bi-fast-empty">Nenhum produto encontrado para “{{ detail.query }}”.</div>{% endif %}
+  <div class="bi-fast-price-products">
+  {% for r in detail.rows %}
+    <details class="bi-fast-price-product" {% if loop.first %}open{% endif %}>
+      <summary><span><b>{{ r.code }} · {{ r.name }}</b><small>EAN {{ r.ean }} · {{ r.category }} / {{ r.subcategory }}</small></span><strong>{{ r.prices|length }} preço(s)</strong></summary>
+      {% if r.prices %}<div class="bi-fast-price-list">{% for pr in r.prices %}<div><span>{{ pr.table }}<small>Origem {{ pr.source }}</small></span><b data-money="{{ pr.price }}"></b></div>{% endfor %}</div>{% else %}<div class="bi-fast-price-unavailable">A API sincronizada deste produto não trouxe tabela/preço identificável.</div>{% endif %}
+    </details>
+  {% endfor %}
   </div>
 {% elif detail.kind == 'sales' %}
   <div class="bi-fast-detail-meta">NF-e válidas do período, já considerando CFOPs excluídos.</div>

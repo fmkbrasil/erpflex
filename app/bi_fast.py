@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import time
+import re
+import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -76,6 +78,7 @@ def _sales_rows(db, cid: int, start: date, end: date):
     rows = db.execute(
         select(
             SalesInvoice.id,
+            SalesInvoice.erpflex_id,
             SalesInvoice.number,
             SalesInvoice.issue_date,
             SalesInvoice.total,
@@ -378,13 +381,16 @@ DETAIL_OPTIONS = {
         ("sales-client", "Por cliente"),
         ("sales-zone", "Por zona"),
         ("sales-state", "Por estado"),
-        ("sales-terms", "Prazo de pagamento"),
+        ("sales-payment-practiced", "Prazo praticado"),
+        ("sales-terms", "Prazo cadastrado"),
+        ("sales-value-range", "Faixa de valor"),
         ("sales-period", "NF-e do período"),
     ],
     "commercial": [
         ("commercial-seller", "Por vendedor"),
         ("commercial-category", "Por categoria"),
         ("commercial-subcategory", "Por subcategoria"),
+        ("commercial-price-table", "Preço por tabela"),
     ],
 }
 
@@ -792,6 +798,306 @@ def _sales_grouped_by_state(db, cid: int, start: date, end: date) -> list[dict]:
     return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
 
 
+
+def _norm_key(value: Any) -> str:
+    raw = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+
+
+def _parse_calendar_date(value: Any) -> date | None:
+    if value in (None, ""):
+        return None
+    s = str(value).strip()
+    for candidate in (s[:10], s):
+        try:
+            return datetime.fromisoformat(candidate.replace("Z", "+00:00")).date()
+        except Exception:
+            pass
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except Exception:
+            pass
+    return None
+
+
+def _iter_payload_values(obj: Any, wanted: set[str]):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            nk = _norm_key(key)
+            if nk in wanted:
+                yield value
+            yield from _iter_payload_values(value, wanted)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _iter_payload_values(value, wanted)
+
+
+def _label_from_value(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, dict):
+        for key in ("descricao", "description", "nome", "name", "label", "prazo", "condicao"):
+            if value.get(key) not in (None, ""):
+                return str(value.get(key)).strip()
+        return ""
+    if isinstance(value, list):
+        labels = [_label_from_value(x) for x in value]
+        labels = [x for x in labels if x]
+        return " / ".join(dict.fromkeys(labels))
+    if isinstance(value, (int, float)):
+        return f"{int(value) if float(value).is_integer() else value} dias"
+    return str(value).strip()
+
+
+def _invoice_payment_payloads(db, cid: int, sales: list) -> dict[int, dict]:
+    header_payloads = _load_raw_payloads(db, [int(r.raw_record_id) for r in sales if r.raw_record_id])
+    ext_ids = [str(r.erpflex_id) for r in sales if getattr(r, "erpflex_id", None)]
+    detail_by_ext: dict[str, dict] = {}
+    if ext_ids:
+        raws = db.execute(select(RawRecord.external_id, RawRecord.payload_json).where(
+            RawRecord.company_id == cid,
+            func.upper(RawRecord.source) == "ERPFLEX",
+            func.lower(RawRecord.module) == "faturamento_detalhe",
+            RawRecord.external_id.in_(ext_ids),
+        )).all()
+        for external_id, payload_json in raws:
+            try:
+                payload = json.loads(payload_json or "{}")
+                if isinstance(payload, dict):
+                    detail_by_ext[str(external_id)] = payload
+            except Exception:
+                continue
+    out: dict[int, dict] = {}
+    for inv in sales:
+        header = header_payloads.get(int(inv.raw_record_id), {}) if inv.raw_record_id else {}
+        detail = detail_by_ext.get(str(getattr(inv, "erpflex_id", "") or ""), {})
+        # O detalhe tem prioridade, mas o cabeçalho pode conter a condição do pedido.
+        merged = dict(header) if isinstance(header, dict) else {}
+        if isinstance(detail, dict):
+            merged["__detail__"] = detail
+        out[int(inv.id)] = merged
+    return out
+
+
+def _payment_term_from_payload(payload: dict, issue_raw: Any) -> tuple[str, str]:
+    issue = _parse_calendar_date(issue_raw)
+    detail = payload.get("__detail__") if isinstance(payload, dict) else None
+    sources = [detail, payload] if isinstance(detail, dict) else [payload]
+    term_keys = {
+        "prazo_pagamento", "prazo_de_pagamento", "condicao_pagamento", "condicao_de_pagamento",
+        "payment_terms", "payment_term", "descricao_condicao_pagamento", "forma_prazo_pagamento",
+        "condicao_pgto", "prazo_pgto", "cond_pagamento"
+    }
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for value in _iter_payload_values(source, term_keys):
+            label = _label_from_value(value)
+            if label and label not in {"0", "0 dias"}:
+                if re.fullmatch(r"\d+(?:[.,]\d+)?", label):
+                    label = f"{label} dias"
+                return label, "NF/pedido"
+
+    due_keys = {"vencimento", "data_vencimento", "dt_vencimento", "due_date", "data_vcto", "vcto"}
+    due_dates: list[date] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for value in _iter_payload_values(source, due_keys):
+            if isinstance(value, list):
+                candidates = value
+            else:
+                candidates = [value]
+            for candidate in candidates:
+                if isinstance(candidate, dict):
+                    candidate = candidate.get("data") or candidate.get("vencimento") or candidate.get("due_date")
+                d = _parse_calendar_date(candidate)
+                if d:
+                    due_dates.append(d)
+    if issue and due_dates:
+        offsets = sorted({max((d - issue).days, 0) for d in due_dates})
+        if offsets == [0]:
+            return "À vista", "vencimentos da venda"
+        positives = [x for x in offsets if x > 0]
+        if positives:
+            return "/".join(str(x) for x in positives) + " dias", "vencimentos da venda"
+    return "Prazo não identificado", "indisponível"
+
+
+def _sales_grouped_by_practiced_payment(db, cid: int, start: date, end: date) -> list[dict]:
+    sales = _sales_rows(db, cid, start, end)
+    partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
+    payloads = _invoice_payment_payloads(db, cid, sales)
+    acc: dict[str, dict] = {}
+    for inv in sales:
+        name, source = _payment_term_from_payload(payloads.get(int(inv.id), {}), inv.issue_date)
+        partner = partners.get(int(inv.customer_id or 0))
+        invoice = {
+            "id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—",
+            "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro",
+            "value": _money(inv.total), "payment_source": source,
+        }
+        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": [], "sources": set()})
+        cell["count"] += 1
+        cell["value"] += _money(inv.total)
+        cell["invoices"].append(invoice)
+        cell["sources"].add(source)
+    result = []
+    for cell in acc.values():
+        cell["value"] = round(cell["value"], 2)
+        cell["subtitle"] = "Origem: " + ", ".join(sorted(cell.pop("sources")))
+        result.append(cell)
+    return sorted(result, key=lambda r: r["value"], reverse=True)
+
+
+def _sales_grouped_by_value_range(db, cid: int, start: date, end: date) -> list[dict]:
+    rows = _sales_invoice_rows(db, cid, start, end)
+    buckets = [
+        ("Até R$ 500", 0.0, 500.0),
+        ("R$ 500,01 a R$ 1.000", 500.0, 1000.0),
+        ("R$ 1.000,01 a R$ 3.000", 1000.0, 3000.0),
+        ("R$ 3.000,01 a R$ 5.000", 3000.0, 5000.0),
+        ("R$ 5.000,01 a R$ 10.000", 5000.0, 10000.0),
+        ("Acima de R$ 10.000", 10000.0, None),
+    ]
+    acc = {name: {"name": name, "count": 0, "value": 0.0, "invoices": []} for name, _, _ in buckets}
+    for row in rows:
+        value = _money(row.get("value"))
+        chosen = buckets[-1][0]
+        for name, low, high in buckets:
+            if high is None:
+                if value > low:
+                    chosen = name
+                    break
+            elif value > low and value <= high:
+                chosen = name
+                break
+            elif low == 0 and 0 <= value <= high:
+                chosen = name
+                break
+        cell = acc[chosen]
+        cell["count"] += 1
+        cell["value"] += value
+        cell["invoices"].append(row)
+    result = []
+    for name, _, _ in buckets:
+        cell = acc[name]
+        if not cell["count"]:
+            continue
+        cell["value"] = round(cell["value"], 2)
+        cell["avg_ticket"] = round(cell["value"] / cell["count"], 2) if cell["count"] else 0.0
+        cell["subtitle"] = f"Ticket médio: R$ {cell['avg_ticket']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        result.append(cell)
+    return result
+
+
+def _price_number(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return round(float(value), 4)
+    if not isinstance(value, str):
+        return None
+    s = value.strip().replace("R$", "").replace(" ", "")
+    if not s:
+        return None
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return round(float(s), 4)
+    except Exception:
+        return None
+
+
+def _extract_price_tables(payload: dict) -> list[dict]:
+    found: dict[tuple[str, float], dict] = {}
+    table_name_keys = {"tabela", "tabela_preco", "nome_tabela", "descricao_tabela", "lista", "lista_preco", "nome_lista", "descricao_lista"}
+    price_keys = {"preco", "preco_venda", "valor", "valor_venda", "price", "preco_tabela", "valor_tabela", "vl_preco"}
+    container_keys = {"tabelas_preco", "tabela_preco", "precos_tabela", "listas_preco", "lista_preco", "precos", "prices"}
+
+    def add(name: Any, price: Any, source: str):
+        num = _price_number(price)
+        label = str(name or "").strip()
+        if num is None or num < 0 or not label:
+            return
+        found[(label, num)] = {"table": label, "price": num, "source": source}
+
+    def walk(obj: Any, context: str = ""):
+        if isinstance(obj, dict):
+            normalized = {_norm_key(k): v for k, v in obj.items()}
+            names = [normalized.get(k) for k in table_name_keys if normalized.get(k) not in (None, "")]
+            prices = [(k, normalized.get(k)) for k in price_keys if normalized.get(k) not in (None, "")]
+            if names and prices:
+                for pk, price in prices:
+                    add(_label_from_value(names[0]), price, pk)
+            for key, value in obj.items():
+                nk = _norm_key(key)
+                if nk in container_keys:
+                    if isinstance(value, dict):
+                        for subkey, subval in value.items():
+                            if _price_number(subval) is not None:
+                                add(subkey, subval, nk)
+                            elif isinstance(subval, dict):
+                                walk(subval, str(subkey))
+                    elif isinstance(value, list):
+                        for entry in value:
+                            walk(entry, nk)
+                walk(value, context or nk)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value, context)
+
+    walk(payload)
+    # Quando a API só traz um preço de venda único, manter separado de tabela nominal.
+    root = {_norm_key(k): v for k, v in payload.items()} if isinstance(payload, dict) else {}
+    for key in ("preco_venda", "valor_venda"):
+        if key in root and _price_number(root[key]) is not None:
+            add("Preço de venda / API", root[key], key)
+            break
+    return sorted(found.values(), key=lambda r: (r["table"].lower(), r["price"]))
+
+
+def _product_price_lookup(db, cid: int, query: str = "") -> dict:
+    q = str(query or "").strip()
+    if not q:
+        return {"title": "Comercial · preço por tabela", "kind": "price_lookup", "query": "", "rows": [], "note": "Digite código, descrição ou EAN do produto para consultar preços sincronizados da API."}
+    like = f"%{q}%"
+    products = db.scalars(select(Product).where(
+        Product.company_id == cid,
+        or_(Product.code.ilike(like), Product.description.ilike(like), Product.ean.ilike(like), Product.erpflex_id.ilike(like)),
+    ).order_by(Product.description.asc()).limit(30)).all()
+    ext_ids = [str(p.erpflex_id) for p in products if p.erpflex_id]
+    raw_map: dict[str, dict] = {}
+    if ext_ids:
+        raws = db.execute(select(RawRecord.external_id, RawRecord.payload_json).where(
+            RawRecord.company_id == cid,
+            func.upper(RawRecord.source) == "ERPFLEX",
+            func.lower(RawRecord.module) == "products",
+            RawRecord.external_id.in_(ext_ids),
+        ).order_by(RawRecord.id.desc())).all()
+        for external_id, payload_json in raws:
+            key = str(external_id or "")
+            if key in raw_map:
+                continue
+            try:
+                payload = json.loads(payload_json or "{}")
+                if isinstance(payload, dict):
+                    raw_map[key] = payload
+            except Exception:
+                pass
+    rows = []
+    for p in products:
+        payload = raw_map.get(str(p.erpflex_id or ""), {})
+        prices = _extract_price_tables(payload)
+        rows.append({
+            "id": int(p.id), "code": p.code or "—", "ean": p.ean or "—", "name": p.description or "Sem descrição",
+            "category": p.category or "Sem categoria", "subcategory": p.subcategory or "Sem subcategoria",
+            "prices": prices,
+        })
+    return {"title": "Comercial · preço por tabela", "kind": "price_lookup", "query": q, "rows": rows, "note": "Somente preços efetivamente presentes no retorno sincronizado de produtos são exibidos."}
+
+
 def _sales_grouped_by_terms(db, cid: int, start: date, end: date) -> list[dict]:
     sales = _sales_rows(db, cid, start, end)
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
@@ -1114,7 +1420,7 @@ def _commercial_snapshot(db, cid: int, start: date, end: date) -> dict:
         "item_total": round(sum(_money(r.get("value")) for r in categories_all), 2),
     }
 
-def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: str = "", date_to: str = "") -> dict:
+def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: str = "", date_to: str = "", query: str = "") -> dict:
     start, end = _period_bounds(period, date_from, date_to)
     key = ROOT_DETAIL.get(key, key)
 
@@ -1148,8 +1454,12 @@ def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: 
         detail = _group_breakdown_with_children("Faturamento · por zona", _sales_grouped_by_zone(db, cid, start, end), "Classificação por zona usando a região logística da entrega.")
     elif key == "sales-state":
         detail = _group_breakdown_with_children("Faturamento · por estado", _sales_grouped_by_state(db, cid, start, end), "Classificação por UF usando o estado de entrega/cadastro do cliente.")
+    elif key == "sales-payment-practiced":
+        detail = _group_breakdown_with_children("Faturamento · prazo praticado na venda", _sales_grouped_by_practiced_payment(db, cid, start, end), "Condição obtida da própria NF/pedido ou calculada pelos vencimentos encontrados na venda. Sem informação suficiente fica separado como não identificado.")
     elif key == "sales-terms":
-        detail = _group_breakdown_with_children("Faturamento · por prazo de pagamento", _sales_grouped_by_terms(db, cid, start, end), "Prazo atualmente cadastrado para o cliente da NF-e.")
+        detail = _group_breakdown_with_children("Faturamento · prazo cadastrado do cliente", _sales_grouped_by_terms(db, cid, start, end), "Prazo atualmente cadastrado no cliente; pode diferir da condição realmente praticada na venda.")
+    elif key == "sales-value-range":
+        detail = _group_breakdown_with_children("Faturamento · por faixa de valor", _sales_grouped_by_value_range(db, cid, start, end), "Faixas calculadas sobre o valor total de cada NF-e válida do período.")
     elif key == "sales-period":
         detail = _group_breakdown_with_children("NF-e do período · por data", _sales_grouped_by_date(db, cid, start, end), "Agrupado por data de emissão. Toque na data para ver as NF-e.")
     elif key == "commercial-seller":
@@ -1158,6 +1468,8 @@ def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: 
         detail = _group_breakdown_with_children("Comercial · por categoria de produtos", _commercial_grouped_by_product(db, cid, start, end, "category"), "Valores baseados nos itens identificados das NF-e válidas. Toque na categoria para ver os produtos e as NF-e relacionadas.")
     elif key == "commercial-subcategory":
         detail = _group_breakdown_with_children("Comercial · por subcategoria de produtos", _commercial_grouped_by_product(db, cid, start, end, "subcategory"), "Valores baseados nos itens identificados das NF-e válidas. Toque na subcategoria para ver os produtos e as NF-e relacionadas.")
+    elif key == "commercial-price-table":
+        detail = _product_price_lookup(db, cid, query)
     elif key == "cash-period":
         return _cash_grouped(db, cid, start, end)
     elif key == "agenda-7":

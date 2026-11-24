@@ -733,3 +733,8 @@ O BI rápido passa a abrir um seletor de análises no painel lateral, mantendo o
 - remove o pré-cálculo pesado dos indicadores comerciais na tela inicial, preservando o carregamento sob demanda;
 - limita grupos/documentos enviados ao smartphone sem alterar os totais consolidados;
 - schema permanece 18.
+
+
+## V1.3.73 — Prazo praticado, faixa de faturamento e preço por tabela
+
+Inclui novas análises sob demanda no BI rápido para condição de pagamento efetivamente praticada, faturamento por faixa de valor e consulta de preços sincronizados por tabela/lista de preço. Schema 18.
