@@ -60,7 +60,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.82")
+app = FastAPI(title=APP_NAME, version="1.3.83")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -231,7 +231,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.82", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.83", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2162,6 +2162,30 @@ def _generic_financial_label(value: str | None, prefixes: tuple[str, ...]) -> bo
     return any(v.startswith(x.lower()) for x in prefixes)
 
 
+def _collection_channel(bank: str, bank_id: str, wallet: str, wallet_id: str, contract_rule=None) -> dict:
+    """Classifica a forma de cobrança sem tratar ausência de banco como erro.
+
+    Regras:
+    - contrato configurado: CONTRATO;
+    - banco identificado: cobrança bancária;
+    - sem banco, mas com carteira identificada: cobrança por carteira;
+    - sem banco e sem carteira: cobrança não identificada.
+    """
+    b = text(bank).strip()
+    w = text(wallet).strip()
+    bid = text(bank_id).strip()
+    wid = text(wallet_id).strip()
+    bank_missing = (bid in {"", "0"}) and _generic_financial_label(b, ("Sem banco", "Banco ", "Banco ID ", "Cobrança por carteira", "Cobranca por carteira"))
+    wallet_missing = (wid in {"", "0"}) and _generic_financial_label(w, ("Sem carteira", "Carteira ", "Carteira não", "Carteira nao"))
+    if contract_rule:
+        return {"type": "CONTRATO", "label": "Cobrança por contrato", "bank": "Sem banco", "wallet": "CONTRATO"}
+    if not bank_missing:
+        return {"type": "BANCO", "label": "Cobrança bancária", "bank": b or (f"Banco {bid}" if bid else "Banco"), "wallet": w or "Sem carteira"}
+    if not wallet_missing:
+        return {"type": "CARTEIRA", "label": "Cobrança por carteira", "bank": "Cobrança por carteira", "wallet": w or (f"Carteira {wid}" if wid else "Carteira")}
+    return {"type": "NAO_IDENTIFICADA", "label": "Cobrança não identificada", "bank": "Sem banco", "wallet": "Sem carteira"}
+
+
 def _financial_display(db, title: FinancialTitle, partner: Partner | None, bank_names: dict[str, str] | None = None,
                        wallet_names: dict[tuple[str,str],str] | None = None):
     if bank_names is None or wallet_names is None:
@@ -2216,10 +2240,14 @@ def _financial_display(db, title: FinancialTitle, partner: Partner | None, bank_
     gross_value = max(0.0, float(title.value or 0))
     contract_discount_value = gross_value * discount_percent / 100.0
     net_value = max(0.0, gross_value - contract_discount_value)
+    channel = _collection_channel(bank, bank_id, wallet, wallet_id, contract_rule)
+    bank = channel["bank"]
+    wallet = channel["wallet"]
     if contract_rule:
-        bank, bank_id = "Sem banco", ""
-        wallet, wallet_id = "CONTRATO", ""
+        bank_id = ""
+        wallet_id = ""
     return {"partner": partner_name, "issue_date": issue, "bank": bank, "bank_id": bank_id, "wallet": wallet, "wallet_id": wallet_id,
+            "collection_type": channel["type"], "collection_label": channel["label"],
             "nf_number": nf_number, "faturamento_id": faturamento_id, "title_number": title_number, "order_number": order_number,
             "contract_discount_percent": discount_percent, "contract_discount_value": contract_discount_value, "net_value": net_value,
             "payload": payload, "detail_payload": detail}

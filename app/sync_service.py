@@ -1294,8 +1294,10 @@ def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     current_wallet = text(row.wallet)
     if current_wallet.lower().startswith("carteira ") or current_wallet.lower().startswith("sem carteira") or current_wallet.isdigit():
         current_wallet = ""
-    row.bank = bank_desc or known_bank or current_bank or ("Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}")
-    row.wallet = wallet_desc or known_wallet or current_wallet or ("Sem carteira identificada" if wallet_id in {"", "0"} else f"Carteira {wallet_id}")
+    # Ausência de banco/carteira é estado de dados, não nome de entidade.
+    # Mantemos vazio no armazenamento e classificamos a forma de cobrança na exibição/BI.
+    row.bank = bank_desc or known_bank or current_bank or ("" if bank_id in {"", "0"} else f"Banco {bank_id}")
+    row.wallet = wallet_desc or known_wallet or current_wallet or ("" if wallet_id in {"", "0"} else f"Carteira {wallet_id}")
     row.raw_record_id = raw_id
 
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from sqlalchemy import and_, case, func, or_, select
 
-from .bi_service import _is_cancelled, _period_bounds, _previous_period, _seller_info, _walk_find, _product_row_meta, _bank_catalog
+from .bi_service import _is_cancelled, _period_bounds, _previous_period, _seller_info, _walk_find, _product_row_meta, _bank_catalog, _wallet_catalog
 from .db import (
     CollectionCustomerRule,
     CommercialPriceRule,
@@ -380,7 +380,7 @@ DETAIL_OPTIONS = {
         ("ar-due", "A vencer"),
         ("ar-received", "Recebidos"),
         ("ar-contract", "Contrato"),
-        ("ar-bank", "Por banco"),
+        ("ar-bank", "Banco/carteira"),
         ("ar-aging", "Aging"),
     ],
     "ap": [
@@ -2195,15 +2195,16 @@ def _financial_raw_partner_identity(payload: dict, kind: str, fallback: dict) ->
     return {"key": f"name:{_norm_key(name)}", "name": name, "subtitle": "Sem identificador fiscal/ERP no título", "cnpj": "", "erp": ""}
 
 
-def _fast_bank_catalog(db, cid: int) -> dict[str, str]:
+def _fast_finance_catalogs(db, cid: int) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
     raws = db.scalars(select(RawRecord).where(
         RawRecord.company_id == cid, RawRecord.source == "ERPFLEX",
-        RawRecord.module.in_(["banks", "bank_detail"])
+        RawRecord.module.in_(["banks", "bank_detail", "boleto_options"])
     )).all()
     raw_map = {int(r.id): r for r in raws}
-    catalog = dict(VERIFIED_BANK_NAMES)
-    catalog.update(_bank_catalog(raws, raw_map))
-    return catalog
+    banks = dict(VERIFIED_BANK_NAMES)
+    banks.update(_bank_catalog(raws, raw_map))
+    wallets = _wallet_catalog(raws, raw_map)
+    return banks, wallets
 
 
 def _resolved_financial_bank(stored: str, payload: dict, detail: dict, catalog: dict[str, str]) -> tuple[str, str]:
@@ -2224,8 +2225,40 @@ def _resolved_financial_bank(stored: str, payload: dict, detail: dict, catalog: 
         stored_specific = stored_text
     label = bank_desc or catalog.get(bank_id, "") or stored_specific
     if not label:
-        label = "Sem banco informado" if bank_id in {"", "0"} else f"Banco {bank_id}"
+        label = "" if bank_id in {"", "0"} else f"Banco {bank_id}"
     return label, bank_id
+
+
+def _resolved_financial_wallet(stored: str, payload: dict, detail: dict, catalog: dict[tuple[str, str], str], bank_id: str = "") -> tuple[str, str]:
+    dref = financial_bank_wallet_fields(detail or {})
+    pref = financial_bank_wallet_fields(payload or {})
+    wallet_id = str(dref.get("wallet_id") or pref.get("wallet_id") or "").strip()
+    wallet_desc = str(dref.get("wallet_desc") or pref.get("wallet_desc") or "").strip()
+    stored_text = str(stored or "").strip()
+    low = stored_text.lower()
+    if not wallet_id and low.startswith("carteira "):
+        possible = stored_text.split(" ", 1)[1].strip()
+        if possible.isdigit():
+            wallet_id = possible
+    elif not wallet_id and stored_text.isdigit():
+        wallet_id = stored_text
+    stored_specific = ""
+    if stored_text and not (low.startswith("carteira ") or low.startswith("sem carteira") or low.startswith("carteira não") or stored_text.isdigit()):
+        stored_specific = stored_text
+    label = wallet_desc or catalog.get((bank_id, wallet_id), "") or catalog.get(("", wallet_id), "") or stored_specific
+    if not label:
+        label = "" if wallet_id in {"", "0"} else f"Carteira {wallet_id}"
+    return label, wallet_id
+
+
+def _collection_group_label(bank: str, bank_id: str, wallet: str, wallet_id: str) -> tuple[str, str]:
+    b = str(bank or "").strip()
+    w = str(wallet or "").strip()
+    if b:
+        return b, "Cobrança bancária"
+    if w:
+        return f"Carteira · {w}", "Cobrança por carteira, sem banco vinculado"
+    return "Cobrança não identificada", "Banco e carteira ausentes na integração"
 
 
 def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "open", start: date | None = None, end: date | None = None) -> list[dict]:
@@ -2249,7 +2282,7 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
         FinancialTitle.id, FinancialTitle.erpflex_id, FinancialTitle.document, FinancialTitle.issue_date, FinancialTitle.due_date,
         FinancialTitle.paid_date, FinancialTitle.partner_id, FinancialTitle.raw_record_id, FinancialTitle.kind, label.label("partner"),
         Partner.cnpj_cpf.label("partner_cnpj"), Partner.erpflex_id.label("partner_erpflex_id"),
-        FinancialTitle.value, FinancialTitle.paid_value, FinancialTitle.bank, bal.label("balance")
+        FinancialTitle.value, FinancialTitle.paid_value, FinancialTitle.bank, FinancialTitle.wallet, bal.label("balance")
     ).outerjoin(Partner, Partner.id == FinancialTitle.partner_id).where(*conditions)).all()
     raw_map = _load_raw_payloads(db, [int(r.raw_record_id) for r in rows if r.raw_record_id])
     ext_ids = [str(r.erpflex_id or "").strip() for r in rows if str(r.erpflex_id or "").strip()]
@@ -2266,7 +2299,7 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
                     detail_map[str(raw.external_id or "")] = payload
             except Exception:
                 pass
-    bank_catalog = _fast_bank_catalog(db, cid)
+    bank_catalog, wallet_catalog = _fast_finance_catalogs(db, cid)
     out = []
     for r in rows:
         base = {
@@ -2275,13 +2308,19 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
             "partner_cnpj": str(r.partner_cnpj or "").strip(), "partner_erpflex_id": str(r.partner_erpflex_id or "").strip(),
             "issue": r.issue_date or "—", "due": r.due_date or "—", "paid_date": r.paid_date or "—",
             "value": _money(r.value), "paid": _money(r.paid_value), "balance": _money(r.balance),
-            "bank": str(r.bank or "Sem banco").strip() or "Sem banco",
+            "bank": str(r.bank or "").strip(), "wallet": str(r.wallet or "").strip(),
         }
         payload = raw_map.get(int(r.raw_record_id), {}) if r.raw_record_id else {}
         detail = detail_map.get(str(r.erpflex_id or ""), {})
         resolved_bank, resolved_bank_id = _resolved_financial_bank(str(r.bank or ""), payload, detail, bank_catalog)
+        resolved_wallet, resolved_wallet_id = _resolved_financial_wallet(str(r.wallet or ""), payload, detail, wallet_catalog, resolved_bank_id)
         base["bank"] = resolved_bank
         base["bank_id"] = resolved_bank_id
+        base["wallet"] = resolved_wallet
+        base["wallet_id"] = resolved_wallet_id
+        collection_group, collection_note = _collection_group_label(resolved_bank, resolved_bank_id, resolved_wallet, resolved_wallet_id)
+        base["collection_group"] = collection_group
+        base["collection_note"] = collection_note
         ident = _financial_raw_partner_identity(payload, str(r.kind or kind), base)
         base["partner"] = ident["name"]
         base["identity_key"] = ident["key"]
@@ -2469,7 +2508,7 @@ def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: 
     elif key == "ar-contract":
         detail = _grouped_contract_detail("Contas a receber · contratos", _contract_title_rows(db, cid, None), "Clientes marcados como cobrança por contrato. Toque no cliente para ver os títulos.")
     elif key == "ar-bank":
-        detail = _grouped_titles_detail("Contas a receber · por banco", _group_rows_by_field(_financial_group_rows(db, cid, "RECEBER", "open"), "bank"), "Agrupado por banco. Toque no banco para ver os títulos.", "Banco")
+        detail = _grouped_titles_detail("Contas a receber · por banco / carteira", _group_rows_by_field(_financial_group_rows(db, cid, "RECEBER", "open"), "collection_group"), "Quando não há banco, o BI usa a carteira identificada. Sem banco e sem carteira, o título fica em Cobrança não identificada.", "Banco / carteira")
     elif key == "ar-aging":
         detail = _grouped_titles_detail("Contas a receber · aging", _aging_grouped_rows(_financial_group_rows(db, cid, "RECEBER", "open")), "Faixas calculadas sobre o saldo atual em aberto. Toque em uma faixa para ver os títulos.", "Faixa")
     elif key == "ap-open":
