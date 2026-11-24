@@ -766,3 +766,32 @@ O BI de Faturamento passa a auditar o preço praticado no item da NF-e contra o 
 - Desconto financeiro continua reduzindo o título no Contas a Receber; desconto no preço ajusta apenas o preço esperado da auditoria.
 - A auditoria passa a mostrar preço de tabela, preço esperado ajustado, preço praticado, divergência real e regra autorizada aplicada.
 - Schema 19.
+
+
+## V1.3.77 — Região, prazo praticado e identificação fiscal no BI
+
+V1.3.77 — Região comercial, prazo praticado e identidade de clientes
+
+1. Faturamento por zona
+- Consolida a visão em: Zona Sul, Zona Leste, Zona Norte, Zona Oeste, ABC, Alto Tietê, Interior e Outros.
+- Usa primeiro a região logística explícita.
+- Para registros genéricos (A Classificar/Outras Regiões), reaproveita cidade, bairro e CEP da entrega e o classificador do roteirizador.
+- Osasco/Barueri é consolidado em Zona Oeste; Centro, Guarulhos, Litoral, coleta e não classificados ficam em Outros quando não houver classificação mais específica.
+
+2. Prazo praticado na venda
+- Prioriza vencimentos/duplicatas presentes na cobrança da NF/pedido.
+- Quando não disponíveis, cruza a venda com Contas a Receber por: NF-e; pedido/documento comercial; documento; cliente+emissão quando existe uma única NF no dia.
+- Quando há várias NF do mesmo cliente na mesma data, aceita cliente+emissão+valor somente se um único conjunto de parcelas fechar com o total da NF.
+- O resultado calcula o prazo pela diferença entre emissão e vencimentos, por exemplo 30/60 dias.
+- Correspondências ambíguas continuam como Prazo não identificado.
+
+3. Clientes/fornecedores com nomes semelhantes
+- Contas a Receber e Contas a Pagar deixam de agrupar apenas pelo nome fantasia/razão.
+- Chave de identidade: CNPJ/CPF -> ID ERPFlex -> ID interno.
+- O CNPJ/CPF passa a aparecer abaixo do nome nos grupos financeiros e rankings, permitindo diferenciar lojas da mesma rede.
+- Faturamento por cliente também preserva a identidade do cadastro em vez de consolidar apenas pelo texto do nome.
+
+4. Correção adicional
+- Corrige a linha-resumo da Auditoria de preço que exibiria o método interno `items` do dicionário no lugar da quantidade de itens.
+
+Banco de dados: sem alteração de schema (permanece 19).

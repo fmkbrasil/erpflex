@@ -23,7 +23,7 @@
   {% for r in detail.rows %}
     <details class="bi-fast-breakdown-row grouped">
       <summary>
-        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s)</small></div>
+        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s){% if r.subtitle is defined and r.subtitle %} · {{ r.subtitle }}{% endif %}</small></div>
         <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
         <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div>
       </summary>
@@ -41,7 +41,7 @@
   {% for r in detail.rows %}
     <details class="bi-fast-breakdown-row grouped">
       <summary>
-        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s) · bruto <span data-money="{{ r.gross }}"></span></small></div>
+        <div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s){% if r.subtitle is defined and r.subtitle %} · {{ r.subtitle }}{% endif %} · bruto <span data-money="{{ r.gross }}"></span></small></div>
         <div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div>
         <div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>saldo líquido</small></div>
       </summary>
@@ -117,7 +117,7 @@
   {% endfor %}
   </div>
 {% elif detail.kind == 'price_audit' %}
-  <div class="bi-fast-detail-meta">{{ detail.summary.items }} item(ns) faturado(s) em {{ detail.summary.invoices }} NF-e · {{ detail.summary.audited }} item(ns) auditado(s) · {{ detail.summary.authorized }} com condição comercial especial · {{ detail.summary.missing }} sem referência disponível. <a href="/faturamento/regras-comerciais">Gerenciar regras comerciais ›</a></div>
+  <div class="bi-fast-detail-meta">{{ detail.summary['items'] }} item(ns) faturado(s) em {{ detail.summary.invoices }} NF-e · {{ detail.summary.audited }} item(ns) auditado(s) · {{ detail.summary.authorized }} com condição comercial especial · {{ detail.summary.missing }} sem referência disponível. <a href="/faturamento/regras-comerciais">Gerenciar regras comerciais ›</a></div>
   <div class="bi-fast-audit-summary">
     <div><small>Itens auditados</small><b>{{ detail.summary.audited }}</b></div>
     <div class="danger"><small>Divergentes</small><b>{{ detail.summary.divergent }}</b></div>
@@ -166,7 +166,7 @@
   <div class="bi-fast-breakdown-list accordion-list">
     {% for r in section.rows %}
     <details class="bi-fast-breakdown-row grouped">
-      <summary><div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s)</small></div><div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div><div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div></summary>
+      <summary><div class="bi-fast-breakdown-name"><b>{{ r.name }}</b><small>{{ r.count }} título(s){% if r.subtitle is defined and r.subtitle %} · {{ r.subtitle }}{% endif %}</small></div><div class="bi-fast-breakdown-bar"><i style="width:{{ r.share }}%"></i></div><div class="bi-fast-breakdown-value"><b data-money="{{ r.value }}"></b><small>{{ '%.1f'|format(r.share) }}%</small></div></summary>
       <div class="bi-fast-group-body"><div class="table-wrap"><table class="bi-fast-detail-table nested financial-nested"><thead><tr><th>Documento</th><th>Emissão</th><th>Vencimento</th><th>Baixa</th><th>Valor</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>{% for t in r.titles %}<tr><td><a href="/financeiro/{{ t.id }}">{{ t.document }}</a></td><td>{{ t.issue }}</td><td>{{ t.due }}</td><td>{{ t.paid_date }}</td><td><span data-money="{{ t.value }}"></span></td><td><span data-money="{{ t.paid }}"></span></td><td><b data-money="{{ t.balance }}"></b></td></tr>{% endfor %}</tbody></table></div></div>
     </details>
     {% else %}<div class="bi-fast-empty">Sem {{ label|lower }} no período.</div>{% endfor %}

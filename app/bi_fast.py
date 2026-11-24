@@ -26,6 +26,7 @@ from .db import (
     SyncRun,
 )
 from .fiscal_rules import active_excluded_cfops, excluded_invoice_ids_for_candidates
+from .logistics import classificar_regiao
 
 
 def _money(v: Any) -> float:
@@ -84,7 +85,10 @@ def _sales_rows(db, cid: int, start: date, end: date):
             SalesInvoice.issue_date,
             SalesInvoice.total,
             SalesInvoice.customer_id,
+            SalesInvoice.delivery_city,
+            SalesInvoice.delivery_district,
             SalesInvoice.delivery_state,
+            SalesInvoice.delivery_zip,
             SalesInvoice.raw_record_id,
         ).where(
             SalesInvoice.company_id == cid,
@@ -243,14 +247,18 @@ def _top_open_partners(db, cid: int, kind: str, limit: int = 5) -> list[dict]:
     bal = _balance_expr()
     label = _partner_label_expr()
     rows = db.execute(
-        select(FinancialTitle.partner_id, label.label("name"), func.sum(bal).label("value"))
+        select(FinancialTitle.partner_id, label.label("name"), Partner.cnpj_cpf.label("cnpj"), func.sum(bal).label("value"))
         .outerjoin(Partner, Partner.id == FinancialTitle.partner_id)
         .where(FinancialTitle.company_id == cid, FinancialTitle.kind == kind, bal > 0.005)
-        .group_by(FinancialTitle.partner_id, Partner.trade_name, Partner.name)
+        .group_by(FinancialTitle.partner_id, Partner.trade_name, Partner.name, Partner.cnpj_cpf)
         .order_by(func.sum(bal).desc())
         .limit(limit)
     ).all()
-    return [{"partner_id": pid, "name": str(name or "Sem cadastro"), "value": _money(value)} for pid, name, value in rows]
+    return [{
+        "partner_id": pid, "name": str(name or "Sem cadastro"),
+        "subtitle": (f"CNPJ/CPF {_format_cnpj_cpf(cnpj)}" if cnpj else ""),
+        "value": _money(value)
+    } for pid, name, cnpj, value in rows]
 
 
 def _agenda(db, cid: int, days: int = 7, limit: int = 12) -> list[dict]:
@@ -356,6 +364,8 @@ def _title_rows(db, cid: int, kind: str | list[str], status: str = "open", start
     return [
         {
             "id": int(r.id), "document": r.document or "—", "partner": str(r.partner or "Sem cadastro"),
+            "partner_id": int(r.partner_id) if r.partner_id else None,
+            "partner_cnpj": str(r.partner_cnpj or "").strip(), "partner_erpflex_id": str(r.partner_erpflex_id or "").strip(),
             "issue": r.issue_date or "—", "due": r.due_date or "—", "paid_date": r.paid_date or "—",
             "value": _money(r.value), "paid": _money(r.paid_value), "balance": _money(r.balance),
         }
@@ -446,8 +456,8 @@ def _contract_title_rows(db, cid: int, limit: int | None = None) -> list[dict]:
         select(
             FinancialTitle.id, FinancialTitle.document, FinancialTitle.issue_date,
             FinancialTitle.due_date, FinancialTitle.paid_date, FinancialTitle.partner_id,
-            label.label("partner"), FinancialTitle.value, FinancialTitle.paid_value,
-            bal.label("balance"),
+            label.label("partner"), Partner.cnpj_cpf.label("partner_cnpj"), Partner.erpflex_id.label("partner_erpflex_id"),
+            FinancialTitle.value, FinancialTitle.paid_value, bal.label("balance"),
         )
         .outerjoin(Partner, Partner.id == FinancialTitle.partner_id)
         .where(
@@ -470,6 +480,8 @@ def _contract_title_rows(db, cid: int, limit: int | None = None) -> list[dict]:
         paid = _money(r.paid_value)
         result.append({
             "id": int(r.id), "document": r.document or "—", "partner": str(r.partner or "Sem cadastro"),
+            "partner_id": int(r.partner_id) if r.partner_id else None,
+            "partner_cnpj": str(r.partner_cnpj or "").strip(), "partner_erpflex_id": str(r.partner_erpflex_id or "").strip(),
             "issue": r.issue_date or "—", "due": r.due_date or "—", "paid_date": r.paid_date or "—",
             "value": gross, "discount_percent": pct, "discount": discount, "net": net,
             "paid": paid, "balance": _money(r.balance), "net_balance": max(round(net - paid, 2), 0.0),
@@ -663,11 +675,26 @@ def _sales_invoice_detail(db, cid: int, start: date, end: date) -> dict:
 
 
 
+def _financial_partner_key(row: dict) -> tuple[str, str]:
+    cnpj = re.sub(r"\D", "", str(row.get("partner_cnpj") or ""))
+    if cnpj:
+        return f"tax:{cnpj}", f"CNPJ/CPF {_format_cnpj_cpf(cnpj)}"
+    erp = str(row.get("partner_erpflex_id") or "").strip()
+    if erp:
+        return f"erp:{erp}", f"Cadastro ERP {erp}"
+    pid = row.get("partner_id")
+    if pid not in (None, ""):
+        return f"id:{pid}", f"Cadastro {pid}"
+    name = str(row.get("partner") or "Sem cadastro")
+    return f"name:{_norm_key(name)}", "Sem CNPJ/CPF identificado"
+
+
 def _grouped_financial_detail(title: str, rows: list[dict], note: str = "", aggregate_on: str = "balance", partner_label: str = "Cliente/Fornecedor") -> dict:
     acc: dict[str, dict] = {}
     for row in rows:
+        key, identity = _financial_partner_key(row)
         name = str(row.get("partner") or "Sem cadastro")
-        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "titles": []})
+        cell = acc.setdefault(key, {"name": name, "subtitle": identity, "count": 0, "value": 0.0, "titles": []})
         cell["count"] += 1
         cell["value"] += _money(row.get(aggregate_on))
         cell["titles"].append(row)
@@ -684,8 +711,9 @@ def _grouped_financial_detail(title: str, rows: list[dict], note: str = "", aggr
 def _grouped_contract_detail(title: str, rows: list[dict], note: str = "") -> dict:
     acc: dict[str, dict] = {}
     for row in rows:
+        key, identity = _financial_partner_key(row)
         name = str(row.get("partner") or "Sem cadastro")
-        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "gross": 0.0, "discount": 0.0, "received": 0.0, "titles": []})
+        cell = acc.setdefault(key, {"name": name, "subtitle": identity, "count": 0, "value": 0.0, "gross": 0.0, "discount": 0.0, "received": 0.0, "titles": []})
         cell["count"] += 1
         cell["value"] += _money(row.get("net_balance"))
         cell["gross"] += _money(row.get("value"))
@@ -716,46 +744,93 @@ def _group_breakdown_with_children(title: str, rows: list[dict], note: str = "")
     return {"title": title, "kind": "grouped_breakdown", "rows": rows, "total": total, "note": (note + note_extra).strip()}
 
 
-def _classify_zone(name: str) -> str:
-    t = str(name or "").strip().lower()
-    if not t:
-        return "Sem zona classificada"
-    if "leste" in t:
-        return "Zona Leste"
-    if "oeste" in t:
+def _format_cnpj_cpf(value: Any) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) == 14:
+        return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
+    if len(digits) == 11:
+        return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+    return str(value or "").strip()
+
+
+def _partner_identity(partner: Partner | None) -> tuple[str, str, str]:
+    if not partner:
+        return "missing", "Sem cadastro", ""
+    name = str(partner.trade_name or partner.name or "Sem cadastro").strip() or "Sem cadastro"
+    tax_raw = str(partner.cnpj_cpf or "").strip()
+    tax_digits = re.sub(r"\D", "", tax_raw)
+    if tax_digits:
+        return f"tax:{tax_digits}", name, f"CNPJ/CPF {_format_cnpj_cpf(tax_raw)}"
+    erp = str(partner.erpflex_id or "").strip()
+    if erp:
+        return f"erp:{erp}", name, f"Cadastro ERP {erp}"
+    return f"id:{int(partner.id)}", name, f"Cadastro {int(partner.id)}"
+
+
+def _classify_zone(name: str, city: str = "", district: str = "", zip_code: str = "", state: str = "") -> str:
+    """Consolida as regiões operacionais nas faixas comerciais pedidas no BI.
+
+    A região logística explícita tem prioridade. Quando ela é genérica (A Classificar,
+    Outras Regiões etc.), reaproveitamos o classificador do roteirizador com cidade,
+    bairro e CEP da entrega.
+    """
+    def norm(v: Any) -> str:
+        return unicodedata.normalize("NFKD", str(v or "")).encode("ascii", "ignore").decode("ascii").lower().strip()
+
+    raw = norm(name)
+    explicit = (
+        ("zona sul", "Zona Sul"), ("zona leste", "Zona Leste"),
+        ("zona norte", "Zona Norte"), ("zona oeste", "Zona Oeste"),
+        ("abc", "ABC"), ("alto tiete", "Alto Tietê"),
+        ("interior", "Interior"),
+    )
+    for token, label in explicit:
+        if token in raw:
+            return label
+    if "osasco" in raw or "barueri" in raw:
         return "Zona Oeste"
-    if "norte" in t:
-        return "Zona Norte"
-    if "sul" in t:
-        return "Zona Sul"
-    if "centro" in t or "central" in t:
-        return "Centro"
-    if "abc" in t:
-        return "ABC"
-    if "interior" in t:
-        return "Interior"
-    if "litoral" in t or "baixada" in t:
-        return "Litoral"
-    return str(name).strip()
+
+    inferred = classificar_regiao(city, district, zip_code, "") if (city or district or zip_code) else ""
+    inf = norm(inferred)
+    for token, label in explicit:
+        if token in inf:
+            return label
+    if "osasco" in inf or "barueri" in inf:
+        return "Zona Oeste"
+
+    # Fora das zonas comerciais definidas pelo usuário: Centro, Guarulhos, Litoral,
+    # coleta, registros sem classificação e UFs fora de SP ficam consolidados em Outros.
+    st = norm(state).upper()
+    if st and st not in {"SP", "SAO PAULO"}:
+        return "Outros"
+    return "Outros"
 
 
 def _sales_invoice_rows(db, cid: int, start: date, end: date) -> list[dict]:
     sales = _sales_rows(db, cid, start, end)
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
-    return [
-        {"id": int(r.id), "number": r.number or "—", "date": r.issue_date or "—",
-         "partner": ((partners.get(int(r.customer_id or 0)).trade_name or partners.get(int(r.customer_id or 0)).name) if partners.get(int(r.customer_id or 0)) else "Sem cadastro"),
-         "value": _money(r.total)}
-        for r in sorted(sales, key=lambda x: str(x.issue_date or ""), reverse=True)
-    ]
+    rows = []
+    for r in sorted(sales, key=lambda x: str(x.issue_date or ""), reverse=True):
+        partner = partners.get(int(r.customer_id or 0))
+        pkey, pname, psubtitle = _partner_identity(partner)
+        rows.append({
+            "id": int(r.id), "number": r.number or "—", "date": r.issue_date or "—",
+            "partner": pname, "partner_key": pkey, "partner_subtitle": psubtitle,
+            "value": _money(r.total),
+        })
+    return rows
 
 
 def _sales_grouped_by_partner(db, cid: int, start: date, end: date) -> list[dict]:
     rows = _sales_invoice_rows(db, cid, start, end)
     acc: dict[str, dict] = {}
     for row in rows:
-        name = row["partner"]
-        cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": []})
+        key = str(row.get("partner_key") or row.get("partner") or "Sem cadastro")
+        cell = acc.setdefault(key, {
+            "name": row.get("partner") or "Sem cadastro",
+            "subtitle": row.get("partner_subtitle") or "",
+            "count": 0, "value": 0.0, "invoices": []
+        })
         cell["count"] += 1
         cell["value"] += _money(row["value"])
         cell["invoices"].append(row)
@@ -768,19 +843,32 @@ def _sales_grouped_by_zone(db, cid: int, start: date, end: date) -> list[dict]:
         return []
     ids = [int(r.id) for r in sales]
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
-    delivery_rows = db.execute(select(Delivery.sales_invoice_id, Delivery.region).where(Delivery.company_id == cid, Delivery.sales_invoice_id.in_(ids))).all()
+    delivery_rows = db.execute(select(Delivery.sales_invoice_id, Delivery.region).where(
+        Delivery.company_id == cid, Delivery.sales_invoice_id.in_(ids)
+    )).all()
     region_by_invoice = {int(invoice_id): str(region or "").strip() for invoice_id, region in delivery_rows}
     acc: dict[str, dict] = {}
     for inv in sales:
-        raw_region = region_by_invoice.get(int(inv.id)) or "Sem zona classificada"
-        zone = _classify_zone(raw_region)
         partner = partners.get(int(inv.customer_id or 0))
-        invoice = {"id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—", "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro", "value": _money(inv.total), "region": raw_region}
+        raw_region = region_by_invoice.get(int(inv.id)) or ""
+        city = str(inv.delivery_city or (partner.delivery_city if partner else "") or (partner.city if partner else "") or "").strip()
+        district = str(inv.delivery_district or (partner.delivery_district if partner else "") or (partner.district if partner else "") or "").strip()
+        zip_code = str(inv.delivery_zip or (partner.delivery_zip_code if partner else "") or (partner.zip_code if partner else "") or "").strip()
+        state = str(inv.delivery_state or (partner.delivery_state if partner else "") or (partner.state if partner else "") or "").strip()
+        zone = _classify_zone(raw_region, city, district, zip_code, state)
+        _, pname, _ = _partner_identity(partner)
+        invoice = {
+            "id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—",
+            "partner": pname, "value": _money(inv.total), "region": raw_region or "Não informada",
+            "location": " / ".join(x for x in (district, city, state) if x),
+        }
         cell = acc.setdefault(zone, {"name": zone, "count": 0, "value": 0.0, "invoices": []})
         cell["count"] += 1
         cell["value"] += _money(inv.total)
         cell["invoices"].append(invoice)
-    return sorted(({**v, "value": round(v["value"], 2)} for v in acc.values()), key=lambda r: r["value"], reverse=True)
+    preferred = {name: i for i, name in enumerate(("Zona Sul", "Zona Leste", "Zona Norte", "Zona Oeste", "ABC", "Alto Tietê", "Interior", "Outros"))}
+    result = [{**v, "value": round(v["value"], 2)} for v in acc.values()]
+    return sorted(result, key=lambda r: (preferred.get(r["name"], 99), -r["value"]))
 
 
 def _sales_grouped_by_state(db, cid: int, start: date, end: date) -> list[dict]:
@@ -882,10 +970,43 @@ def _invoice_payment_payloads(db, cid: int, sales: list) -> dict[int, dict]:
     return out
 
 
-def _payment_term_from_payload(payload: dict, issue_raw: Any) -> tuple[str, str]:
+def _payment_label_from_due_dates(issue_raw: Any, due_dates: list[date], source: str) -> tuple[str, str]:
     issue = _parse_calendar_date(issue_raw)
+    if not issue or not due_dates:
+        return "Prazo não identificado", "indisponível"
+    offsets = sorted({(d - issue).days for d in due_dates if d >= issue})
+    if not offsets:
+        return "Prazo não identificado", "indisponível"
+    if offsets == [0]:
+        return "À vista", source
+    positives = [x for x in offsets if x > 0]
+    if positives:
+        return "/".join(str(x) for x in positives) + " dias", source
+    return "À vista", source
+
+
+def _payment_term_from_payload(payload: dict, issue_raw: Any) -> tuple[str, str]:
+    # Primeiro usa vencimentos/duplicatas da própria cobrança da NF/pedido: eles representam
+    # melhor o prazo efetivamente praticado do que o texto cadastral da condição.
     detail = payload.get("__detail__") if isinstance(payload, dict) else None
     sources = [detail, payload] if isinstance(detail, dict) else [payload]
+    due_keys = {"vencimento", "data_vencimento", "dt_vencimento", "due_date", "data_vcto", "vcto"}
+    due_dates: list[date] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for value in _iter_payload_values(source, due_keys):
+            candidates = value if isinstance(value, list) else [value]
+            for candidate in candidates:
+                if isinstance(candidate, dict):
+                    candidate = candidate.get("data") or candidate.get("vencimento") or candidate.get("due_date")
+                d = _parse_calendar_date(candidate)
+                if d:
+                    due_dates.append(d)
+    label, origin = _payment_label_from_due_dates(issue_raw, due_dates, "cobrança da NF/pedido")
+    if label != "Prazo não identificado":
+        return label, origin
+
     term_keys = {
         "prazo_pagamento", "prazo_de_pagamento", "condicao_pagamento", "condicao_de_pagamento",
         "payment_terms", "payment_term", "descricao_condicao_pagamento", "forma_prazo_pagamento",
@@ -895,50 +1016,151 @@ def _payment_term_from_payload(payload: dict, issue_raw: Any) -> tuple[str, str]
         if not isinstance(source, dict):
             continue
         for value in _iter_payload_values(source, term_keys):
-            label = _label_from_value(value)
-            if label and label not in {"0", "0 dias"}:
-                if re.fullmatch(r"\d+(?:[.,]\d+)?", label):
-                    label = f"{label} dias"
-                return label, "NF/pedido"
-
-    due_keys = {"vencimento", "data_vencimento", "dt_vencimento", "due_date", "data_vcto", "vcto"}
-    due_dates: list[date] = []
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        for value in _iter_payload_values(source, due_keys):
-            if isinstance(value, list):
-                candidates = value
-            else:
-                candidates = [value]
-            for candidate in candidates:
-                if isinstance(candidate, dict):
-                    candidate = candidate.get("data") or candidate.get("vencimento") or candidate.get("due_date")
-                d = _parse_calendar_date(candidate)
-                if d:
-                    due_dates.append(d)
-    if issue and due_dates:
-        offsets = sorted({max((d - issue).days, 0) for d in due_dates})
-        if offsets == [0]:
-            return "À vista", "vencimentos da venda"
-        positives = [x for x in offsets if x > 0]
-        if positives:
-            return "/".join(str(x) for x in positives) + " dias", "vencimentos da venda"
+            text_label = _label_from_value(value)
+            if text_label and text_label not in {"0", "0 dias"}:
+                if re.fullmatch(r"\d+(?:[.,]\d+)?", text_label):
+                    text_label = f"{text_label} dias"
+                return text_label, "condição da NF/pedido"
     return "Prazo não identificado", "indisponível"
+
+
+def _doc_token(value: Any) -> str:
+    text = re.sub(r"[^A-Za-z0-9]+", "", str(value or "")).upper()
+    if not text:
+        return ""
+    if text.isdigit():
+        return text.lstrip("0") or "0"
+    return text
+
+
+def _payload_ref_tokens(payload: dict, keys: set[str]) -> set[str]:
+    out: set[str] = set()
+    if not isinstance(payload, dict):
+        return out
+    for value in _iter_payload_values(payload, keys):
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, dict):
+                for k in ("numero", "documento", "id", "nfe", "pedido"):
+                    if candidate.get(k) not in (None, ""):
+                        tok = _doc_token(candidate.get(k))
+                        if tok:
+                            out.add(tok)
+            else:
+                tok = _doc_token(candidate)
+                if tok:
+                    out.add(tok)
+    return out
+
+
+def _receivable_terms_context(db, cid: int, sales: list, start: date, end: date):
+    partner_ids = {int(r.customer_id) for r in sales if r.customer_id}
+    if not partner_ids:
+        return lambda inv, payload: ("Prazo não identificado", "indisponível")
+
+    pad_start = (start - timedelta(days=7)).isoformat()
+    pad_end = (end + timedelta(days=7)).isoformat()
+    titles = db.execute(select(
+        FinancialTitle.id, FinancialTitle.partner_id, FinancialTitle.document, FinancialTitle.issue_date,
+        FinancialTitle.due_date, FinancialTitle.value, FinancialTitle.raw_record_id
+    ).where(
+        FinancialTitle.company_id == cid, FinancialTitle.kind == "RECEBER",
+        FinancialTitle.partner_id.in_(list(partner_ids)),
+        or_(FinancialTitle.issue_date == None, and_(FinancialTitle.issue_date >= pad_start, FinancialTitle.issue_date <= pad_end)),
+    )).all()
+    raw_map = _load_raw_payloads(db, [int(t.raw_record_id) for t in titles if t.raw_record_id])
+
+    note_keys = {"nr_nfe", "nfe", "numero_nfe", "numero_nf", "numero_nota", "nota_fiscal", "sf2_nrnfe"}
+    commercial_keys = {"documento", "numero_pedido", "pedido", "pedido_numero", "numero_orcamento", "orcamento", "titulo"}
+    by_note: dict[tuple[int, str], list] = defaultdict(list)
+    by_doc: dict[tuple[int, str], list] = defaultdict(list)
+    by_issue: dict[tuple[int, str], list] = defaultdict(list)
+    for t in titles:
+        pid = int(t.partner_id or 0)
+        payload = raw_map.get(int(t.raw_record_id), {}) if t.raw_record_id else {}
+        for tok in _payload_ref_tokens(payload, note_keys):
+            by_note[(pid, tok)].append(t)
+        doc_tokens = {_doc_token(t.document)} if t.document else set()
+        doc_tokens |= _payload_ref_tokens(payload, commercial_keys)
+        for tok in {x for x in doc_tokens if x}:
+            by_doc[(pid, tok)].append(t)
+        if t.issue_date:
+            by_issue[(pid, str(t.issue_date)[:10])].append(t)
+
+    invoice_counts: dict[tuple[int, str], int] = defaultdict(int)
+    for inv in sales:
+        if inv.customer_id and inv.issue_date:
+            invoice_counts[(int(inv.customer_id), str(inv.issue_date)[:10])] += 1
+
+    def term_for(inv, payload: dict) -> tuple[str, str]:
+        direct = _payment_term_from_payload(payload, inv.issue_date)
+        if direct[0] != "Prazo não identificado":
+            return direct
+        pid = int(inv.customer_id or 0)
+        candidates = []
+        origin = ""
+        nf_token = _doc_token(inv.number)
+        if nf_token:
+            candidates = list(by_note.get((pid, nf_token), []))
+            if candidates:
+                origin = "Contas a Receber · NF-e"
+        if not candidates:
+            commercial_refs = _payload_ref_tokens(payload, {"documento", "numero_pedido", "pedido_numero", "pedido", "numero_orcamento", "orcamento"})
+            matched = []
+            for ref in commercial_refs:
+                matched.extend(by_doc.get((pid, ref), []))
+            if matched:
+                candidates = matched
+                origin = "Contas a Receber · pedido/documento"
+        if not candidates and nf_token:
+            candidates = list(by_doc.get((pid, nf_token), []))
+            if candidates:
+                origin = "Contas a Receber · documento"
+        issue_key = (pid, str(inv.issue_date or "")[:10])
+        issue_candidates = list(by_issue.get(issue_key, []))
+        if not candidates and invoice_counts.get(issue_key, 0) == 1:
+            candidates = issue_candidates
+            if candidates:
+                origin = "Contas a Receber · emissão"
+        # Se houver várias NF do mesmo cliente no dia, tenta identificar o único documento
+        # financeiro cujas parcelas somam o total da NF. Não usa aproximação ambígua.
+        if not candidates and issue_candidates and invoice_counts.get(issue_key, 0) > 1:
+            groups: dict[str, list] = defaultdict(list)
+            for t in issue_candidates:
+                tok = _doc_token(t.document) or f"title:{int(t.id)}"
+                groups[tok].append(t)
+            invoice_total = _money(getattr(inv, "total", 0))
+            tolerance = max(0.05, abs(invoice_total) * 0.001)
+            matches = [g for g in groups.values() if abs(sum(_money(x.value) for x in g) - invoice_total) <= tolerance]
+            if len(matches) == 1:
+                candidates = matches[0]
+                origin = "Contas a Receber · emissão/valor"
+        seen = set()
+        unique = []
+        for t in candidates:
+            if int(t.id) not in seen:
+                seen.add(int(t.id))
+                unique.append(t)
+        due_dates = [d for d in (_parse_calendar_date(t.due_date) for t in unique) if d]
+        return _payment_label_from_due_dates(inv.issue_date, due_dates, origin or "Contas a Receber")
+
+    return term_for
 
 
 def _sales_grouped_by_practiced_payment(db, cid: int, start: date, end: date) -> list[dict]:
     sales = _sales_rows(db, cid, start, end)
     partners = _partner_map(db, {int(r.customer_id) for r in sales if r.customer_id})
     payloads = _invoice_payment_payloads(db, cid, sales)
+    receivable_term_for = _receivable_terms_context(db, cid, sales, start, end)
     acc: dict[str, dict] = {}
     for inv in sales:
-        name, source = _payment_term_from_payload(payloads.get(int(inv.id), {}), inv.issue_date)
+        payload = payloads.get(int(inv.id), {})
+        name, source = receivable_term_for(inv, payload)
         partner = partners.get(int(inv.customer_id or 0))
+        _, pname, _ = _partner_identity(partner)
         invoice = {
             "id": int(inv.id), "number": inv.number or "—", "date": inv.issue_date or "—",
-            "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro",
-            "value": _money(inv.total), "payment_source": source,
+            "partner": pname, "value": _money(inv.total), "payment_source": source,
         }
         cell = acc.setdefault(name, {"name": name, "count": 0, "value": 0.0, "invoices": [], "sources": set()})
         cell["count"] += 1
@@ -950,7 +1172,7 @@ def _sales_grouped_by_practiced_payment(db, cid: int, start: date, end: date) ->
         cell["value"] = round(cell["value"], 2)
         cell["subtitle"] = "Origem: " + ", ".join(sorted(cell.pop("sources")))
         result.append(cell)
-    return sorted(result, key=lambda r: r["value"], reverse=True)
+    return sorted(result, key=lambda r: (r["name"] == "Prazo não identificado", -r["value"]))
 
 
 def _sales_grouped_by_value_range(db, cid: int, start: date, end: date) -> list[dict]:
@@ -1699,7 +1921,8 @@ def _product_meta_context(db, cid: int):
 
 
 def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "open", start: date | None = None, end: date | None = None) -> list[dict]:
-    # Intentionally bounded only after grouping; this avoids a top-200 titles bias by due date.
+    # Carrega os títulos sem limitar antes do agrupamento. A identidade do cliente/fornecedor
+    # é preservada por CNPJ/CPF/ID; nomes iguais não são mais fundidos.
     bal = _balance_expr()
     label = _partner_label_expr()
     kind_condition = FinancialTitle.kind.in_(kind) if isinstance(kind, list) else (FinancialTitle.kind == kind)
@@ -1715,11 +1938,14 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
         conditions.extend([FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005])
     rows = db.execute(select(
         FinancialTitle.id, FinancialTitle.document, FinancialTitle.issue_date, FinancialTitle.due_date,
-        FinancialTitle.paid_date, label.label("partner"), FinancialTitle.value, FinancialTitle.paid_value,
-        FinancialTitle.bank, bal.label("balance")
+        FinancialTitle.paid_date, FinancialTitle.partner_id, label.label("partner"),
+        Partner.cnpj_cpf.label("partner_cnpj"), Partner.erpflex_id.label("partner_erpflex_id"),
+        FinancialTitle.value, FinancialTitle.paid_value, FinancialTitle.bank, bal.label("balance")
     ).outerjoin(Partner, Partner.id == FinancialTitle.partner_id).where(*conditions)).all()
     return [{
         "id": int(r.id), "document": r.document or "—", "partner": str(r.partner or "Sem cadastro"),
+        "partner_id": int(r.partner_id) if r.partner_id else None,
+        "partner_cnpj": str(r.partner_cnpj or "").strip(), "partner_erpflex_id": str(r.partner_erpflex_id or "").strip(),
         "issue": r.issue_date or "—", "due": r.due_date or "—", "paid_date": r.paid_date or "—",
         "value": _money(r.value), "paid": _money(r.paid_value), "balance": _money(r.balance),
         "bank": str(r.bank or "Sem banco").strip() or "Sem banco",
@@ -1892,13 +2118,13 @@ def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: 
     key = ROOT_DETAIL.get(key, key)
 
     if key == "ar-open":
-        detail = _grouped_financial_detail("Contas a receber em aberto", _financial_group_rows(db, cid, "RECEBER", "open"), "Agrupado por cliente. Toque no cliente para ver os títulos.", "balance", "Cliente")
+        detail = _grouped_financial_detail("Contas a receber em aberto", _financial_group_rows(db, cid, "RECEBER", "open"), "Agrupado por CNPJ/CPF/ID do cliente, não apenas pelo nome. Toque no cliente para ver os títulos.", "balance", "Cliente")
     elif key == "ar-overdue":
-        detail = _grouped_financial_detail("Contas a receber · vencidos", _financial_group_rows(db, cid, "RECEBER", "overdue"), "Agrupado por cliente. Toque no cliente para ver os títulos vencidos.", "balance", "Cliente")
+        detail = _grouped_financial_detail("Contas a receber · vencidos", _financial_group_rows(db, cid, "RECEBER", "overdue"), "Agrupado por CNPJ/CPF/ID do cliente, não apenas pelo nome. Toque no cliente para ver os títulos vencidos.", "balance", "Cliente")
     elif key == "ar-due":
-        detail = _grouped_financial_detail("Contas a receber · a vencer", _financial_group_rows(db, cid, "RECEBER", "due"), "Agrupado por cliente. Toque no cliente para ver os títulos a vencer.", "balance", "Cliente")
+        detail = _grouped_financial_detail("Contas a receber · a vencer", _financial_group_rows(db, cid, "RECEBER", "due"), "Agrupado por CNPJ/CPF/ID do cliente, não apenas pelo nome. Toque no cliente para ver os títulos a vencer.", "balance", "Cliente")
     elif key == "ar-received":
-        detail = _grouped_financial_detail("Contas a receber · recebidos", _financial_group_rows(db, cid, "RECEBER", "paid", start, end), "Agrupado por cliente. Toque no cliente para ver os recebimentos.", "paid", "Cliente")
+        detail = _grouped_financial_detail("Contas a receber · recebidos", _financial_group_rows(db, cid, "RECEBER", "paid", start, end), "Agrupado por CNPJ/CPF/ID do cliente, não apenas pelo nome. Toque no cliente para ver os recebimentos.", "paid", "Cliente")
     elif key == "ar-contract":
         detail = _grouped_contract_detail("Contas a receber · contratos", _contract_title_rows(db, cid, None), "Clientes marcados como cobrança por contrato. Toque no cliente para ver os títulos.")
     elif key == "ar-bank":
@@ -1918,11 +2144,11 @@ def build_fast_detail(db, cid: int, key: str, period: str = "month", date_from: 
     elif key == "sales-client":
         detail = _group_breakdown_with_children("Faturamento · por cliente", _sales_grouped_by_partner(db, cid, start, end), "Agrupado por cliente. Toque no cliente para ver as NF-e válidas do período.")
     elif key == "sales-zone":
-        detail = _group_breakdown_with_children("Faturamento · por zona", _sales_grouped_by_zone(db, cid, start, end), "Classificação por zona usando a região logística da entrega.")
+        detail = _group_breakdown_with_children("Faturamento · por zona", _sales_grouped_by_zone(db, cid, start, end), "Zonas comerciais padronizadas: Sul, Leste, Norte, Oeste, ABC, Alto Tietê, Interior e Outros. Usa região logística e, quando necessário, cidade/bairro/CEP da entrega.")
     elif key == "sales-state":
         detail = _group_breakdown_with_children("Faturamento · por estado", _sales_grouped_by_state(db, cid, start, end), "Classificação por UF usando o estado de entrega/cadastro do cliente.")
     elif key == "sales-payment-practiced":
-        detail = _group_breakdown_with_children("Faturamento · prazo praticado na venda", _sales_grouped_by_practiced_payment(db, cid, start, end), "Condição obtida da própria NF/pedido ou calculada pelos vencimentos encontrados na venda. Sem informação suficiente fica separado como não identificado.")
+        detail = _group_breakdown_with_children("Faturamento · prazo praticado na venda", _sales_grouped_by_practiced_payment(db, cid, start, end), "Prazo efetivamente praticado: prioriza cobrança/vencimentos da NF ou pedido e, quando necessário, cruza a venda com Contas a Receber por NF-e, pedido/documento ou emissão do mesmo cliente. Sem vínculo seguro fica como não identificado.")
     elif key == "sales-terms":
         detail = _group_breakdown_with_children("Faturamento · prazo cadastrado do cliente", _sales_grouped_by_terms(db, cid, start, end), "Prazo atualmente cadastrado no cliente; pode diferir da condição realmente praticada na venda.")
     elif key == "sales-value-range":

@@ -120,11 +120,11 @@
   <div class="bi-fast-bottom-grid">
     <article class="bi-fast-panel bi-fast-ranking">
       <button type="button" class="bi-fast-panel-title-button" data-detail="top-clients"><span>👥</span><b>Maiores clientes em aberto</b><i>›</i></button>
-      <ol>{% for r in data.top_clients %}<li><span>{{ r.name }}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li class="empty">Sem valores em aberto.</li>{% endfor %}</ol>
+      <ol>{% for r in data.top_clients %}<li><span>{{ r.name }}{% if r.subtitle %}<small>{{ r.subtitle }}</small>{% endif %}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li class="empty">Sem valores em aberto.</li>{% endfor %}</ol>
     </article>
     <article class="bi-fast-panel bi-fast-ranking">
       <button type="button" class="bi-fast-panel-title-button" data-detail="top-suppliers"><span>▣</span><b>Maiores fornecedores em aberto</b><i>›</i></button>
-      <ol>{% for r in data.top_suppliers %}<li><span>{{ r.name }}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li class="empty">Sem valores em aberto.</li>{% endfor %}</ol>
+      <ol>{% for r in data.top_suppliers %}<li><span>{{ r.name }}{% if r.subtitle %}<small>{{ r.subtitle }}</small>{% endif %}</span><b data-money="{{ r.value }}"></b></li>{% else %}<li class="empty">Sem valores em aberto.</li>{% endfor %}</ol>
     </article>
     <article class="bi-fast-panel bi-fast-agenda">
       <button type="button" class="bi-fast-panel-title-button" data-detail="agenda-7"><span>▦</span><b>Agenda financeira · 7 dias</b><i>›</i></button>

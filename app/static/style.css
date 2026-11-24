@@ -353,3 +353,6 @@
 
 /* V1.3.76 · regras comerciais especiais na auditoria de preço */
 .bi-fast-audit-summary .authorized{background:#eef6ff;border-color:#c8ddf6}.bi-fast-audit-rule{margin-top:8px;padding:8px 9px;border:1px solid #cfe0f3;border-radius:8px;background:#f4f9ff;color:#264d72;font-size:9px}.bi-fast-audit-rule b{color:#173f65}.bi-fast-audit-rule small{display:block;margin-top:2px;color:#68809a}.bi-fast-audit-price-grid{grid-template-columns:repeat(5,minmax(0,1fr))}@media(max-width:900px){.bi-fast-audit-price-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.bi-fast-audit-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.bi-fast-audit-price-grid{grid-template-columns:1fr 1fr}}
+
+/* V1.3.77 · identificação fiscal nos rankings financeiros */
+.bi-fast-ranking li span small{display:block;margin-top:2px;font-size:10px;font-weight:600;color:#718096;letter-spacing:.01em}
