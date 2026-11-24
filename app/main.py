@@ -60,7 +60,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.78")
+app = FastAPI(title=APP_NAME, version="1.3.80")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
@@ -231,7 +231,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.78", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.80", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -1957,16 +1957,56 @@ def _sales_items_with_fallback(db, cid: int, inv: SalesInvoice, payload: dict):
 
 
 def _purchase_items_display(db, inv: PurchaseInvoice):
+    """Retorna os itens da compra priorizando a fonte fiscal (XML da NF-e).
+
+    Também repara registros antigos que foram sobrescritos por um bloco genérico
+    do ERPFlex e acabaram mostrando a natureza da operação como descrição do item.
+    """
+    if inv.xml_text:
+        try:
+            company = db.get(Company, inv.company_id)
+            parsed = parse_nfe(inv.xml_text, (company.cnpj if company else "") or "")
+            xml_items = parsed.get("items") or []
+            if xml_items:
+                stored = db.scalars(select(PurchaseItem).where(PurchaseItem.purchase_invoice_id == inv.id).order_by(PurchaseItem.id)).all()
+                def signature(rows):
+                    return [(text(getattr(r, "product_code", "")), text(getattr(r, "description", "")), round(fnum(getattr(r, "qty", 0)), 6), round(fnum(getattr(r, "total", 0)), 2)) for r in rows]
+                xml_sig = [(text(x.get("product_code")), text(x.get("description")), round(fnum(x.get("qty")), 6), round(fnum(x.get("total")), 2)) for x in xml_items]
+                if signature(stored) != xml_sig:
+                    for idx, x in enumerate(xml_items):
+                        if idx < len(stored):
+                            item = stored[idx]
+                        else:
+                            item = PurchaseItem(purchase_invoice_id=inv.id)
+                            db.add(item)
+                        item.product_code = text(x.get("product_code")) or None
+                        item.ean = text(x.get("ean")) or None
+                        item.description = text(x.get("description"))
+                        item.ncm = text(x.get("ncm")) or None
+                        item.cfop = text(x.get("cfop")) or None
+                        item.unit = text(x.get("unit")) or None
+                        item.qty = fnum(x.get("qty")); item.unit_price = fnum(x.get("unit_price")); item.total = fnum(x.get("total"))
+                        item.icms = fnum(x.get("icms")); item.icms_st = fnum(x.get("icms_st")); item.ipi = fnum(x.get("ipi"))
+                        item.pis = fnum(x.get("pis")); item.cofins = fnum(x.get("cofins"))
+                    for extra in stored[len(xml_items):]:
+                        db.delete(extra)
+                    db.flush()
+                    stored = db.scalars(select(PurchaseItem).where(PurchaseItem.purchase_invoice_id == inv.id).order_by(PurchaseItem.id)).all()
+                return stored, _product_summary(stored)
+        except Exception:
+            pass
+
     rows = db.scalars(select(PurchaseItem).where(PurchaseItem.purchase_invoice_id == inv.id).order_by(PurchaseItem.id)).all()
     if rows:
-        # Repara descrições antigas vazias cruzando com o cadastro central.
         changed = False
         for r in rows:
-            if not r.description:
-                prod = _catalog_product(db, inv.company_id, text(r.product_code), text(r.product_code), text(r.ean))
-                if prod and prod.description:
-                    r.description = prod.description; changed = True
-                    r.ean = r.ean or prod.ean; r.ncm = r.ncm or prod.ncm; r.unit = r.unit or prod.unit
+            prod = _catalog_product(db, inv.company_id, text(r.product_code), text(r.product_code), text(r.ean))
+            # Se houver cadastro central, ele é mais confiável que descrições genéricas
+            # vindas do cabeçalho/detalhe de compra (ex.: "Estoque").
+            generic = text(r.description).strip().lower() in {"estoque", "compra", "compras", "produto", "item"}
+            if prod and prod.description and (not r.description or generic):
+                r.description = prod.description; changed = True
+                r.ean = r.ean or prod.ean; r.ncm = r.ncm or prod.ncm; r.unit = r.unit or prod.unit
         if changed: db.flush()
         return rows, _product_summary(rows)
     payload = _load_raw_payload(db, inv.erpflex_raw_id)
@@ -1975,6 +2015,11 @@ def _purchase_items_display(db, inv: PurchaseInvoice):
 
 
 def _persist_purchase_items(db, inv: PurchaseInvoice, payload: dict) -> int:
+    # Havendo XML, o item fiscal é reparado/lido do XML e não deve ser substituído
+    # por uma estrutura genérica do detalhe de compras do ERP.
+    if inv.xml_text:
+        rows, _info = _purchase_items_display(db, inv)
+        return len(rows)
     raw_items = _purchase_items_from_record(payload or {})
     if not raw_items: return 0
     db.query(PurchaseItem).filter(PurchaseItem.purchase_invoice_id == inv.id).delete(synchronize_session=False)
@@ -1983,7 +2028,7 @@ def _persist_purchase_items(db, inv: PurchaseInvoice, payload: dict) -> int:
             "product_id": text(_purchase_item_value(raw_item, ("produto_id", "id_produto", "product_id"))),
             "code": text(_purchase_item_value(raw_item, ("codigo_produto", "produto_codigo", "codigo", "sku", "referencia"))),
             "ean": text(_purchase_item_value(raw_item, ("EAN", "ean", "gtin", "codigo_barras", "cEAN"))),
-            "description": text(_purchase_item_value(raw_item, ("desc_produto", "descricao_produto", "descricao_item", "produto_desc", "produto", "descricao", "nome", "natureza_descricao"))),
+            "description": text(_purchase_item_value(raw_item, ("desc_produto", "descricao_produto", "descricao_item", "produto_desc", "descricao", "description", "nome", "xProd"))),
             "ncm": text(_purchase_item_value(raw_item, ("ncm", "NCM"))), "cfop": text(_purchase_item_value(raw_item, ("cfop", "CFOP"))),
             "unit": text(_purchase_item_value(raw_item, ("unidade", "unit", "uCom"))),
         }
@@ -2764,7 +2809,7 @@ def _purchase_note_context(db, cid: int, purchase_id: int):
     if not row:
         return None
     inv, supplier = row
-    items = db.scalars(select(PurchaseItem).where(PurchaseItem.purchase_invoice_id == inv.id).order_by(PurchaseItem.id)).all()
+    items, _item_info = _purchase_items_display(db, inv)
     payload = _load_raw_payload(db, inv.erpflex_raw_id)
     if not items and payload:
         items = _sales_items_from_payload(payload)

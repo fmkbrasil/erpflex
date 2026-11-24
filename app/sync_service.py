@@ -911,7 +911,7 @@ def _sales_items_for_storage(record: dict) -> list[dict]:
             "product_id": text(_purchase_item_value(item, ("produto_id", "id_produto", "product_id"))),
             "code": text(_purchase_item_value(item, ("codigo_produto", "produto_codigo", "codigo", "code", "sku", "referencia"))),
             "ean": text(_purchase_item_value(item, ("EAN", "ean", "gtin", "codigo_barras", "cEAN"))),
-            "description": text(_purchase_item_value(item, ("desc_produto", "descricao_produto", "descricao_item", "produto_desc", "produto", "descricao", "description", "nome"))),
+            "description": text(_purchase_item_value(item, ("desc_produto", "descricao_produto", "descricao_item", "produto_desc", "descricao", "description", "nome", "xProd"))),
             "ncm": text(_purchase_item_value(item, ("ncm", "NCM"))),
             "cfop": text(_purchase_item_value(item, ("cfop", "CFOP"))),
             "unit": text(_purchase_item_value(item, ("unidade", "unit", "uCom"))),
@@ -1150,13 +1150,16 @@ def _erp_purchase(db, company_id: int, record: dict, raw_id: int):
     # inclusive os itens. Quando os itens existem, atualiza o espelho local para
     # que a tela de resumo/ impressão tenha a nota completa.
     items = _purchase_items_from_record(record)
-    if items:
+    # V1.3.80: o XML da NF-e é a fonte fiscal prioritária dos itens. Se já existe
+    # XML/NFStock, uma sincronização posterior do ERPFlex não pode sobrescrever
+    # cProd/xProd/NCM/CFOP por campos genéricos da compra (ex.: natureza "Estoque").
+    if items and not row.xml_text:
         db.query(PurchaseItem).filter(PurchaseItem.purchase_invoice_id == row.id).delete(synchronize_session=False)
         for item in items:
             product_id = text(_purchase_item_value(item, ("produto_id", "id_produto", "product_id")))
             product_code = text(_purchase_item_value(item, ("codigo_produto", "produto_codigo", "codigo", "sku", "referencia")))
             ean = text(_purchase_item_value(item, ("EAN", "ean", "gtin", "codigo_barras", "cEAN")))
-            description = text(_purchase_item_value(item, ("desc_produto", "descricao_produto", "descricao_item", "produto_desc", "produto", "descricao", "nome", "natureza_descricao")))
+            description = text(_purchase_item_value(item, ("desc_produto", "descricao_produto", "descricao_item", "produto_desc", "descricao", "description", "nome", "xProd")))
             product = None
             conds = []
             if product_id: conds.append(Product.erpflex_id == product_id)

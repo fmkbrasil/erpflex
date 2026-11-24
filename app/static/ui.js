@@ -10,6 +10,15 @@
     '.bi-note','.bi-period','.bi-kicker','.bi-sync','.bi-data-warning','.bi-unavailable','.bi-empty',
     '.alert','.status-tabs a','.mobile-menu-divider','.mobile-bottom-nav a span','.mobile-home-card b','.mobile-home-card small','.mobile-home-feature b','.mobile-home-feature small','.mobile-home-feature em','.mobile-home-bi-shortcuts a','.bi-kpi>span','.bi-kpi>small','.metric>span',
     '.info-card>span','.theme-color-field span','select option[value=""]','select[name="situation"] option',
+    // BI rápido: rótulos/títulos de interface. Valores, documentos e dados operacionais ficam fora.
+    '.bi-fast-eyebrow','.bi-fast-head p','.bi-fast-kpi small','.bi-fast-panel-head span','.bi-fast-panel-head h2','.bi-fast-panel-head>small',
+    '.bi-fast-commercial-card small','.bi-fast-commercial-card strong','.bi-fast-commercial-card em','.bi-fast-commercial-card>b',
+    '.bi-fast-summary-title b','.bi-fast-summary-metrics small','.bi-fast-legend span',
+    '.bi-fast-period-buttons button','.bi-fast-custom-trigger','.bi-fast-sync-button b','.bi-fast-sync-status','.bi-fast-sync-link',
+    '.bi-fast-detail-select-wrap>span','.bi-fast-detail-tabs button','.bi-fast-breakdown-total>span',
+    '.bi-fast-seller-summary>h4','.bi-fast-product-summary>h4','.bi-fast-group-documents>h4',
+    '.bi-fast-audit-summary small','.bi-fast-audit-diagnostic>div>b','.bi-fast-audit-diagnostic>div>small','.audit-diag-grid small','.bi-fast-audit-rule>b','.bi-fast-audit-price-grid small',
+    '.bi-fast-subsection-title>span','.bi-fast-drawer header>div>small','.bi-fast-empty','.bi-fast-loading','.bi-fast-error',
     '[data-ui-label]'
   ].join(',');
   const SKIP_CLOSEST = 'td,.raw-json,.json-view,.key,.message,[data-ui-data],[data-no-label-edit],.bi-branch>summary,.sales-drill>summary,.sales-subbranch>summary';
@@ -198,6 +207,24 @@
       const el=closestEditable(e.target);if(!el||el===toggle||el.closest('.label-editor-toggle'))return;e.preventDefault();e.stopPropagation();promptTextEdit(el);
     },true);
   }
+
+  // V1.3.80 — conteúdo carregado por AJAX (ex.: drawer do BI) também recebe
+  // personalização e entra no modo de edição sem precisar recarregar a página.
+  let uiMutationPending=false;
+  const refreshDynamicUi=()=>{
+    if(uiMutationPending)return;
+    uiMutationPending=true;
+    requestAnimationFrame(()=>{
+      uiMutationPending=false;
+      applyTextOverrides(document.body);
+      assignControlKeys();assignSurfaceKeys();applyHiddenControls();
+      if(document.body.classList.contains('label-edit-mode'))markEditable(true);
+    });
+  };
+  const uiObserver=new MutationObserver(mutations=>{
+    if(mutations.some(m=>m.addedNodes && m.addedNodes.length))refreshDynamicUi();
+  });
+  uiObserver.observe(document.body,{childList:true,subtree:true});
 
   function initTablePagination(table){
     if(table.dataset.noPagination!==undefined||table.classList.contains('operator-table')||table.classList.contains('routing-table')||table.classList.contains('closeout-table')||(table.closest('.panel')&&table.closest('.panel').querySelector('.pagination-bar')))return;

@@ -1302,7 +1302,9 @@ def _extract_price_tables(payload: dict) -> list[dict]:
         label, technical = _price_table_label(name)
         if num is None or num < 0 or not label:
             return
-        found[(label, num)] = {"table": label, "table_code": technical, "price": num, "source": source}
+        ref = _canonical_price_table_ref(name)
+        table_index = ref.get("index") if ref else None
+        found[(label, num)] = {"table": label, "table_code": technical, "table_index": table_index, "price": num, "source": source}
 
     def walk(obj: Any, context: str = ""):
         if isinstance(obj, dict):
@@ -1415,8 +1417,10 @@ def _extract_sale_price_table(payload: dict | None) -> dict | None:
         "tabela_preco": 100, "tabela_de_preco": 100, "tabelapreco": 100,
         "price_table": 100, "price_list": 100, "pricelist": 100,
         "nome_tabela_preco": 98, "descricao_tabela_preco": 98, "tabela_preco_desc": 98, "tabelapreco_desc": 98,
-        "id_tabela_preco": 95, "tabela_preco_id": 95, "idtabelapreco": 95,
-        "codigo_tabela_preco": 95, "cod_tabela_preco": 95, "numero_tabela_preco": 95, "nr_tabela_preco": 95,
+        "id_tabela_preco": 99, "tabela_preco_id": 99, "idtabelapreco": 99,
+        "id_tabela": 99, "tabela_id": 99, "idtabela": 99,
+        "codigo_tabela_preco": 98, "cod_tabela_preco": 98, "numero_tabela_preco": 98, "nr_tabela_preco": 98,
+        "codigo_tabela": 98, "cod_tabela": 98, "numero_tabela": 98, "nr_tabela": 98,
         "lista_preco": 92, "lista_de_preco": 92, "id_lista_preco": 90, "lista_preco_id": 90,
         "tabela_venda": 90, "tabela_comercial": 90, "tab_preco": 90, "tabpreco": 90,
     }
@@ -1532,13 +1536,120 @@ def _product_price_reference_context(db, cid: int, item_rows: list) -> Any:
         code = _norm_key(str(item.product_code or ""))
         ean = re.sub(r"\D", "", str(item.ean or ""))
         desc = _norm_key(str(item.description or ""))
-        product = by_external.get(pid) or by_code.get(code) or by_ean.get(ean) or by_desc.get(desc)
-        payload = raw_by_external.get(pid) or raw_by_code.get(code) or raw_by_ean.get(ean)
+        product = by_code.get(code) or by_external.get(pid) or by_ean.get(ean) or by_desc.get(desc)
+        match_method = ""
+        if code and by_code.get(code):
+            match_method = "product_code"
+        elif pid and by_external.get(pid):
+            match_method = "product_id"
+        elif ean and by_ean.get(ean):
+            match_method = "ean"
+        elif desc and by_desc.get(desc):
+            match_method = "description"
+        payload = raw_by_code.get(code) or raw_by_external.get(pid) or raw_by_ean.get(ean)
         if not payload and product:
             payload = raw_by_external.get(str(product.erpflex_id or "").strip())
         prices = _extract_price_tables(payload or {}) if payload else []
-        return {"product": product, "payload": payload or {}, "prices": prices, "matched": bool(product or payload)}
+        return {
+            "product": product, "payload": payload or {}, "prices": prices, "matched": bool(product or payload),
+            "match_method": match_method, "resolved_code": str((product.code if product else item.product_code) or "").strip(),
+        }
     return resolve
+
+def _direct_price_from_product_payload(payload: dict | None, table_ref: dict | None) -> dict | None:
+    """Busca o preço pelo ID técnico da tabela diretamente no payload do produto.
+
+    Esta é a rota preferencial da auditoria: ID da tabela da venda + código do produto
+    faturado -> payload do mesmo produto -> preço da mesma tabela. O nome/legenda da
+    tabela é usado apenas para exibição e fallback.
+    """
+    if not isinstance(payload, dict) or not table_ref or table_ref.get("index") is None:
+        return None
+    idx = int(table_ref.get("index"))
+    exact_keys = {f"tabela_{idx}", f"tabela{idx}", f"table_{idx}", f"table{idx}"}
+    if idx == 0:
+        exact_keys |= {"padrao", "padrão", "tabela_padrao", "tabela_padrão", "preco_padrao", "preço_padrao"}
+    explicit_id_keys = {
+        "id_tabela_preco", "tabela_preco_id", "idtabelapreco", "id_tabela", "tabela_id", "idtabela",
+        "codigo_tabela_preco", "cod_tabela_preco", "numero_tabela_preco", "nr_tabela_preco",
+        "codigo_tabela", "cod_tabela", "numero_tabela", "nr_tabela",
+    }
+    generic_id_keys = {"codigo", "numero", "id"}
+    price_keys = {"preco", "preco_venda", "valor", "valor_venda", "price", "preco_tabela", "valor_tabela", "vl_preco"}
+
+    def scalar_price(value: Any) -> float | None:
+        num = _price_number(value)
+        return num if num is not None and num >= 0 else None
+
+    def object_price(obj: Any) -> float | None:
+        if not isinstance(obj, dict):
+            return scalar_price(obj)
+        norm = {_norm_key(k): v for k, v in obj.items()}
+        for key in price_keys:
+            if key in norm:
+                num = scalar_price(norm.get(key))
+                if num is not None:
+                    return num
+        return None
+
+    found: list[dict] = []
+
+    def walk(obj: Any, depth: int = 0, path: str = ""):
+        if depth > 9:
+            return
+        if isinstance(obj, dict):
+            norm = {_norm_key(k): v for k, v in obj.items()}
+            # 1) Campo direto tabela_N no payload do produto.
+            for key, value in obj.items():
+                nk = _norm_key(key)
+                if nk in exact_keys:
+                    num = object_price(value)
+                    if num is not None:
+                        found.append({
+                            "table": PRICE_TABLE_LABELS.get(idx, f"Tabela {idx}"),
+                            "table_code": "Padrão" if idx == 0 else f"Tabela {idx}",
+                            "table_index": idx, "price": num, "source": f"payload:{nk}",
+                            "match": "table_id+product_code",
+                        })
+            # 2) Estrutura de lista/objeto com ID da tabela + preço.
+            ids = []
+            for key in explicit_id_keys:
+                if norm.get(key) not in (None, ""):
+                    ref = _canonical_price_table_ref(norm.get(key))
+                    if ref and ref.get("index") is not None:
+                        ids.append(int(ref.get("index")))
+            # Campos genéricos como `id`/`codigo` só são aceitos dentro de uma
+            # estrutura claramente relacionada a tabela/lista de preço, evitando
+            # confundir o ID ou código do próprio produto com ID de tabela.
+            table_context = any(token in _norm_key(path) for token in ("tabela", "preco", "price", "lista"))
+            if table_context:
+                for key in generic_id_keys:
+                    if norm.get(key) not in (None, ""):
+                        ref = _canonical_price_table_ref(norm.get(key))
+                        if ref and ref.get("index") is not None:
+                            ids.append(int(ref.get("index")))
+            if idx in ids:
+                num = object_price(obj)
+                if num is not None:
+                    found.append({
+                        "table": PRICE_TABLE_LABELS.get(idx, f"Tabela {idx}"),
+                        "table_code": "Padrão" if idx == 0 else f"Tabela {idx}",
+                        "table_index": idx, "price": num, "source": f"payload:{path or 'objeto_tabela'}",
+                        "match": "table_id+product_code",
+                    })
+            for key, value in obj.items():
+                walk(value, depth + 1, f"{path}.{_norm_key(key)}" if path else _norm_key(key))
+        elif isinstance(obj, list):
+            for pos, value in enumerate(obj):
+                walk(value, depth + 1, f"{path}[{pos}]")
+
+    walk(payload)
+    if not found:
+        return None
+    # Campo direto tabela_N tem precedência sobre objetos genéricos.
+    found.sort(key=lambda r: (0 if str(r.get("source", "")).startswith("payload:tabela") or str(r.get("source", "")).startswith("payload:table") else 1, str(r.get("source", ""))))
+    return found[0]
+
 
 def _price_for_table(prices: list[dict], table_ref: dict | None) -> dict | None:
     if not table_ref or not prices:
@@ -1548,6 +1659,14 @@ def _price_for_table(prices: list[dict], table_ref: dict | None) -> dict | None:
     technical_norm = _norm_key(table_ref.get("technical") or "")
     raw_norm = _norm_key(table_ref.get("raw") or "")
 
+    # Primeiro usa o índice técnico já extraído do payload, quando disponível.
+    for pr in prices:
+        if idx is not None and pr.get("table_index") is not None:
+            try:
+                if int(pr.get("table_index")) == int(idx):
+                    return pr
+            except Exception:
+                pass
     # Canonicaliza cada preço usando tanto a descrição quanto o código técnico.
     for pr in prices:
         refs = []
@@ -1734,6 +1853,7 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
         "invoice_table_identified": sum(1 for ref in table_by_invoice.values() if ref),
         "invoice_table_missing": sum(1 for ref in table_by_invoice.values() if not ref),
         "product_matched": 0, "product_with_prices": 0, "table_price_matched": 0, "table_price_unmatched": 0,
+        "technical_key_matched": 0, "technical_key_missing_table_id": 0, "technical_key_missing_product_code": 0,
         "missing_no_table": 0, "missing_no_product": 0, "missing_no_prices": 0, "missing_table_mismatch": 0,
     }
     grouped: dict[int, dict] = {}
@@ -1747,7 +1867,20 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
             summary["product_matched"] += 1
         if product_info.get("prices"):
             summary["product_with_prices"] += 1
-        reference = _price_for_table(product_info["prices"], table_ref)
+        # V1.3.79: vínculo técnico principal = ID da tabela da venda + código do produto faturado.
+        # O parser por nome fica apenas como fallback.
+        table_idx = table_ref.get("index") if table_ref else None
+        product_code = str(item.product_code or "").strip()
+        direct_reference = None
+        if table_idx is None:
+            summary["technical_key_missing_table_id"] += 1
+        if not product_code:
+            summary["technical_key_missing_product_code"] += 1
+        if table_idx is not None and product_code and product_info.get("match_method") == "product_code":
+            direct_reference = _direct_price_from_product_payload(product_info.get("payload"), table_ref)
+            if direct_reference:
+                summary["technical_key_matched"] += 1
+        reference = direct_reference or _price_for_table(product_info["prices"], table_ref)
         if table_ref and product_info.get("prices"):
             if reference:
                 summary["table_price_matched"] += 1
@@ -1796,6 +1929,8 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
             "product_code": item.product_code or "—", "ean": item.ean or "—",
             "product": item.description or "Sem descrição", "qty": round(qty, 3),
             "table_expected": base_expected, "expected": expected, "actual": actual, "diff_unit": diff_unit,
+            "reference_match": (reference.get("match") if reference else "") or ("fallback" if reference else ""),
+            "reference_source": reference.get("source") if reference else "",
             "diff_pct": diff_pct, "impact": impact, "direction": "below" if diff_unit < 0 else "above",
             "authorized_rule": special_rule.get("label") if special_rule else "",
             "authorized_source": special_rule.get("source") if special_rule else "",
@@ -1825,7 +1960,7 @@ def _sales_price_audit(db, cid: int, start: date, end: date) -> dict:
     return {
         "title": "Faturamento · auditoria de preço", "kind": "price_audit",
         "summary": summary, "rows": rows,
-        "note": "Compara o preço praticado com o preço esperado após aplicar a política comercial autorizada. Prioridade: produto → subcategoria → categoria → regra geral do cliente → desconto de contrato aplicado ao preço → tabela da venda. Desconto de contrato marcado como financeiro não altera esta auditoria. Diferenças inferiores a meio centavo são tratadas como arredondamento.",
+        "note": "Compara o preço praticado com o preço esperado após aplicar a política comercial autorizada. O vínculo principal de referência usa o ID da tabela praticada na venda + o código do produto faturado para localizar o preço da mesma tabela no cadastro do produto. ID ERP, EAN e nomes ficam apenas como fallback. Depois aplica a política autorizada: produto → subcategoria → categoria → regra geral do cliente → desconto de contrato aplicado ao preço. Diferenças inferiores a meio centavo são tratadas como arredondamento.",
     }
 
 

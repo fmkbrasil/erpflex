@@ -134,8 +134,9 @@
       <span><small>Itens com produto localizado</small><b>{{ detail.summary.get('product_matched', 0) }} / {{ detail.summary['items'] }}</b></span>
       <span><small>Itens com preços de tabela</small><b>{{ detail.summary.get('product_with_prices', 0) }}</b></span>
       <span><small>Tabela × preço conciliados</small><b>{{ detail.summary.get('table_price_matched', 0) }}</b></span>
+      <span><small>Vínculo técnico ID tabela + código</small><b>{{ detail.summary.get('technical_key_matched', 0) }}</b></span>
     </div>
-    <div class="audit-diag-reasons">Sem tabela na venda: <b>{{ detail.summary.get('missing_no_table', 0) }}</b> · Produto não localizado: <b>{{ detail.summary.get('missing_no_product', 0) }}</b> · Produto sem preços sincronizados: <b>{{ detail.summary.get('missing_no_prices', 0) }}</b> · Tabela da venda sem correspondência no produto: <b>{{ detail.summary.get('missing_table_mismatch', 0) }}</b></div>
+    <div class="audit-diag-reasons">Sem ID técnico da tabela: <b>{{ detail.summary.get('technical_key_missing_table_id', 0) }}</b> · Sem código do produto no faturamento: <b>{{ detail.summary.get('technical_key_missing_product_code', 0) }}</b> · Sem tabela na venda: <b>{{ detail.summary.get('missing_no_table', 0) }}</b> · Produto não localizado: <b>{{ detail.summary.get('missing_no_product', 0) }}</b> · Produto sem preços sincronizados: <b>{{ detail.summary.get('missing_no_prices', 0) }}</b> · Tabela da venda sem correspondência no produto: <b>{{ detail.summary.get('missing_table_mismatch', 0) }}</b></div>
   </div>
   {% endif %}
   <div class="bi-fast-audit-summary">
@@ -169,7 +170,7 @@
             <div><small>Dif. real unitária</small><b class="{{ 'negative' if r.diff_unit < 0 else 'positive' }}" data-money="{{ r.diff_unit }}"></b></div>
             <div><small>Impacto no item</small><b class="{{ 'negative' if r.impact < 0 else 'positive' }}" data-money="{{ r.impact }}"></b></div>
           </div>
-          <footer><span>Vendedor: <b>{{ r.seller }}</b></span><span>Cliente: <b>{{ r.client }}</b></span><a href="/faturamento/{{ r.invoice_id }}">Abrir NF-e {{ r.invoice }} ›</a></footer>
+          <footer><span>Vendedor: <b>{{ r.seller }}</b></span><span>Cliente: <b>{{ r.client }}</b></span>{% if r.reference_match %}<span>Referência: <b>{{ 'ID tabela + código do produto' if r.reference_match == 'table_id+product_code' else 'fallback de identificação' }}</b></span>{% endif %}<a href="/faturamento/{{ r.invoice_id }}">Abrir NF-e {{ r.invoice }} ›</a></footer>
         </article>
         {% endfor %}
       </div>

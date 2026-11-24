@@ -800,3 +800,31 @@ Banco de dados: sem alteração de schema (permanece 19).
 ## V1.3.78 — Auditoria de preço e identidade financeira
 
 Corrige o cruzamento entre tabela praticada na venda e tabela do produto, adiciona diagnóstico de cobertura da auditoria, separa clientes financeiros por identidade fiscal/ERP diretamente do registro bruto e substitui o submenu horizontal por navegação responsiva. Schema 19.
+
+
+## V1.3.79 — Auditoria por chave técnica de tabela + produto
+
+- Auditoria de preço passa a priorizar o cruzamento técnico `ID da tabela praticada na venda + código do produto faturado`.
+- O preço de referência é localizado no payload do mesmo produto pelo ID da tabela (`tabela_N` ou estrutura com ID de tabela).
+- Nome da tabela, descrição, EAN e ID ERP passam a ser fallback, não a chave principal.
+- Diagnóstico exibe quantos itens foram conciliados pela chave técnica e quantos estão sem ID de tabela ou sem código de produto.
+- Schema permanece 19.
+
+
+## V1.3.80 — Itens fiscais de compra e editor de textos ampliado
+
+
+1. DANFE/NF-e de entrada
+- XML/NFStock passa a ser a fonte prioritária dos itens fiscais da compra.
+- Sincronização posterior do ERPFlex não sobrescreve itens oriundos do XML.
+- Registros antigos são reparados na leitura quando existe XML: código, descrição (xProd), NCM, CFOP, unidade, quantidade e valores são regravados a partir do XML.
+- Removidos campos ambíguos como natureza_descricao/produto da prioridade de descrição do item.
+- Quando não há XML, descrições genéricas como "Estoque" podem ser substituídas pela descrição do cadastro central do produto quando o código/EAN identifica o produto.
+
+2. Editor de interface
+- Os rótulos do BI rápido passam a ser editáveis, incluindo A RECEBER · POSIÇÃO ATUAL, FATURAMENTO · PERÍODO, COMERCIAL · PERÍODO e FLUXO LÍQUIDO · PERÍODO.
+- Também são editáveis títulos/subtítulos de painéis, cards comerciais, indicadores financeiros, abas, títulos do drawer, rótulos da auditoria e mensagens fixas.
+- Dados operacionais/dinâmicos (valores, NF-e, datas, CNPJ, produto etc.) continuam protegidos.
+- Conteúdo carregado sob demanda no drawer do BI passa a receber automaticamente as substituições e o modo Editar interface via MutationObserver.
+
+Banco de dados: sem alteração de schema (permanece 19).
