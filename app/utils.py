@@ -100,8 +100,13 @@ def fnum(value: Any) -> float:
 
 
 def normalize_date(value: Any) -> str | None:
-    s = text(value)
+    s = text(value).strip()
     if not s:
+        return None
+    # ERPFlex usa datas zeradas como sentinela de "sem baixa/sem data".
+    # Elas nunca devem ser persistidas como uma data real.
+    compact = re.sub(r"[^0-9]", "", s[:10])
+    if compact in {"00000000", "00000000000000"} or s[:10] in {"00/00/0000", "0000-00-00", "00-00-0000"}:
         return None
     # Preserve API data without inventing conversions; normalize only obvious formats.
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
@@ -110,6 +115,73 @@ def normalize_date(value: Any) -> str | None:
         except Exception:
             pass
     return s[:40]
+
+
+FINANCIAL_PAID_DATE_FIELDS = (
+    "pagamento", "data_pagamento", "dt_pagamento", "baixa", "data_baixa", "dt_baixa",
+)
+FINANCIAL_PAID_VALUE_FIELDS = (
+    "valor_pago", "valor_baixado", "valor_recebido", "valor_baixa", "valor_da_baixa",
+    "vlr_baixa", "vl_baixa", "vlr_pago", "vl_pago", "valor_liquidado", "valor_liquidacao",
+)
+FINANCIAL_BALANCE_FIELDS = (
+    "saldo_aberto", "saldo_titulo", "valor_saldo", "saldo_receber", "valor_em_aberto",
+    "valor_aberto", "saldo", "residuo", "resíduo", "valor_residuo", "valor_resíduo",
+)
+
+
+def financial_settlement_info(record: Any, title_value: Any) -> dict:
+    """Normaliza baixa financeira sem confundir a data sentinela 00/00/0000.
+
+    A API de Títulos a Receber expõe valor, valor_pago e data_baixa. Em algumas
+    listagens o valor pago pode vir ausente/zerado mesmo após a baixa. Nessa
+    situação uma data de baixa válida, sem saldo residual positivo, representa
+    título liquidado. Quando existe saldo/resíduo explícito ele tem prioridade e
+    permite reconhecer baixa parcial.
+    """
+    value = max(0.0, fnum(title_value))
+    raw_date = deep_find(record, FINANCIAL_PAID_DATE_FIELDS)
+    paid_date = normalize_date(raw_date)
+    date_observed = raw_date is not None
+
+    raw_paid = deep_find(record, FINANCIAL_PAID_VALUE_FIELDS)
+    paid_observed = raw_paid is not None
+    explicit_paid = max(0.0, fnum(raw_paid)) if paid_observed else None
+
+    raw_balance = deep_find(record, FINANCIAL_BALANCE_FIELDS)
+    balance_observed = raw_balance is not None
+    explicit_balance = max(0.0, fnum(raw_balance)) if balance_observed else None
+
+    paid_value = None
+    source = ""
+    if balance_observed and value > 0:
+        # Saldo/resíduo explícito é a fonte mais segura para distinguir parcial de liquidado.
+        paid_value = max(0.0, value - min(explicit_balance or 0.0, value))
+        source = "saldo_residual"
+    elif paid_observed and (explicit_paid or 0.0) > 0.005:
+        paid_value = explicit_paid
+        source = "valor_pago"
+    elif paid_date and value > 0:
+        # ERPFlex considera data_baixa uma baixa efetiva. Para baixa parcial, o
+        # saldo residual é gerado/retornado separadamente; sem resíduo, liquidou.
+        paid_value = value
+        source = "data_baixa"
+    elif paid_observed:
+        paid_value = explicit_paid or 0.0
+        source = "valor_pago_zero"
+    elif date_observed and not paid_date:
+        # 00/00/0000 (ou equivalente) indica título aberto/reaberto.
+        paid_value = 0.0
+        source = "data_baixa_zerada"
+
+    return {
+        "paid_date": paid_date,
+        "paid_value": paid_value,
+        "date_observed": date_observed,
+        "paid_observed": paid_observed,
+        "balance_observed": balance_observed,
+        "source": source,
+    }
 
 
 def key_norm(value: Any) -> str:

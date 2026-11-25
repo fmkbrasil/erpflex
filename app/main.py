@@ -46,7 +46,7 @@ from .integration_settings import (
 )
 from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, endereco_busca, endereco_entrega_efetivo, maps_url, raw_channel, regiao_especial, waze_url
 from .logistics_import import import_logistics_file
-from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES, financial_bank_wallet_fields
+from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES, financial_bank_wallet_fields, financial_settlement_info
 from .bi_service import build_bi, SECTIONS, DRE_GROUPS
 from .bi_fast import build_fast_bi, build_fast_detail, _financial_raw_partner_identity
 from .xml_parser import parse_nfe
@@ -65,7 +65,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.86")
+app = FastAPI(title=APP_NAME, version="1.3.88")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 UPLOADS_DIR = DATA_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -247,7 +247,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.86", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.88", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2319,9 +2319,13 @@ def _save_receivable_detail(db, title: FinancialTitle, detail: dict, bank_names:
     due = normalize_date(deep_find(detail, ("vencimento", "data_vencimento", "dt_vencimento", "dataVencimento", "dtVencimento", "data_vcto", "dt_vcto")))
     if due and not title.due_date:
         title.due_date = due
-    paid = normalize_date(deep_find(detail, ("pagamento", "data_pagamento", "dt_pagamento", "baixa", "data_baixa", "dt_baixa")))
-    if paid and not title.paid_date:
-        title.paid_date = paid
+    settlement = financial_settlement_info(detail, title.value)
+    if settlement["date_observed"]:
+        title.paid_date = settlement["paid_date"]
+    elif settlement["paid_date"]:
+        title.paid_date = settlement["paid_date"]
+    if settlement["paid_value"] is not None:
+        title.paid_value = float(settlement["paid_value"] or 0.0)
 
     # Recupera o cliente sem criar associação por aproximação. Primeiro usa os campos
     # explícitos do detalhe; depois NF-e/pedido relacionados, somente por identificadores exatos.
@@ -4157,7 +4161,7 @@ def reclassificar_pendentes(request: Request, return_region: str = Form(""), ret
                           .outerjoin(Partner, SalesInvoice.customer_id == Partner.id)
                           .where(Delivery.company_id == cid, Delivery.status.in_(["PENDENTE", "REPROGRAMADA"]))).all()
         for delivery, inv, raw, partner in rows:
-            if delivery.region and delivery.region != "A Classificar":
+            if delivery.region and delivery.region not in {"A Classificar", "Outras Regiões"}:
                 continue
             special = regiao_especial(inv.carrier, inv.carrier2)
             channel = raw_channel(raw.payload_json if raw else None)
@@ -5669,7 +5673,7 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Roteirizador V46.5 integrado à Plataforma Gestão Integrada (V1.3.86)
+# Roteirizador V46.5 integrado à Plataforma Gestão Integrada (V1.3.88)
 # ---------------------------------------------------------------------------
 
 def _plate_normalized(value: str | None) -> str:

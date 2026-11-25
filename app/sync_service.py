@@ -15,7 +15,7 @@ from .db import (
 )
 from .utils import (
     access_key_from, deep_find, digits, external_id, fnum, normalize_date, payload_hash,
-    pick, safe_json, text, key_norm, VERIFIED_BANK_NAMES, financial_bank_wallet_fields
+    pick, safe_json, text, key_norm, VERIFIED_BANK_NAMES, financial_bank_wallet_fields, financial_settlement_info
 )
 from .xml_parser import parse_nfe
 from .logistics import classificar_regiao, regiao_especial, alerta_endereco
@@ -668,44 +668,66 @@ def _address_line(address: str = "", number: str = "", complement: str = "") -> 
 
 
 def _sales_invoice_delivery(record: dict, customer: Partner | None = None) -> dict[str, str]:
-    """Endereço de entrega da NF com tolerância às chaves reais do ERPFlex.
+    """Resolve o endereço logístico usando a mesma prioridade do Roteirizador V46.5.
 
-    Quando o retorno traz ``Endereco Entrega`` e os demais componentes como
-    ``Numero``, ``Complemento``, ``Bairro``, ``Municipio``, ``Estado`` e ``CEP``
-    no mesmo nível, estes campos são tratados como um único endereço.
+    O V46.5 trabalhava com as colunas do próprio faturamento/relatório
+    (Endereço de Entrega, Número, Complemento, Bairro, Município e CEP). Aqui
+    reproduzimos essa semântica antes de procurar blocos aninhados da API.
+
+    Prioridade:
+      1. campos logísticos planos da venda/faturamento;
+      2. bloco explicitamente tipado/nomeado como endereço de entrega na API;
+      3. endereço de entrega do cadastro mestre;
+      4. endereço principal do cadastro mestre.
+
+    As fontes não são misturadas: escolhemos um conjunto de endereço inteiro,
+    evitando rua de uma origem com cidade/CEP de outra.
     """
-    out = _address_from_record(record, "delivery")
-    explicit = _case_value(record, ("endereco_entrega", "logradouro_entrega", "delivery_address"))
-    if explicit not in (None, "", [], {}):
-        out["address"] = _scalar_from(explicit) or out["address"]
-        direct = {
-            "number": ("numero_entrega", "numero"),
-            "complement": ("complemento_entrega", "complemento"),
-            "district": ("bairro_entrega", "bairro"),
-            "city": ("municipio_entrega", "cidade_entrega", "municipio", "cidade"),
-            "state": ("uf_entrega", "estado_entrega", "uf", "estado"),
-            "zip": ("cep_entrega", "cep"),
-        }
-        for field, names in direct.items():
-            if not out[field]:
-                out[field] = _scalar_from(_case_value(record, names))
+    blank = {"address": "", "number": "", "complement": "", "district": "", "city": "", "state": "", "zip": ""}
 
-    # Fallback do cadastro mestre: endereço de entrega e, por último, principal.
-    if customer is not None and not out["address"]:
-        if customer.delivery_address or customer.delivery_city or customer.delivery_zip_code:
-            out.update({
+    # 1) Mesma leitura usada no relatório do Roteirizador original. ``_case_value``
+    # normaliza espaços/acentos, portanto também reconhece "Endereco de Entrega".
+    explicit_address = _case_value(record, (
+        "endereco_de_entrega", "endereco_entrega", "logradouro_entrega", "delivery_address"
+    ))
+    flat = dict(blank)
+    flat["address"] = _scalar_from(explicit_address) if explicit_address not in (None, "", [], {}) else ""
+    flat["number"] = _scalar_from(_case_value(record, ("numero_entrega", "numero")))
+    flat["complement"] = _scalar_from(_case_value(record, ("complemento_entrega", "complemento")))
+    flat["district"] = _scalar_from(_case_value(record, ("bairro_entrega", "bairro")))
+    flat["city"] = _scalar_from(_case_value(record, ("municipio_entrega", "cidade_entrega", "municipio", "cidade")))
+    flat["state"] = _scalar_from(_case_value(record, ("uf_entrega", "estado_entrega", "uf", "estado")))
+    flat["zip"] = _scalar_from(_case_value(record, ("cep_entrega", "cep")))
+
+    # O relatório V46.5 sempre trazia esses campos no mesmo nível. Consideramos
+    # a fonte plana válida quando há endereço explícito OU informação geográfica
+    # suficiente para classificação (município/bairro/CEP).
+    if flat["address"] or flat["city"] or flat["district"] or flat["zip"]:
+        return flat
+
+    # 2) Só na ausência dos campos equivalentes ao relatório buscamos um bloco
+    # de entrega da API. Não completamos este bloco com dados de outro endereço.
+    nested = _address_from_record(record, "delivery")
+    if any(nested.values()):
+        return nested
+
+    # 3/4) Cadastro mestre apenas como contingência, sempre escolhendo uma fonte
+    # completa, sem combinar entrega e principal.
+    if customer is not None:
+        if customer.delivery_address or customer.delivery_city or customer.delivery_zip_code or customer.delivery_district:
+            return {
                 "address": customer.delivery_address or "", "number": customer.delivery_number or "",
                 "complement": customer.delivery_complement or "", "district": customer.delivery_district or "",
                 "city": customer.delivery_city or "", "state": customer.delivery_state or "",
                 "zip": customer.delivery_zip_code or "",
-            })
-        elif customer.address or customer.city or customer.zip_code:
-            out.update({
+            }
+        if customer.address or customer.city or customer.zip_code or customer.district:
+            return {
                 "address": customer.address or "", "number": customer.address_number or "",
                 "complement": customer.address_complement or "", "district": customer.district or "",
                 "city": customer.city or "", "state": customer.state or "", "zip": customer.zip_code or "",
-            })
-    return out
+            }
+    return blank
 
 
 def _enrich_customer_master(row: Partner, record: dict) -> None:
@@ -1036,9 +1058,10 @@ def _erp_sales_invoice(db, company_id: int, record: dict, raw_id: int):
     _apply_delivery_rule(db, company_id, delivery, customer)
     canal = text(deep_find(record, ("canal", "canal_venda", "canalvenda")))
     special = regiao_especial(row.carrier, row.carrier2)
-    if special and (not delivery.region or delivery.region == "A Classificar"):
+    generic_regions = {None, "", "A Classificar", "Outras Regiões"}
+    if special and delivery.region in generic_regions:
         delivery.region = special
-    elif not delivery.region or delivery.region == "A Classificar":
+    elif delivery.region in generic_regions:
         delivery.region = classificar_regiao(row.delivery_city, row.delivery_district, row.delivery_zip, canal)
 
     alert = alerta_endereco(row.carrier, row.carrier2)
@@ -1275,10 +1298,17 @@ def _financial(db, company_id: int, kind: str, record: dict, raw_id: int):
     row.document = text(deep_find(record, ("documento", "numero", "titulo", "numero_pedido", "pedido"))) or row.document
     row.issue_date = normalize_date(deep_find(record, ("emissao", "data_emissao", "data_inclusao", "dt_inclusao", "data_lancamento", "dt_lancamento", "competencia", "data"))) or row.issue_date
     row.due_date = normalize_date(deep_find(record, ("vencimento", "data_vencimento", "dt_vencimento", "dataVencimento", "dtVencimento", "data_vcto", "dt_vcto"))) or row.due_date
-    row.paid_date = normalize_date(deep_find(record, ("pagamento", "data_pagamento", "dt_pagamento", "baixa", "data_baixa", "dt_baixa"))) or row.paid_date
-    row.value = fnum(deep_find(record, ("valor", "valor_titulo", "valor_total", "total"))) or row.value
-    row.paid_value = fnum(deep_find(record, ("valor_pago", "valor_baixado", "valor_recebido"))) or row.paid_value
+    new_value = deep_find(record, ("valor", "valor_titulo", "valor_total", "total"))
+    if new_value not in (None, ""):
+        row.value = fnum(new_value)
     row.status = text(deep_find(record, ("status", "situacao"))) or row.status
+    settlement = financial_settlement_info(record, row.value)
+    if settlement["date_observed"]:
+        row.paid_date = settlement["paid_date"]
+    elif settlement["paid_date"]:
+        row.paid_date = settlement["paid_date"]
+    if settlement["paid_value"] is not None:
+        row.paid_value = float(settlement["paid_value"] or 0.0)
     fin_ref = financial_bank_wallet_fields(record)
     bank_desc = fin_ref["bank_desc"]
     bank_id = fin_ref["bank_id"]
@@ -1551,6 +1581,38 @@ def _run_erp(run_id: int, module: str, params: dict):
                     boleto_options = client.boleto_options()
                 except Exception:
                     boleto_options = None
+
+                # V1.3.88: a listagem financeira pode trazer data_baixa válida
+                # sem valor_pago preenchido. Nesses casos consulta somente o
+                # detalhe do título baixado para recuperar o valor efetivamente
+                # recebido. Se o detalhe também não trouxer o valor, a rotina de
+                # normalização usa a baixa válida (sem saldo residual) como
+                # liquidação integral.
+                enriched_receivables = []
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        enriched_receivables.append(rec)
+                        continue
+                    title_value = deep_find(rec, ("valor", "valor_titulo", "valor_total", "total"))
+                    settlement = financial_settlement_info(rec, title_value)
+                    needs_detail = bool(
+                        settlement.get("paid_date") and
+                        (not settlement.get("paid_observed") or float(settlement.get("paid_value") or 0) <= 0.005)
+                    )
+                    if needs_detail:
+                        title_id = str(deep_find(rec, ("id", "id_titulo", "id_receita", "documento", "numero")) or external_id("receber", rec) or "").strip()
+                        if title_id:
+                            try:
+                                detail = client.receivable_title_detail(title_id)
+                            except Exception:
+                                detail = None
+                            if isinstance(detail, dict) and detail:
+                                merged = dict(rec)
+                                merged.update(detail)
+                                rec = merged
+                    enriched_receivables.append(rec)
+                records = enriched_receivables
+
                 if bank_rows or boleto_options not in (None, "", [], {}):
                     with SessionLocal() as cdb:
                         for bank_rec in bank_rows:

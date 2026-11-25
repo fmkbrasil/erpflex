@@ -1278,8 +1278,11 @@ def build_bi(db, cid: int, period: str="month", date_from: str="", date_to: str=
         return round(sum(r["value"] for r in customer_rank[:n])/total_customer_sales*100,1) if total_customer_sales else 0.0
 
     # Financeiro realizado no período: data de baixa e valor baixado disponíveis no título.
-    received=[t for t in ar_all if _in_period(t.paid_date,start,end) and _money(t.paid_value)>0]
-    paid=[t for t in (ap_all+exp_all) if _in_period(t.paid_date,start,end) and _money(t.paid_value)>0]
+    def financial_cash_valid(t: FinancialTitle) -> bool:
+        raw_status = str(t.status or "").lower()
+        return "cancel" not in raw_status and "estorn" not in raw_status
+    received=[t for t in ar_all if _in_period(t.paid_date,start,end) and _money(t.paid_value)>0 and financial_cash_valid(t)]
+    paid=[t for t in (ap_all+exp_all) if _in_period(t.paid_date,start,end) and _money(t.paid_value)>0 and financial_cash_valid(t)]
     received_total=sum(_money(t.paid_value) for t in received)
     paid_total=sum(_money(t.paid_value) for t in paid)
     received_late=sum(_money(t.paid_value) for t in received if _date(t.due_date) and _date(t.paid_date) and _date(t.paid_date)>_date(t.due_date))

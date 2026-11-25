@@ -156,17 +156,23 @@ def _financial_position(db, cid: int, kind: str) -> dict:
 
 def _cash_movement(db, cid: int, start: date, end: date) -> dict:
     s, e = start.isoformat(), end.isoformat()
+    active_status = and_(
+        func.lower(func.coalesce(FinancialTitle.status, "")).notlike("%cancel%"),
+        func.lower(func.coalesce(FinancialTitle.status, "")).notlike("%estorn%"),
+    )
     received = db.scalar(select(func.coalesce(func.sum(FinancialTitle.paid_value), 0.0)).where(
         FinancialTitle.company_id == cid,
         FinancialTitle.kind == "RECEBER",
         FinancialTitle.paid_date >= s,
         FinancialTitle.paid_date <= e,
+        active_status,
     )) or 0.0
     paid = db.scalar(select(func.coalesce(func.sum(FinancialTitle.paid_value), 0.0)).where(
         FinancialTitle.company_id == cid,
         FinancialTitle.kind.in_(["PAGAR", "DESPESA"]),
         FinancialTitle.paid_date >= s,
         FinancialTitle.paid_date <= e,
+        active_status,
     )) or 0.0
     received = _money(received)
     paid = _money(paid)
@@ -344,7 +350,11 @@ def _title_rows(db, cid: int, kind: str | list[str], status: str = "open", start
     elif status == "due":
         conditions.extend([bal > 0.005, FinancialTitle.due_date >= today])
     elif status == "paid" and start and end:
-        conditions.extend([FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005])
+        conditions.extend([
+            FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005,
+            func.lower(func.coalesce(FinancialTitle.status, "")).notlike("%cancel%"),
+            func.lower(func.coalesce(FinancialTitle.status, "")).notlike("%estorn%"),
+        ])
     rows = db.execute(
         select(
             FinancialTitle.id,
@@ -2277,7 +2287,11 @@ def _financial_group_rows(db, cid: int, kind: str | list[str], status: str = "op
     elif status == "due":
         conditions.extend([bal > 0.005, FinancialTitle.due_date >= today])
     elif status == "paid" and start and end:
-        conditions.extend([FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005])
+        conditions.extend([
+            FinancialTitle.paid_date >= start.isoformat(), FinancialTitle.paid_date <= end.isoformat(), FinancialTitle.paid_value > 0.005,
+            func.lower(func.coalesce(FinancialTitle.status, "")).notlike("%cancel%"),
+            func.lower(func.coalesce(FinancialTitle.status, "")).notlike("%estorn%"),
+        ])
     rows = db.execute(select(
         FinancialTitle.id, FinancialTitle.erpflex_id, FinancialTitle.document, FinancialTitle.issue_date, FinancialTitle.due_date,
         FinancialTitle.paid_date, FinancialTitle.partner_id, FinancialTitle.raw_record_id, FinancialTitle.kind, label.label("partner"),
