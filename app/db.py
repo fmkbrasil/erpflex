@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 class SchemaState(Base):
@@ -724,6 +724,14 @@ class DeliveryRule(Base):
     priority: Mapped[str] = mapped_column(String(30), default="Normal")
     window_start: Mapped[str | None] = mapped_column(String(10), nullable=True)
     window_end: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    window_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+    mon: Mapped[bool] = mapped_column(Boolean, default=True)
+    tue: Mapped[bool] = mapped_column(Boolean, default=True)
+    wed: Mapped[bool] = mapped_column(Boolean, default=True)
+    thu: Mapped[bool] = mapped_column(Boolean, default=True)
+    fri: Mapped[bool] = mapped_column(Boolean, default=True)
+    sat: Mapped[bool] = mapped_column(Boolean, default=False)
+    sun: Mapped[bool] = mapped_column(Boolean, default=False)
     stop_minutes: Mapped[int] = mapped_column(Integer, default=10)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
@@ -796,6 +804,18 @@ class RouteCost(Base):
 
 
 
+class BreadProductionParameter(Base):
+    __tablename__ = "bread_production_parameters"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    product_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    product_name: Mapped[str] = mapped_column(String(255), default="")
+    breads_per_batch: Mapped[float] = mapped_column(Float, default=0)
+    breads_per_box: Mapped[float] = mapped_column(Float, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "product_code", "product_name", name="uq_bread_param_company_product"),)
+
+
 class LogisticsImport(Base):
     __tablename__ = "logistics_imports"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -813,17 +833,209 @@ class LogisticsImport(Base):
     __table_args__ = (Index("ix_logistics_import_company_date", "company_id", "imported_at"),)
 
 
+class Vehicle(Base):
+    __tablename__ = "vehicles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    plate: Mapped[str] = mapped_column(String(20), index=True)
+    brand: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model: Mapped[str] = mapped_column(String(160), default="")
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vehicle_type: Mapped[str] = mapped_column(String(60), default="Utilitário")
+    capacity_volumes: Mapped[int] = mapped_column(Integer, default=0)
+    current_km: Mapped[int] = mapped_column(Integer, default=0)
+    responsible_id: Mapped[int | None] = mapped_column(ForeignKey("responsibles.id", ondelete="SET NULL"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="Disponível", index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    rotation_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "plate", name="uq_vehicle_company_plate"),)
+
+
+class VehicleMaintenance(Base):
+    __tablename__ = "vehicle_maintenances"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id", ondelete="CASCADE"), index=True)
+    maintenance_type: Mapped[str] = mapped_column(String(60), default="Preventiva")
+    description: Mapped[str] = mapped_column(String(255))
+    last_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    last_km: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interval_days: Mapped[int] = mapped_column(Integer, default=0)
+    interval_km: Mapped[int] = mapped_column(Integer, default=0)
+    next_date: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    next_km: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="Programada", index=True)
+    cost: Mapped[float] = mapped_column(Float, default=0)
+    supplier: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    receipt_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DriverDocument(Base):
+    __tablename__ = "driver_documents"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    responsible_id: Mapped[int] = mapped_column(ForeignKey("responsibles.id", ondelete="CASCADE"), index=True)
+    cnh_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    cnh_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    cnh_expiry: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    toxicology_collection_date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    toxicology_expiry: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    medical_exam_expiry: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    psychological_exam_expiry: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    mopp_expiry: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "responsible_id", name="uq_driver_document_company_responsible"),)
+
+
+class DriverUserLink(Base):
+    __tablename__ = "driver_user_links"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_users.id", ondelete="CASCADE"), index=True)
+    responsible_id: Mapped[int] = mapped_column(ForeignKey("responsibles.id", ondelete="CASCADE"), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "user_id", name="uq_driver_user_company_user"),)
+
+
+class DriverDeliveryState(Base):
+    __tablename__ = "driver_delivery_states"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey("deliveries.id", ondelete="CASCADE"), index=True)
+    responsible_id: Mapped[int] = mapped_column(ForeignKey("responsibles.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="PENDENTE", index=True)
+    client_started_at: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    server_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    client_delivered_at: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    server_delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    timezone_offset_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    delivery_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("delivery_id", "responsible_id", name="uq_driver_delivery_responsible"),)
+
+
+class DeliveryOccurrencePhoto(Base):
+    __tablename__ = "delivery_occurrence_photos"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    occurrence_id: Mapped[int] = mapped_column(ForeignKey("delivery_occurrences.id", ondelete="CASCADE"), index=True)
+    file_path: Mapped[str] = mapped_column(String(500))
+    original_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DeliveryNotice(Base):
+    __tablename__ = "delivery_notices"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey("deliveries.id", ondelete="CASCADE"), index=True)
+    responsible_id: Mapped[int] = mapped_column(ForeignKey("responsibles.id", ondelete="CASCADE"), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(30), default="Normal", index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("app_users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DriverLocation(Base):
+    __tablename__ = "driver_locations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    responsible_id: Mapped[int] = mapped_column(ForeignKey("responsibles.id", ondelete="CASCADE"), index=True)
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+    accuracy_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    captured_at_client: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RotationRule(Base):
+    __tablename__ = "rotation_rules"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    plate_end: Mapped[str] = mapped_column(String(1))
+    weekday: Mapped[int] = mapped_column(Integer)
+    __table_args__ = (UniqueConstraint("company_id", "plate_end", name="uq_rotation_rule_company_plate_end"),)
+
+
+class LogisticsSetting(Base):
+    __tablename__ = "logistics_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(120))
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("company_id", "key", name="uq_logistics_setting_company_key"),)
+
+
+class LogisticsStartPoint(Base):
+    __tablename__ = "logistics_start_points"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), unique=True, index=True)
+    name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    zip_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RouteOptimization(Base):
+    __tablename__ = "route_optimizations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    route_id: Mapped[int] = mapped_column(ForeignKey("routes.id", ondelete="CASCADE"), index=True)
+    origin_type: Mapped[str] = mapped_column(String(30), default="empresa")
+    origin_description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider: Mapped[str] = mapped_column(String(120), default="Ordem local")
+    status: Mapped[str] = mapped_column(String(30), default="Sugestão", index=True)
+    distance_original_m: Mapped[int] = mapped_column(Integer, default=0)
+    duration_original_s: Mapped[int] = mapped_column(Integer, default=0)
+    distance_optimized_m: Mapped[int] = mapped_column(Integer, default=0)
+    duration_optimized_s: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class RouteOptimizationStop(Base):
+    __tablename__ = "route_optimization_stops"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    optimization_id: Mapped[int] = mapped_column(ForeignKey("route_optimizations.id", ondelete="CASCADE"), index=True)
+    delivery_id: Mapped[int] = mapped_column(ForeignKey("deliveries.id", ondelete="CASCADE"), index=True)
+    suggested_order: Mapped[int] = mapped_column(Integer, default=0)
+    distance_previous_m: Mapped[int] = mapped_column(Integer, default=0)
+    duration_previous_s: Mapped[int] = mapped_column(Integer, default=0)
+    eta: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    rule_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rule_alert: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    __table_args__ = (UniqueConstraint("optimization_id", "delivery_id", name="uq_route_optimization_delivery"),)
+
+
 DEFAULT_PERMISSIONS = {
     "Administrador": ["*"],
     "Diretoria": [
         "dashboard.view", "bi.view", "cadastros.view", "faturamento.view", "financeiro.view", "compras.view",
-        "logistica.view", "roteirizar.view", "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "ocorrencias.view", "diagnostico.view", "api.read"
+        "logistica.view", "roteirizar.view", "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "ocorrencias.view", "responsaveis.view", "frota.view", "diagnostico.view", "api.read"
     ],
     "Operacional": [
         "dashboard.view", "bi.view", "logistica.view", "logistica.edit", "roteirizar.view", "roteirizar.manage", "importar.manage",
         "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "roteiros.manage",
         "baixa.manage", "ocorrencias.view", "ocorrencias.manage", "responsaveis.view", "responsaveis.manage",
-        "regras.manage", "parametros.manage", "api.read"
+        "regras.manage", "parametros.manage", "frota.view", "frota.manage", "motorista.portal", "api.read"
     ],
     "Financeiro": [
         "dashboard.view", "bi.view", "cadastros.view", "faturamento.view",
@@ -831,8 +1043,9 @@ DEFAULT_PERMISSIONS = {
     ],
     "Consulta": [
         "dashboard.view", "bi.view", "cadastros.view", "faturamento.view", "financeiro.view", "compras.view",
-        "logistica.view", "roteirizar.view", "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "ocorrencias.view", "responsaveis.view"
+        "logistica.view", "roteirizar.view", "painel_entregas.view", "painel_gerencial.view", "relatorios.view", "roteiros.view", "ocorrencias.view", "responsaveis.view", "frota.view"
     ],
+    "Motorista": ["motorista.portal"],
 }
 
 
@@ -953,6 +1166,7 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     # V17: separação entre permissões de consulta e operação nos módulos comerciais/financeiros.
     # V18: CFOPs configuráveis que não compõem faturamento/vendas comerciais.
     # V19: regras comerciais especiais para auditoria de preço e distinção entre desconto financeiro e desconto no preço.
+    # V20: integração nativa do Roteirizador V46.5 (frota, motorista, avisos, fotos, rodízio, ponto de partida e otimização).
     # create_all cria novas tabelas sem apagar ou recriar tabelas existentes.
     Base.metadata.create_all(bind=engine)
     if "partners" in inspect(engine).get_table_names():
@@ -1002,6 +1216,18 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
                 conn.execute(sql_text("ALTER TABLE collection_customer_rules ADD COLUMN contract_discount_percent FLOAT DEFAULT 0"))
             if "contract_discount_application" not in rule_existing:
                 conn.execute(sql_text("ALTER TABLE collection_customer_rules ADD COLUMN contract_discount_application VARCHAR(20) DEFAULT 'FINANCEIRO'"))
+    if "delivery_rules" in inspect(engine).get_table_names():
+        delivery_rule_existing = {c["name"] for c in inspect(engine).get_columns("delivery_rules")}
+        rule_additions = {
+            "window_mandatory": "BOOLEAN DEFAULT 0",
+            "mon": "BOOLEAN DEFAULT 1", "tue": "BOOLEAN DEFAULT 1", "wed": "BOOLEAN DEFAULT 1",
+            "thu": "BOOLEAN DEFAULT 1", "fri": "BOOLEAN DEFAULT 1", "sat": "BOOLEAN DEFAULT 0", "sun": "BOOLEAN DEFAULT 0",
+        }
+        with engine.begin() as conn:
+            for name, sql_type in rule_additions.items():
+                if name not in delivery_rule_existing:
+                    conn.execute(sql_text(f"ALTER TABLE delivery_rules ADD COLUMN {name} {sql_type}"))
+
     # V15 preserva o acesso ao BI de perfis legados que antes dependiam de dashboard.view.
     if previous_version < 15:
         with SessionLocal() as db:

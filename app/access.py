@@ -114,6 +114,7 @@ ACCESS_LANDING_ROUTES = [
     ("painel_entregas.view", "/painel-entregas"),
     ("painel_gerencial.view", "/painel-gerencial"),
     ("relatorios.view", "/relatorios-gerenciais"),
+    ("motorista.portal", "/motorista"),
     ("cadastros.view", "/cadastros"),
     ("sync.manage", "/sincronizacao"),
     ("diagnostico.view", "/diagnostico"),

@@ -836,3 +836,8 @@ O editor visual agora prioriza o texto exato clicado dentro de cards e botões. 
 ## V1.3.82 — Banco/carteira do Contas a Receber
 
 Corrige a resolução de IDs de banco/carteira no financeiro e no BI, usando o catálogo ERPFlex antes de agrupar os títulos. A sincronização de Contas a Receber também atualiza automaticamente o catálogo de bancos/opções de boleto.
+
+## V1.3.85 — Roteirizador integrado
+O módulo **Logística** incorpora as principais funções operacionais do Roteirizador de Entregas V46.5 usando a mesma base de NF-e/clientes da Plataforma. Inclui Frota, manutenção, documentos do motorista, portal mobile, avisos/ocorrências com fotos, localização voluntária, rodízio, ponto de partida, otimização, regras de janela/dias, envio de roteiro por e-mail e Produção de Pães.
+
+A otimização externa aceita `GOOGLE_ROUTES_API_KEY` (ou `GOOGLE_MAPS_API_KEY`). Sem chave, o sistema continua disponível e gera uma sugestão local considerando prioridade, janela e regras cadastradas.

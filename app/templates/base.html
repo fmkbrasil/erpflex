@@ -12,7 +12,7 @@
   </script>
   {% endif %}
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=36">
+  <link rel="stylesheet" href="/static/style.css?v=39">
   <style>
     :root{
       --bg:{{ ui_theme.background_color }};--panel:{{ ui_theme.panel_color }};--ink:{{ ui_theme.text_color }};
@@ -23,8 +23,9 @@
   </style>
 </head>
 <body class="{% if request.url.path == '/mobile' %}page-mobile-home {% endif %}{% if request.url.path.startswith('/bi') or request.url.path.startswith('/dashboard-gerencial') %}page-bi{% endif %}">
-{% set logistics_active = request.url.path.startswith('/logistica') or request.url.path.startswith('/roteirizar') or request.url.path.startswith('/roteiros') or request.url.path.startswith('/painel-entregas') or request.url.path.startswith('/baixa-entregas') or request.url.path.startswith('/painel-gerencial') or request.url.path.startswith('/relatorios-gerenciais') or request.url.path.startswith('/ocorrencias') or request.url.path.startswith('/responsaveis') or request.url.path.startswith('/regras-entrega') or request.url.path.startswith('/parametros-logistica') or request.url.path.startswith('/custos-roteiro') or request.url.path.startswith('/importar-logistica') or request.url.path.startswith('/entregas/') %}
-{% set can_logistics = can_perm('logistica.view') or can_perm('roteirizar.view') or can_perm('roteiros.view') or can_perm('painel_entregas.view') or can_perm('baixa.manage') or can_perm('painel_gerencial.view') or can_perm('relatorios.view') or can_perm('ocorrencias.view') or can_perm('responsaveis.view') or can_perm('importar.manage') %}
+{% set logistics_active = request.url.path.startswith('/logistica') or request.url.path.startswith('/roteirizar') or request.url.path.startswith('/roteiros') or request.url.path.startswith('/painel-entregas') or request.url.path.startswith('/baixa-entregas') or request.url.path.startswith('/painel-gerencial') or request.url.path.startswith('/relatorios-gerenciais') or request.url.path.startswith('/ocorrencias') or request.url.path.startswith('/responsaveis') or request.url.path.startswith('/regras-entrega') or request.url.path.startswith('/parametros-logistica') or request.url.path.startswith('/custos-roteiro') or request.url.path.startswith('/importar-logistica') or request.url.path.startswith('/frota') or request.url.path.startswith('/motorista') or request.url.path.startswith('/rodizio-logistica') or request.url.path.startswith('/ponto-partida-logistica') or request.url.path.startswith('/otimizacao-rota') or request.url.path.startswith('/producao-paes') or request.url.path.startswith('/entregas/') %}
+{% set can_logistics_core = can_perm('logistica.view') or can_perm('roteirizar.view') or can_perm('roteiros.view') or can_perm('painel_entregas.view') or can_perm('baixa.manage') or can_perm('painel_gerencial.view') or can_perm('relatorios.view') or can_perm('ocorrencias.view') or can_perm('responsaveis.view') or can_perm('frota.view') or can_perm('importar.manage') %}
+{% set can_logistics = can_logistics_core or can_perm('motorista.portal') %}
 {% set system_active = request.url.path.startswith('/sincronizacao') or request.url.path.startswith('/integracoes') or request.url.path.startswith('/diagnostico') or request.url.path.startswith('/aparencia') or request.url.path.startswith('/administracao') %}
 <header class="topbar app-header">
   <a class="brand commercial-brand" href="{{ home_url }}" aria-label="Página inicial autorizada">
@@ -36,7 +37,7 @@
     {% if can_perm('faturamento.view') %}<a href="/faturamento" class="{% if '/faturamento' in request.url.path %}active{% endif %}"><span class="nav-icon">↗</span>Faturamento</a>{% endif %}
     {% if can_perm('financeiro.view') %}<a href="/financeiro" class="{% if '/financeiro' in request.url.path %}active{% endif %}"><span class="nav-icon">$</span>Financeiro</a>{% endif %}
     {% if can_perm('compras.view') %}<a href="/compras" class="{% if '/compras' in request.url.path %}active{% endif %}"><span class="nav-icon">▣</span>Compras</a>{% endif %}
-    {% if can_logistics %}<a href="/logistica/inicio" class="{% if logistics_active %}active{% endif %}"><span class="nav-icon">◇</span>Logística</a>{% endif %}
+    {% if can_perm('motorista.portal') and not can_logistics_core %}<a href="/motorista" class="{% if request.url.path.startswith('/motorista') %}active{% endif %}"><span class="nav-icon">🚚</span>Minhas entregas</a>{% elif can_logistics_core %}<a href="/logistica/inicio" class="{% if logistics_active %}active{% endif %}"><span class="nav-icon">◇</span>Logística</a>{% endif %}
     {% if can_perm('cadastros.view') %}<a href="/cadastros" class="{% if '/cadastros' in request.url.path %}active{% endif %}"><span class="nav-icon">◎</span>Cadastros</a>{% endif %}
     {% if can_perm('sync.manage') or can_perm('diagnostico.view') or can_perm('ui.customize') or can_perm('admin.manage') %}
     <details class="nav-dropdown {% if system_active %}active{% endif %}">
@@ -61,7 +62,7 @@
       {% if can_perm('faturamento.view') %}<a href="/faturamento">Faturamento</a>{% endif %}
       {% if can_perm('financeiro.view') %}<a href="/financeiro">Financeiro</a>{% endif %}
       {% if can_perm('compras.view') %}<a href="/compras">Compras / NF-e</a>{% endif %}
-      {% if can_logistics %}<a href="/logistica/inicio">Logística</a>{% endif %}
+      {% if can_perm('motorista.portal') and not can_perm('logistica.view') %}<a href="/motorista">Minhas entregas</a>{% elif can_logistics %}<a href="/logistica/inicio">Logística</a>{% endif %}
       {% if can_perm('cadastros.view') %}<a href="/cadastros">Cadastros</a>{% endif %}
       {% if can_perm('sync.manage') or can_perm('diagnostico.view') or can_perm('ui.customize') or can_perm('admin.manage') %}<div class="mobile-menu-divider">Sistema</div>{% endif %}
       {% if can_perm('sync.manage') %}<a href="/sincronizacao">Sincronização</a><a href="/integracoes">Integrações</a>{% endif %}
@@ -77,7 +78,7 @@
   {% if can_perm('bi.view') %}<a href="/bi/visao-geral" class="{% if request.url.path.startswith('/bi') %}active{% endif %}"><b>▦</b><span>BI</span></a>{% endif %}
   {% if can_perm('faturamento.view') %}<a href="/faturamento" class="{% if request.url.path.startswith('/faturamento') %}active{% endif %}"><b>↗</b><span>Faturamento</span></a>{% endif %}
   {% if can_perm('financeiro.view') %}<a href="/financeiro" class="{% if request.url.path.startswith('/financeiro') %}active{% endif %}"><b>$</b><span>Financeiro</span></a>{% endif %}
-  {% if can_logistics %}<a href="/logistica/inicio" class="{% if logistics_active %}active{% endif %}"><b>◇</b><span>Logística</span></a>{% endif %}
+  {% if can_perm('motorista.portal') and not can_perm('logistica.view') %}<a href="/motorista" class="{% if request.url.path.startswith('/motorista') %}active{% endif %}"><b>🚚</b><span>Entregas</span></a>{% elif can_logistics %}<a href="/logistica/inicio" class="{% if logistics_active %}active{% endif %}"><b>◇</b><span>Logística</span></a>{% endif %}
 </nav>
 <main>
   {% if company %}
@@ -97,7 +98,7 @@
     {% endif %}
   </div>
   {% endif %}
-{% if logistics_active and can_logistics %}
+{% if logistics_active and can_logistics_core %}
   <section class="module-nav" aria-label="Menu do módulo Logística">
     <div class="module-nav-title"><a href="/logistica/inicio">Logística</a><span>Roteirização, entregas e gestão</span></div>
     <div class="module-nav-groups">
@@ -105,19 +106,19 @@
         {% if can_perm('roteirizar.view') %}<a href="/roteirizar" class="{% if request.url.path.startswith('/roteirizar') %}active{% endif %}">Roteirizar</a>{% endif %}
         {% if can_perm('roteiros.view') %}<a href="/roteiros" class="{% if request.url.path.startswith('/roteiros') %}active{% endif %}">Roteiros</a>{% endif %}
         {% if can_perm('painel_entregas.view') %}<a href="/painel-entregas" class="{% if request.url.path.startswith('/painel-entregas') %}active{% endif %}">Painel de Entregas</a>{% endif %}
-        {% if can_perm('baixa.manage') %}<a href="/baixa-entregas" class="{% if request.url.path.startswith('/baixa-entregas') %}active{% endif %}">Baixa de Entregas</a>{% endif %}
+        {% if can_perm('baixa.manage') %}<a href="/baixa-entregas" class="{% if request.url.path.startswith('/baixa-entregas') %}active{% endif %}">Baixa de Entregas</a>{% endif %}{% if can_perm('motorista.portal') %}<a href="/motorista" class="{% if request.url.path.startswith('/motorista') %}active{% endif %}">Portal do Motorista</a>{% endif %}
       </div></div>
       <div class="module-nav-group"><b>Gestão</b><div>
         {% if can_perm('painel_gerencial.view') %}<a href="/painel-gerencial" class="{% if request.url.path.startswith('/painel-gerencial') %}active{% endif %}">Painel Gerencial</a>{% endif %}
         {% if can_perm('relatorios.view') %}<a href="/relatorios-gerenciais" class="{% if request.url.path.startswith('/relatorios-gerenciais') %}active{% endif %}">Relatórios</a>{% endif %}
         {% if can_perm('ocorrencias.view') %}<a href="/ocorrencias" class="{% if request.url.path.startswith('/ocorrencias') %}active{% endif %}">Ocorrências</a>{% endif %}
-        {% if can_perm('roteiros.view') %}<a href="/custos-roteiro" class="{% if request.url.path.startswith('/custos-roteiro') %}active{% endif %}">Custos / KM</a>{% endif %}
+        {% if can_perm('roteiros.view') %}<a href="/custos-roteiro" class="{% if request.url.path.startswith('/custos-roteiro') %}active{% endif %}">Custos / KM</a>{% endif %}{% if can_perm('logistica.view') %}<a href="/producao-paes" class="{% if request.url.path.startswith('/producao-paes') %}active{% endif %}">Produção</a>{% endif %}{% if can_perm('frota.view') %}<a href="/frota" class="{% if request.url.path.startswith('/frota') %}active{% endif %}">Frota</a>{% endif %}
       </div></div>
       <div class="module-nav-group"><b>Configuração</b><div>
         {% if can_perm('logistica.view') %}<a href="/logistica" class="{% if request.url.path=='/logistica' or request.url.path.startswith('/entregas/') %}active{% endif %}">Entregas / Ajustes</a>{% endif %}
         {% if can_perm('responsaveis.view') %}<a href="/responsaveis" class="{% if request.url.path.startswith('/responsaveis') %}active{% endif %}">Responsáveis</a>{% endif %}
         {% if can_perm('logistica.view') %}<a href="/regras-entrega" class="{% if request.url.path.startswith('/regras-entrega') %}active{% endif %}">Regras de Entrega</a>{% endif %}
-        {% if can_perm('logistica.view') %}<a href="/parametros-logistica" class="{% if request.url.path.startswith('/parametros-logistica') %}active{% endif %}">Parâmetros</a>{% endif %}
+        {% if can_perm('logistica.view') %}<a href="/parametros-logistica" class="{% if request.url.path.startswith('/parametros-logistica') %}active{% endif %}">Parâmetros</a>{% endif %}{% if can_perm('frota.manage') %}<a href="/rodizio-logistica" class="{% if request.url.path.startswith('/rodizio-logistica') %}active{% endif %}">Rodízio e Alertas</a>{% endif %}{% if can_perm('parametros.manage') %}<a href="/ponto-partida-logistica" class="{% if request.url.path.startswith('/ponto-partida-logistica') %}active{% endif %}">Ponto de Partida</a>{% endif %}
         {% if can_perm('importar.manage') %}<a href="/importar-logistica" class="{% if request.url.path.startswith('/importar-logistica') %}active{% endif %}">Importar / Contingência</a>{% endif %}
       </div></div>
     </div>

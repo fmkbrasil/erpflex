@@ -1,0 +1,26 @@
+Integração do Roteirizador de Entregas V46.5
+
+Princípio adotado
+A Plataforma Gestão Integrada permanece como fonte central. Não existe iframe, segundo login ou segunda importação paralela de NF-e. O módulo Logística usa SalesInvoice, Partner e Delivery já sincronizados e acrescenta as funções operacionais do roteirizador.
+
+Correspondências
+- notas_fiscais (V46.5) -> SalesInvoice + Delivery
+- responsáveis -> Responsible
+- vinculações -> DeliveryAssignment / RouteStop
+- regras de cliente -> DeliveryRule
+- roteiros -> Route / RouteStop
+- ocorrências -> DeliveryOccurrence + DeliveryOccurrencePhoto
+- custos -> RouteCost
+- frota -> Vehicle
+- manutenção -> VehicleMaintenance
+- documentos -> DriverDocument
+- usuário motorista -> DriverUserLink
+- execução mobile -> DriverDeliveryState
+- avisos -> DeliveryNotice
+- localização voluntária -> DriverLocation
+- rodízio -> RotationRule + LogisticsSetting
+- ponto de partida -> LogisticsStartPoint
+- otimização -> RouteOptimization + RouteOptimizationStop
+- parâmetros de produção -> BreadProductionParameter
+
+Funções administrativas que já existiam na Plataforma (usuários, perfis, tema, integrações, backup e auditoria de preço) continuam usando a implementação central da Plataforma, evitando duplicidade.

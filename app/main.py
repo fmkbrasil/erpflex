@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import io
+import html
 import json
+import math
+import unicodedata
 import os
 import re
+import shutil
 import smtplib
 import ssl
 import threading
@@ -25,10 +29,11 @@ from openpyxl.utils import get_column_letter
 from starlette.middleware.sessions import SessionMiddleware
 
 from .connectors import ERPFlexClient, NFStockClient
+from .config import DATA_DIR
 from .db import (
-    AccessProfile, AppUser, AuditLog, BoxType, Branch, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, CommercialPriceRule, Delivery, DeliveryAssignment, DeliveryMovement,
-    DeliveryOccurrence, DeliveryRule, DreExpenseMapping, FinancialTitle, LogisticsImport, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, SalesCfopExclusion, SalesInvoiceItem,
-    Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat,
+    AccessProfile, AppUser, AuditLog, BoxType, Branch, BreadProductionParameter, Company, CollectionAutomationConfig, CollectionCustomerRule, CollectionSendLog, CommercialPriceRule, Delivery, DeliveryAssignment, DeliveryMovement,
+    DeliveryOccurrence, DeliveryOccurrencePhoto, DeliveryNotice, DeliveryRule, DriverDeliveryState, DriverDocument, DriverLocation, DriverUserLink, DreExpenseMapping, FinancialTitle, LogisticsImport, LogisticsSetting, LogisticsStartPoint, Partner, Product, ProfilePermission, PurchaseInvoice, PurchaseItem, RawRecord, RotationRule, RouteOptimization, RouteOptimizationStop, SalesCfopExclusion, SalesInvoiceItem,
+    Region, Responsible, Route, RouteCost, RouteStop, SalesInvoice, SalesOrder, SessionLocal, SyncAutomationConfig, SyncAutomationModule, SyncProgress, SyncRun, SyncWorkerHeartbeat, Vehicle, VehicleMaintenance,
     UserBranchAccess, UserCompanyAccess, UserViewPreference, UIThemeSetting, UILabelOverride, create_sqlite_backup, database_status, init_db
 )
 from .access import access_context, add_audit, auth_configured, can, current_user, first_allowed_path
@@ -43,7 +48,7 @@ from .logistics import alerta_endereco, classificar_regiao, cliente_exibicao, en
 from .logistics_import import import_logistics_file
 from .utils import deep_find, fnum, text, access_key_from, normalize_date, payload_hash, safe_json, VERIFIED_BANK_NAMES, financial_bank_wallet_fields
 from .bi_service import build_bi, SECTIONS, DRE_GROUPS
-from .bi_fast import build_fast_bi, build_fast_detail
+from .bi_fast import build_fast_bi, build_fast_detail, _financial_raw_partner_identity
 from .xml_parser import parse_nfe
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -60,8 +65,11 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.83")
+app = FastAPI(title=APP_NAME, version="1.3.85")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+UPLOADS_DIR = DATA_DIR / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["cliente_exibicao"] = cliente_exibicao
 templates.env.globals["endereco_busca"] = endereco_busca
@@ -145,7 +153,10 @@ def required_permission(method: str, path: str) -> str | None:
         ("/financeiro", "financeiro.manage" if method != "GET" else "financeiro.view"),
         ("/compras", "compras.manage" if method != "GET" else "compras.view"),
         ("/importar-logistica", "importar.manage"),
+        ("/producao-paes/parametros", "parametros.manage" if method != "GET" else "logistica.view"),
+        ("/producao-paes", "logistica.view"),
         ("/roteirizar", "roteirizar.manage" if method != "GET" else "roteirizar.view"),
+        ("/painel-entregas/aviso", "ocorrencias.manage"),
         ("/painel-entregas", "painel_entregas.view"),
         ("/painel-gerencial", "painel_gerencial.view"),
         ("/relatorios-gerenciais", "relatorios.view"),
@@ -158,6 +169,11 @@ def required_permission(method: str, path: str) -> str | None:
         ("/regras-entrega", "regras.manage" if method != "GET" else "logistica.view"),
         ("/parametros-logistica", "parametros.manage" if method != "GET" else "logistica.view"),
         ("/custos-roteiro", "roteiros.manage" if method != "GET" else "roteiros.view"),
+        ("/frota", "frota.manage" if method != "GET" else "frota.view"),
+        ("/motorista", "motorista.portal"),
+        ("/rodizio-logistica", "frota.manage" if method != "GET" else "frota.view"),
+        ("/ponto-partida-logistica", "parametros.manage" if method != "GET" else "logistica.view"),
+        ("/otimizacao-rota", "roteiros.manage" if method != "GET" else "roteiros.view"),
         ("/diagnostico", "diagnostico.view"),
         ("/api/v1/", "api.read"),
         ("/api/sync/", "sync.manage"),
@@ -231,7 +247,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.83", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.85", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -848,6 +864,29 @@ def _smtp_send_boleto(settings: dict, recipient: str, subject: str, body: str, b
     msg.add_attachment(boleto_html.encode("utf-8"), maintype="text", subtype="html", filename=filename)
     if xml_text:
         msg.add_attachment(xml_text.encode("utf-8"), maintype="application", subtype="xml", filename=(xml_filename or "nfe.xml"))
+    server = _smtp_connect(settings)
+    try:
+        server.send_message(msg)
+    finally:
+        try: server.quit()
+        except Exception: server.close()
+
+
+def _smtp_send_notice(settings: dict, recipient: str, subject: str, body: str, html_body: str = "") -> None:
+    """Envia aviso/cobrança sem exigir boleto bancário.
+
+    A cobrança manual precisa funcionar também para clientes por carteira, contrato ou
+    títulos sem banco. Boleto e XML continuam sendo ações independentes no Financeiro.
+    """
+    msg = EmailMessage()
+    from_email = settings.get("from_email") or settings.get("username") or ""
+    from_name = settings.get("from_name") or ""
+    msg["From"] = formataddr((from_name, from_email)) if from_name else from_email
+    msg["To"] = recipient
+    msg["Subject"] = subject
+    msg.set_content(body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
     server = _smtp_connect(settings)
     try:
         server.send_message(msg)
@@ -2951,6 +2990,229 @@ def _linked_invoice_for_title(db, cid: int, title: FinancialTitle):
     return None, None
 
 
+
+
+def _manual_collection_groups(db, cid: int, scope: str = "all", days: int = 30, q: str = "") -> list[dict]:
+    """Agrupa títulos em aberto por identidade fiscal/ERP do cliente para cobrança manual."""
+    today = date.today()
+    horizon = today + timedelta(days=max(1, min(int(days or 30), 3650)))
+    rows = db.execute(select(FinancialTitle, Partner).outerjoin(
+        Partner, FinancialTitle.partner_id == Partner.id
+    ).where(
+        FinancialTitle.company_id == cid, FinancialTitle.kind == "RECEBER",
+        (FinancialTitle.value - FinancialTitle.paid_value) > 0.005,
+    ).order_by(FinancialTitle.due_date, FinancialTitle.id)).all()
+    bank_names, wallet_names = _finance_maps(db, cid)
+    contract_map = _collection_contract_map(db, cid, [t.partner_id for t, _ in rows if t.partner_id])
+    grouped: dict[str, dict] = {}
+    search = (q or "").strip().lower()
+    for title, partner in rows:
+        due = _date_from_text(title.due_date)
+        if not due:
+            continue
+        overdue = due < today
+        upcoming = due >= today
+        if scope == "overdue" and not overdue:
+            continue
+        if scope == "upcoming" and (not upcoming or due > horizon):
+            continue
+        if scope == "all" and upcoming and due > horizon:
+            continue
+        payload = _title_payload(db, title) or {}
+        fallback = {
+            "partner": (partner.trade_name or partner.name) if partner else "Sem cadastro",
+            "partner_cnpj": partner.cnpj_cpf if partner else "",
+            "partner_erpflex_id": partner.erpflex_id if partner else "",
+            "partner_id": title.partner_id,
+        }
+        ident = _financial_raw_partner_identity(payload, "RECEBER", fallback)
+        display = _financial_display(db, title, partner, bank_names, wallet_names)
+        doc = display.get("title_number") or title.document or title.erpflex_id or "—"
+        nf = display.get("nf_number") or ""
+        balance = max(0.0, float(title.value or 0) - float(title.paid_value or 0))
+        haystack = " ".join([ident.get("name", ""), ident.get("subtitle", ""), doc, nf]).lower()
+        if search and search not in haystack:
+            continue
+        group = grouped.setdefault(ident["key"], {
+            "key": ident["key"], "name": ident["name"], "subtitle": ident.get("subtitle", ""),
+            "partner_id": title.partner_id, "titles": [], "total": 0.0, "overdue_total": 0.0,
+            "upcoming_total": 0.0, "overdue_count": 0, "upcoming_count": 0,
+            "contract": False, "local_email": "",
+        })
+        if not group["local_email"]:
+            group["local_email"] = _customer_email_for_title(db, cid, title, None)
+        group["contract"] = bool(group["contract"] or contract_map.get(title.partner_id, False))
+        days_delta = (today - due).days if overdue else (due - today).days
+        group["titles"].append({
+            "id": title.id, "document": doc, "nf": nf, "issue": display.get("issue_date") or "—",
+            "due": title.due_date or "—", "balance": balance, "overdue": overdue,
+            "status": (f"Vencido há {days_delta} dia(s)" if overdue else ("Vence hoje" if days_delta == 0 else f"Vence em {days_delta} dia(s)")),
+        })
+        group["total"] += balance
+        if overdue:
+            group["overdue_total"] += balance; group["overdue_count"] += 1
+        else:
+            group["upcoming_total"] += balance; group["upcoming_count"] += 1
+    result = list(grouped.values())
+    for g in result:
+        g["title_ids_csv"] = ",".join(str(t["id"]) for t in g["titles"])
+    result.sort(key=lambda g: (0 if g["overdue_count"] else 1, -g["overdue_total"], -g["upcoming_total"], g["name"].lower()))
+    return result
+
+
+def _br_money(value: float) -> str:
+    raw = f"{float(value or 0):,.2f}"
+    return raw.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _collection_notice_content(company: Company, group: dict, recipient: str) -> tuple[str, str, str, str]:
+    """Monta assunto e corpo consolidados para um cliente, sem exigir boleto."""
+    overdue = [t for t in group["titles"] if t["overdue"]]
+    upcoming = [t for t in group["titles"] if not t["overdue"]]
+    client = group.get("name") or "Cliente"
+    if overdue and upcoming:
+        subject = f"Posição de títulos em aberto - {client}"
+        intro = "Segue abaixo a posição dos títulos vencidos e próximos do vencimento."
+        trigger = "MANUAL_MISTO"
+    elif overdue:
+        subject = f"Cobrança de títulos vencidos - {client}"
+        intro = "Identificamos os títulos abaixo vencidos e ainda em aberto em nosso sistema."
+        trigger = "MANUAL_COBRANCA"
+    else:
+        subject = f"Aviso de vencimento - {client}"
+        intro = "Segue aviso dos títulos abaixo com vencimento próximo."
+        trigger = "MANUAL_AVISO"
+
+    lines = ["Prezados,", "", intro, ""]
+    html_rows = []
+    for t in group["titles"]:
+        nf = f" · NF-e {t['nf']}" if t.get("nf") else ""
+        lines.append(f"- Título {t['document']}{nf} · Vencimento {t['due']} · Saldo R$ {_br_money(t['balance'])}")
+        html_rows.append(
+            "<tr><td style='padding:7px;border-bottom:1px solid #e6e9ef'>" + str(t["document"]) +
+            "</td><td style='padding:7px;border-bottom:1px solid #e6e9ef'>" + (str(t.get("nf") or "—")) +
+            "</td><td style='padding:7px;border-bottom:1px solid #e6e9ef'>" + str(t["due"]) +
+            "</td><td style='padding:7px;border-bottom:1px solid #e6e9ef;text-align:right'>R$ " + _br_money(t['balance']) + "</td></tr>"
+        )
+    lines += ["", f"Total em aberto desta comunicação: R$ {_br_money(group['total'])}", "", "Caso o pagamento já tenha sido realizado, por favor desconsidere esta mensagem ou nos envie o comprovante.", "", "Atenciosamente,", company.trade_name or company.name]
+    body = "\n".join(lines)
+    html = (
+        "<div style='font-family:Arial,sans-serif;color:#18304f;line-height:1.45'>"
+        "<p>Prezados,</p><p>" + intro + "</p>"
+        "<table style='width:100%;border-collapse:collapse;font-size:13px'><thead><tr>"
+        "<th style='text-align:left;padding:7px;border-bottom:2px solid #d5dce8'>Título</th>"
+        "<th style='text-align:left;padding:7px;border-bottom:2px solid #d5dce8'>NF-e</th>"
+        "<th style='text-align:left;padding:7px;border-bottom:2px solid #d5dce8'>Vencimento</th>"
+        "<th style='text-align:right;padding:7px;border-bottom:2px solid #d5dce8'>Saldo</th></tr></thead><tbody>" +
+        "".join(html_rows) + "</tbody></table>"
+        "<p><b>Total em aberto desta comunicação: R$ " + _br_money(group['total']) + "</b></p>"
+        "<p>Caso o pagamento já tenha sido realizado, por favor desconsidere esta mensagem ou nos envie o comprovante.</p>"
+        "<p>Atenciosamente,<br><b>" + str(company.trade_name or company.name) + "</b></p></div>"
+    )
+    return subject, body, html, trigger
+
+
+@app.get("/financeiro/cobrancas", response_class=HTMLResponse)
+def financeiro_cobrancas(request: Request, scope: str = "all", days: int = 30, q: str = "", sent: int = 0, failed: int = 0, clients: int = 0):
+    scope = scope if scope in {"all", "overdue", "upcoming"} else "all"
+    days = max(1, min(int(days or 30), 3650))
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        groups = _manual_collection_groups(db, cid, scope, days, q)
+        smtp = get_smtp_settings(db, cid)
+        totals = {
+            "clients": len(groups),
+            "titles": sum(len(g["titles"]) for g in groups),
+            "overdue": sum(g["overdue_count"] for g in groups),
+            "upcoming": sum(g["upcoming_count"] for g in groups),
+            "value": sum(g["total"] for g in groups),
+        }
+    return render(request, "financeiro_cobrancas.html", company=company, groups=groups, scope=scope, days=days, q=q,
+                  totals=totals, smtp=smtp, sent=sent, failed=failed, sent_clients=clients)
+
+
+@app.post("/financeiro/cobrancas/preview", response_class=HTMLResponse)
+def financeiro_cobrancas_preview(request: Request, client_keys: list[str] = Form([]), scope: str = Form("all"), days: int = Form(30), q: str = Form("")):
+    if not client_keys:
+        return RedirectResponse(f"/financeiro/cobrancas?scope={quote_plus(scope)}&days={int(days or 30)}&q={quote_plus(q)}", status_code=303)
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        wanted = set(client_keys)
+        groups = [g for g in _manual_collection_groups(db, cid, scope, days, q) if g["key"] in wanted]
+        smtp = get_smtp_settings(db, cid)
+        settings = get_erpflex_settings(db, cid)
+        with ERPFlexClient(settings) as client:
+            for g in groups:
+                first = g["titles"][0] if g["titles"] else None
+                title = db.get(FinancialTitle, first["id"]) if first else None
+                recipient = g.get("local_email") or ""
+                if title and not recipient:
+                    recipient = _customer_email_for_title(db, cid, title, client)
+                g["recipient"] = recipient
+                subject, body, _html, trigger = _collection_notice_content(company, g, recipient)
+                g["subject"] = subject; g["body"] = body; g["trigger"] = trigger
+            db.commit()
+    return render(request, "financeiro_cobrancas_preview.html", company=company, groups=groups, smtp=smtp, scope=scope, days=days, q=q)
+
+
+@app.post("/financeiro/cobrancas/enviar")
+async def financeiro_cobrancas_enviar(request: Request):
+    form = await request.form()
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        smtp = get_smtp_settings(db, cid)
+        if not smtp.get("active") or not smtp.get("host") or not smtp.get("from_email"):
+            return RedirectResponse("/financeiro/cobrancas?failed=1", status_code=303)
+        sent = failed = sent_clients = 0
+        indices = sorted({k.split("_", 1)[1] for k in form.keys() if k.startswith("ids_")})
+        for idx in indices:
+            ids_raw = str(form.get(f"ids_{idx}") or "")
+            recipient = str(form.get(f"recipient_{idx}") or "").strip()
+            title_ids = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()]
+            if not title_ids:
+                continue
+            titles = db.scalars(select(FinancialTitle).where(
+                FinancialTitle.company_id == cid, FinancialTitle.kind == "RECEBER", FinancialTitle.id.in_(title_ids)
+            ).order_by(FinancialTitle.due_date, FinancialTitle.id)).all()
+            if not titles or not recipient or "@" not in recipient:
+                failed += 1
+                for t in titles:
+                    db.add(CollectionSendLog(company_id=cid, financial_title_id=t.id, recipient=recipient or None, trigger_type="MANUAL", status="ERRO", message="E-mail do cliente ausente ou inválido."))
+                db.commit()
+                continue
+            # Recria um grupo somente com os títulos confirmados na prévia.
+            rows = []
+            for title in titles:
+                partner = db.get(Partner, title.partner_id) if title.partner_id else None
+                display = _financial_display(db, title, partner)
+                due = _date_from_text(title.due_date)
+                overdue = bool(due and due < date.today())
+                rows.append({
+                    "id": title.id, "document": display.get("title_number") or title.document or title.erpflex_id,
+                    "nf": display.get("nf_number") or "", "due": title.due_date or "—",
+                    "balance": max(0.0, float(title.value or 0)-float(title.paid_value or 0)), "overdue": overdue,
+                })
+            partner = db.get(Partner, titles[0].partner_id) if titles[0].partner_id else None
+            payload = _title_payload(db, titles[0]) or {}
+            fallback = {"partner": (partner.trade_name or partner.name) if partner else "Cliente", "partner_cnpj": partner.cnpj_cpf if partner else "", "partner_erpflex_id": partner.erpflex_id if partner else "", "partner_id": titles[0].partner_id}
+            ident = _financial_raw_partner_identity(payload, "RECEBER", fallback)
+            group = {"name": ident["name"], "titles": rows, "total": sum(r["balance"] for r in rows)}
+            subject, body, html, trigger = _collection_notice_content(company, group, recipient)
+            try:
+                _smtp_send_notice(smtp, recipient, subject, body, html)
+                ac = access_context(db, request)
+                add_audit(db, ac, "COBRANCA_EMAIL_MANUAL", "partner", titles[0].partner_id, f"{len(titles)} título(s); destinatário {recipient}; tipo {trigger}")
+                for t in titles:
+                    db.add(CollectionSendLog(company_id=cid, financial_title_id=t.id, recipient=recipient, trigger_type=trigger, status="ENVIADO", message=subject))
+                db.commit(); sent += len(titles); sent_clients += 1
+            except Exception as exc:
+                db.rollback()
+                for t in titles:
+                    db.add(CollectionSendLog(company_id=cid, financial_title_id=t.id, recipient=recipient, trigger_type=trigger, status="ERRO", message=str(exc)[:1000]))
+                db.commit(); failed += 1
+        return RedirectResponse(f"/financeiro/cobrancas?sent={sent}&failed={failed}&clients={sent_clients}", status_code=303)
+
+
 @app.get("/financeiro/cobranca/configuracao", response_class=HTMLResponse)
 def cobranca_configuracao(request: Request, saved: int = 0, auto_sent: int = 0, auto_failed: int = 0, q: str = ""):
     with SessionLocal() as db:
@@ -3931,6 +4193,8 @@ def criar_roteiro_selecionado(
         resp = db.get(Responsible, responsible_id)
         if not resp or resp.company_id != cid or not resp.active:
             return _roteirizar_redirect("selecione-motorista", return_region, return_q, return_operational_date, bool(return_undated))
+        if resp.kind in {"Motorista Interno", "Motorista Externo"} and _driver_document_status(db, cid, resp.id).get("block"):
+            return _roteirizar_redirect("documento-vencido", return_region, return_q, return_operational_date, bool(return_undated))
         active_ids = set(db.scalars(select(RouteStop.delivery_id).join(Route, RouteStop.route_id == Route.id)
                                     .where(Route.company_id == cid, Route.status.in_(["PLANEJADO", "EM ROTA"]))).all())
         candidates = db.execute(select(Delivery, SalesInvoice, Partner)
@@ -4027,12 +4291,19 @@ def entrega_detalhe(request: Request, delivery_id: int):
         delivery, invoice, partner, assignment, responsible = row
         movements = db.scalars(select(DeliveryMovement).where(DeliveryMovement.delivery_id == delivery.id).order_by(DeliveryMovement.id.desc()).limit(100)).all()
         occurrences = db.scalars(select(DeliveryOccurrence).where(DeliveryOccurrence.delivery_id == delivery.id).order_by(DeliveryOccurrence.id.desc()).limit(100)).all()
+        occurrence_ids = [o.id for o in occurrences]
+        photos_by_occurrence = {}
+        if occurrence_ids:
+            for photo in db.scalars(select(DeliveryOccurrencePhoto).where(DeliveryOccurrencePhoto.occurrence_id.in_(occurrence_ids)).order_by(DeliveryOccurrencePhoto.id)).all():
+                photos_by_occurrence.setdefault(photo.occurrence_id, []).append(photo)
+        notices = db.scalars(select(DeliveryNotice).where(DeliveryNotice.company_id == cid, DeliveryNotice.delivery_id == delivery.id).order_by(DeliveryNotice.id.desc()).limit(100)).all()
         routes = db.execute(select(Route, RouteStop, Responsible)
                             .join(RouteStop, RouteStop.route_id == Route.id)
                             .join(Responsible, Route.responsible_id == Responsible.id)
                             .where(RouteStop.delivery_id == delivery.id).order_by(Route.id.desc())).all()
     return render(request, "entrega_detalhe.html", company=company, delivery=delivery, invoice=invoice, partner=partner,
-                  assignment=assignment, responsible=responsible, movements=movements, occurrences=occurrences, routes=routes)
+                  assignment=assignment, responsible=responsible, movements=movements, occurrences=occurrences, routes=routes,
+                  photos_by_occurrence=photos_by_occurrence, notices=notices)
 
 
 def _dashboard_aggregates(rows):
@@ -4260,7 +4531,16 @@ def responsaveis(request: Request):
     with SessionLocal() as db:
         cid, company = company_context(db, request)
         rows = db.scalars(select(Responsible).where(Responsible.company_id == cid).order_by(Responsible.active.desc(), Responsible.name)).all()
-    return render(request, "responsaveis.html", company=company, rows=rows)
+        users = db.scalars(select(AppUser).join(UserCompanyAccess, UserCompanyAccess.user_id == AppUser.id).where(AppUser.active.is_(True), UserCompanyAccess.company_id == cid, UserCompanyAccess.active.is_(True)).distinct().order_by(AppUser.name, AppUser.username)).all()
+        links = db.execute(select(DriverUserLink, AppUser).join(AppUser, DriverUserLink.user_id == AppUser.id).where(DriverUserLink.company_id == cid, DriverUserLink.active.is_(True))).all()
+        linked_user_by_resp = {link.responsible_id: user for link, user in links}
+        doc_status = {r.id: _driver_document_status(db, cid, r.id) for r in rows if r.kind in {"Motorista Interno", "Motorista Externo"}}
+        vehicle_by_resp = {v.responsible_id: v for v in db.scalars(select(Vehicle).where(Vehicle.company_id == cid, Vehicle.active.is_(True), Vehicle.responsible_id.is_not(None))).all()}
+        location_by_resp = {}
+        for r in rows:
+            loc = db.scalar(select(DriverLocation).where(DriverLocation.company_id == cid, DriverLocation.responsible_id == r.id).order_by(DriverLocation.received_at.desc()).limit(1))
+            if loc: location_by_resp[r.id] = loc
+    return render(request, "responsaveis.html", company=company, rows=rows, users=users, linked_user_by_resp=linked_user_by_resp, doc_status=doc_status, vehicle_by_resp=vehicle_by_resp, location_by_resp=location_by_resp)
 
 
 @app.post("/responsaveis")
@@ -4356,7 +4636,9 @@ def regras_entrega(request: Request):
 @app.post("/regras-entrega")
 def criar_regra_entrega(request: Request, customer_cnpj: str = Form(""), customer_name: str = Form(""), region: str = Form(""),
                         responsible_id: int = Form(0), box_type: str = Form(""), priority: str = Form("Normal"),
-                        window_start: str = Form(""), window_end: str = Form(""), stop_minutes: int = Form(10), notes: str = Form("")):
+                        window_start: str = Form(""), window_end: str = Form(""), window_mandatory: str = Form("0"),
+                        stop_minutes: int = Form(10), mon: str = Form("0"), tue: str = Form("0"), wed: str = Form("0"),
+                        thu: str = Form("0"), fri: str = Form("0"), sat: str = Form("0"), sun: str = Form("0"), notes: str = Form("")):
     cnpj = "".join(ch for ch in customer_cnpj if ch.isdigit()) or None
     name = customer_name.strip() or None
     if not cnpj and not name:
@@ -4378,7 +4660,11 @@ def criar_regra_entrega(request: Request, customer_cnpj: str = Form(""), custome
         rule.priority = priority.strip() or "Normal"
         rule.window_start = window_start.strip() or None
         rule.window_end = window_end.strip() or None
+        rule.window_mandatory = window_mandatory == "1"
         rule.stop_minutes = max(0, stop_minutes or 0)
+        rule.mon, rule.tue, rule.wed, rule.thu, rule.fri, rule.sat, rule.sun = [x == "1" for x in (mon, tue, wed, thu, fri, sat, sun)]
+        if not any((rule.mon, rule.tue, rule.wed, rule.thu, rule.fri, rule.sat, rule.sun)):
+            rule.mon = rule.tue = rule.wed = rule.thu = rule.fri = True
         rule.notes = notes.strip() or None
         rule.active = True
         db.commit()
@@ -4477,6 +4763,9 @@ def trocar_motorista_lote(
         if not target_resp or target_resp.company_id != cid or not target_resp.active:
             sep = "&" if "?" in return_base else "?"
             return RedirectResponse(f"{return_base}{sep}msg=selecione-motorista", status_code=303)
+        if target_resp.kind in {"Motorista Interno", "Motorista Externo"} and _driver_document_status(db, cid, target_resp.id).get("block"):
+            sep = "&" if "?" in return_base else "?"
+            return RedirectResponse(f"{return_base}{sep}msg=documento-vencido", status_code=303)
 
         rows = db.execute(
             select(RouteStop, Route, Delivery)
@@ -4607,8 +4896,84 @@ def roteiro_detalhe(request: Request, route_id: int):
         total_value = sum((inv.total or 0) for _, _, inv, _ in rows)
         total_volumes = sum((d.volumes or inv.volumes or 0) for _, d, inv, _ in rows)
         responsibles = db.scalars(select(Responsible).where(Responsible.company_id == cid, Responsible.active.is_(True)).order_by(Responsible.name)).all()
+        driver_email = ""
+        if resp:
+            link = db.scalar(select(DriverUserLink).where(
+                DriverUserLink.company_id == cid, DriverUserLink.responsible_id == resp.id, DriverUserLink.active.is_(True)
+            ).order_by(DriverUserLink.id.desc()).limit(1))
+            if link:
+                linked_user = db.get(AppUser, link.user_id)
+                driver_email = (linked_user.email or "").strip() if linked_user else ""
+        smtp = get_smtp_settings(db, cid)
     return render(request, "roteiro_detalhe.html", company=company, route=route, responsible=resp, rows=rows,
-                  cost=cost, total_value=total_value, total_volumes=total_volumes, responsibles=responsibles)
+                  cost=cost, total_value=total_value, total_volumes=total_volumes, responsibles=responsibles,
+                  driver_email=driver_email, smtp=smtp)
+
+
+@app.post("/roteiros/{route_id}/enviar-email")
+def enviar_roteiro_email(request: Request, route_id: int, recipient: str = Form(...)):
+    recipient = (recipient or "").strip()
+    if not recipient or "@" not in recipient:
+        return RedirectResponse(f"/roteiros/{route_id}?msg=email-invalido", status_code=303)
+    with SessionLocal() as db:
+        cid, company = company_context(db, request)
+        route = db.get(Route, route_id)
+        if not route or route.company_id != cid:
+            return HTMLResponse("Roteiro não encontrado", status_code=404)
+        smtp = get_smtp_settings(db, cid)
+        if not smtp.get("active") or not smtp.get("host") or not smtp.get("from_email"):
+            return RedirectResponse(f"/roteiros/{route_id}?msg=smtp-inativo", status_code=303)
+        resp = db.get(Responsible, route.responsible_id)
+        rows = db.execute(select(RouteStop, Delivery, SalesInvoice, Partner)
+            .join(Delivery, RouteStop.delivery_id == Delivery.id)
+            .join(SalesInvoice, Delivery.sales_invoice_id == SalesInvoice.id)
+            .outerjoin(Partner, SalesInvoice.customer_id == Partner.id)
+            .where(RouteStop.route_id == route.id).order_by(RouteStop.stop_order)).all()
+        subject = f"Roteiro #{route.id} - {route.route_date}"
+        lines = [
+            f"Roteiro #{route.id}",
+            f"Data: {route.route_date}",
+            f"Responsável: {resp.name if resp else 'Não informado'}",
+            f"Paradas: {len(rows)}",
+            "",
+        ]
+        html_rows = []
+        for stop, delivery, inv, partner in rows:
+            eff = endereco_entrega_efetivo(inv, partner)
+            client = cliente_exibicao(partner.name if partner else "", partner.trade_name if partner else "") or "Cliente não identificado"
+            address = eff.get("address") or eff.get("query") or "—"
+            district = eff.get("district") or ""
+            city = eff.get("city") or ""
+            complement = " · ".join(x for x in (district, city) if x)
+            lines.append(f"{stop.stop_order}. NF-e {inv.number or '—'} - {client} - {address}{(' - ' + complement) if complement else ''}")
+            html_rows.append(
+                "<tr>"
+                f"<td>{stop.stop_order}</td><td>{html.escape(str(inv.number or '—'))}</td>"
+                f"<td>{html.escape(client)}</td><td>{html.escape(address)}</td>"
+                f"<td>{html.escape(delivery.region or 'A Classificar')}</td>"
+                "</tr>"
+            )
+        body = "\n".join(lines)
+        html_body = (
+            f"<h2>Roteiro #{route.id}</h2><p><b>Data:</b> {html.escape(str(route.route_date))}<br>"
+            f"<b>Responsável:</b> {html.escape(resp.name if resp else 'Não informado')}<br>"
+            f"<b>Paradas:</b> {len(rows)}</p>"
+            "<table style='border-collapse:collapse;width:100%'><thead><tr>"
+            "<th style='text-align:left'>Ordem</th><th style='text-align:left'>NF-e</th><th style='text-align:left'>Cliente</th>"
+            "<th style='text-align:left'>Endereço</th><th style='text-align:left'>Região</th></tr></thead><tbody>"
+            + "".join(html_rows) + "</tbody></table>"
+        )
+        try:
+            _smtp_send_notice(smtp, recipient, subject, body, html_body)
+            ac = access_context(db, request)
+            add_audit(db, ac, "ROTEIRO_EMAIL", "route", route.id, f"Roteiro enviado para {recipient}")
+            db.commit()
+            return RedirectResponse(f"/roteiros/{route_id}?msg=email-enviado", status_code=303)
+        except Exception as exc:
+            ac = access_context(db, request)
+            add_audit(db, ac, "ROTEIRO_EMAIL_ERRO", "route", route.id, str(exc)[:500])
+            db.commit()
+            return RedirectResponse(f"/roteiros/{route_id}?msg=email-erro", status_code=303)
 
 
 @app.post("/roteiros/{route_id}/trocar-motorista")
@@ -4625,6 +4990,8 @@ def trocar_motorista_roteiro(request: Request, route_id: int, delivery_ids: list
         target_resp = db.get(Responsible, responsible_id) if responsible_id else None
         if not target_resp or target_resp.company_id != cid or not target_resp.active:
             return RedirectResponse(f"/roteiros/{route_id}?msg=selecione-motorista", status_code=303)
+        if target_resp.kind in {"Motorista Interno", "Motorista Externo"} and _driver_document_status(db, cid, target_resp.id).get("block"):
+            return RedirectResponse(f"/roteiros/{route_id}?msg=documento-vencido", status_code=303)
 
         valid_stops = db.scalars(
             select(RouteStop).where(RouteStop.route_id == route_id, RouteStop.delivery_id.in_(delivery_ids)).order_by(RouteStop.stop_order)
@@ -5299,6 +5666,670 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
     return render(request, "cadastro_detalhe.html", company=company, tipo=tipo, title=title, summary=summary, detail_sections=detail_sections, payloads=payloads, relationships=relationships)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Roteirizador V46.5 integrado à Plataforma Gestão Integrada (V1.3.85)
+# ---------------------------------------------------------------------------
+
+def _plate_normalized(value: str | None) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _plate_end(value: str | None) -> str:
+    for ch in reversed(_plate_normalized(value)):
+        if ch.isdigit():
+            return ch
+    return ""
+
+
+def _log_setting(db, cid: int, key: str, default: str = "") -> str:
+    row = db.scalar(select(LogisticsSetting).where(LogisticsSetting.company_id == cid, LogisticsSetting.key == key).limit(1))
+    return str(row.value) if row and row.value is not None else default
+
+
+def _set_log_setting(db, cid: int, key: str, value: str | None):
+    row = db.scalar(select(LogisticsSetting).where(LogisticsSetting.company_id == cid, LogisticsSetting.key == key).limit(1))
+    if not row:
+        row = LogisticsSetting(company_id=cid, key=key, value=str(value or ""))
+        db.add(row)
+    else:
+        row.value = str(value or "")
+    return row
+
+
+def _ensure_rotation_defaults(db, cid: int):
+    defaults = {"1":0,"2":0,"3":1,"4":1,"5":2,"6":2,"7":3,"8":3,"9":4,"0":4}
+    existing = {r.plate_end for r in db.scalars(select(RotationRule).where(RotationRule.company_id == cid)).all()}
+    for final, weekday in defaults.items():
+        if final not in existing:
+            db.add(RotationRule(company_id=cid, plate_end=final, weekday=weekday))
+
+
+def _parse_date_only(value: str | None):
+    if not value:
+        return None
+    raw = str(value).strip()[:10]
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except Exception:
+            pass
+    return None
+
+
+def _rotation_info(db, cid: int, vehicle: Vehicle, ref_date: date | None = None) -> dict:
+    if not vehicle or vehicle.rotation_exempt:
+        return {"active": False, "message": "Isento de rodízio" if vehicle and vehicle.rotation_exempt else ""}
+    if _log_setting(db, cid, "rodizio_sp_ativo", "1") != "1":
+        return {"active": False, "message": ""}
+    _ensure_rotation_defaults(db, cid)
+    ref_date = ref_date or date.today()
+    final = _plate_end(vehicle.plate)
+    rule = db.scalar(select(RotationRule).where(RotationRule.company_id == cid, RotationRule.plate_end == final).limit(1)) if final else None
+    if not rule or ref_date.weekday() != int(rule.weekday):
+        return {"active": False, "message": ""}
+    days = ["segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado","domingo"]
+    start1 = _log_setting(db,cid,"rodizio_manha_inicio","07:00"); end1 = _log_setting(db,cid,"rodizio_manha_fim","10:00")
+    start2 = _log_setting(db,cid,"rodizio_tarde_inicio","17:00"); end2 = _log_setting(db,cid,"rodizio_tarde_fim","20:00")
+    return {"active": True, "message": f"Rodízio {days[ref_date.weekday()]} · placa final {final} ({start1}–{end1} e {start2}–{end2})"}
+
+
+def _maintenance_summary(db, cid: int, vehicle: Vehicle) -> dict:
+    alert_days = int(_log_setting(db,cid,"manutencao_alerta_dias","30") or 30)
+    alert_km = int(_log_setting(db,cid,"manutencao_alerta_km","1000") or 1000)
+    today = date.today(); km = int(vehicle.current_km or 0)
+    rows = db.scalars(select(VehicleMaintenance).where(VehicleMaintenance.company_id==cid, VehicleMaintenance.vehicle_id==vehicle.id, VehicleMaintenance.status!="Concluída").order_by(VehicleMaintenance.id)).all()
+    overdue=[]; near=[]
+    for m in rows:
+        nd=_parse_date_only(m.next_date); nk=int(m.next_km or 0)
+        if (nd and nd < today) or (nk and km >= nk): overdue.append(m.description)
+        elif (nd and 0 <= (nd-today).days <= alert_days) or (nk and 0 <= nk-km <= alert_km): near.append(m.description)
+    if overdue: return {"level":"overdue","message":"Manutenção vencida: "+", ".join(overdue[:2]),"count":len(overdue)}
+    if near: return {"level":"near","message":"Próxima manutenção: "+", ".join(near[:2]),"count":len(near)}
+    return {"level":"ok","message":"Manutenção em dia","count":0}
+
+
+def _driver_document_status(db, cid: int, responsible_id: int) -> dict:
+    doc = db.scalar(select(DriverDocument).where(DriverDocument.company_id==cid, DriverDocument.responsible_id==responsible_id).limit(1))
+    alert_days = int(_log_setting(db,cid,"documentos_alerta_dias","30") or 30)
+    today=date.today(); fields=[]
+    if doc:
+        fields=[("CNH",doc.cnh_expiry),("Toxicológico",doc.toxicology_expiry),("Exame médico",doc.medical_exam_expiry),("Exame psicológico",doc.psychological_exam_expiry),("MOPP",doc.mopp_expiry)]
+    overdue=[]; near=[]; missing=[]
+    for name,val in fields:
+        d=_parse_date_only(val)
+        if not val: missing.append(name)
+        elif d and d < today: overdue.append(name)
+        elif d and (d-today).days <= alert_days: near.append(name)
+    if not doc: return {"level":"missing","message":"Documentos não cadastrados","block":False,"doc":None}
+    block = _log_setting(db,cid,"bloquear_documento_vencido","0") == "1" and bool(overdue)
+    if overdue: msg="Documento vencido: "+", ".join(overdue)
+    elif near: msg="Próximo do vencimento: "+", ".join(near)
+    elif missing: msg="Cadastro incompleto: "+", ".join(missing)
+    else: msg="CNH e exames em dia"
+    return {"level":"overdue" if overdue else ("near" if near else ("missing" if missing else "ok")),"message":msg,"block":block,"doc":doc}
+
+
+def _driver_responsible(db, cid: int, user_id: int | None) -> Responsible | None:
+    if not user_id: return None
+    link = db.scalar(select(DriverUserLink).where(DriverUserLink.company_id==cid, DriverUserLink.user_id==user_id, DriverUserLink.active.is_(True)).limit(1))
+    if not link: return None
+    resp=db.get(Responsible,link.responsible_id)
+    return resp if resp and resp.company_id==cid and resp.active else None
+
+
+def _driver_delivery_allowed(db, cid: int, responsible_id: int, delivery_id: int) -> bool:
+    direct=db.scalar(select(DeliveryAssignment.id).where(DeliveryAssignment.company_id==cid, DeliveryAssignment.delivery_id==delivery_id, DeliveryAssignment.responsible_id==responsible_id).limit(1))
+    if direct: return True
+    route_link=db.scalar(select(RouteStop.id).join(Route,RouteStop.route_id==Route.id).where(Route.company_id==cid,Route.responsible_id==responsible_id,RouteStop.delivery_id==delivery_id,Route.status.in_(["PLANEJADO","EM ROTA"])).limit(1))
+    return bool(route_link)
+
+
+def _driver_state(db, cid: int, delivery_id: int, responsible_id: int) -> DriverDeliveryState:
+    row=db.scalar(select(DriverDeliveryState).where(DriverDeliveryState.company_id==cid,DriverDeliveryState.delivery_id==delivery_id,DriverDeliveryState.responsible_id==responsible_id).limit(1))
+    if not row:
+        row=DriverDeliveryState(company_id=cid,delivery_id=delivery_id,responsible_id=responsible_id,status="PENDENTE")
+        db.add(row); db.flush()
+    return row
+
+
+def _save_upload(upload: UploadFile | None, folder: Path, allowed: set[str], prefix: str) -> str | None:
+    if not upload or not upload.filename: return None
+    ext=Path(upload.filename).suffix.lower()
+    if ext not in allowed: raise ValueError("Formato de arquivo não permitido.")
+    folder.mkdir(parents=True,exist_ok=True)
+    filename=f"{prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}{ext}"
+    target=folder/filename
+    with target.open("wb") as fh:
+        shutil.copyfileobj(upload.file,fh)
+    return target.relative_to(UPLOADS_DIR).as_posix()
+
+
+
+def _bread_norm(value: str | None) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", str(value or "").upper()) if unicodedata.category(ch) != "Mn")
+
+
+def _is_bread_product(description: str | None) -> bool:
+    return "PAO" in _bread_norm(description)
+
+
+def _bread_group(description: str | None) -> str:
+    name = _bread_norm(description)
+    if "TORRADO" in name:
+        return "Pão Torrado"
+    if "FOLHA" in name:
+        return "Pão Tipo Folha"
+    return "Pão Tradicional"
+
+
+def _bread_is_box(product_code: str | None) -> bool:
+    return "P" in str(product_code or "").upper()
+
+
+def _bread_latest_date(db, cid: int) -> str:
+    rows = db.execute(
+        select(SalesInvoice.forecast_date, SalesInvoice.issue_date, SalesInvoiceItem.description)
+        .join(SalesInvoiceItem, SalesInvoiceItem.sales_invoice_id == SalesInvoice.id)
+        .where(SalesInvoice.company_id == cid)
+        .order_by(func.coalesce(SalesInvoice.forecast_date, SalesInvoice.issue_date).desc())
+        .limit(5000)
+    ).all()
+    for forecast, issue, desc in rows:
+        if _is_bread_product(desc):
+            raw = str(forecast or issue or "")
+            if raw:
+                return raw[:10]
+    return ""
+
+
+def _bread_production_rows(db, cid: int, target_date: str) -> list[dict]:
+    if not target_date:
+        return []
+    rows = db.execute(
+        select(SalesInvoiceItem, SalesInvoice, Delivery)
+        .join(SalesInvoice, SalesInvoiceItem.sales_invoice_id == SalesInvoice.id)
+        .outerjoin(Delivery, Delivery.sales_invoice_id == SalesInvoice.id)
+        .where(SalesInvoice.company_id == cid, func.substr(func.coalesce(SalesInvoice.forecast_date, SalesInvoice.issue_date), 1, 10) == target_date)
+        .order_by(SalesInvoice.number, SalesInvoiceItem.description)
+    ).all()
+    params = db.scalars(select(BreadProductionParameter).where(BreadProductionParameter.company_id == cid)).all()
+    pmap = {(str(p.product_code or "").strip(), str(p.product_name or "").strip()): p for p in params}
+    out=[]
+    for item, inv, delivery in rows:
+        if not _is_bread_product(item.description):
+            continue
+        code=str(item.product_code or item.product_id or "").strip(); name=str(item.description or "").strip(); qty=float(item.qty or 0)
+        par=pmap.get((code,name))
+        breads_per_batch=float(par.breads_per_batch or 0) if par else 0.0
+        breads_per_box=float(par.breads_per_box or 0) if par else 0.0
+        in_box=_bread_is_box(code)
+        units=qty*breads_per_box if in_box and breads_per_box>0 else qty
+        group=_bread_group(name)
+        batches=None if group=="Pão Torrado" else (math.ceil(units/breads_per_batch) if breads_per_batch>0 else 0)
+        out.append({"invoice":inv,"code":code,"product":name,"qty_informed":qty,"units":units,"group":group,"in_box":in_box,"breads_per_box":breads_per_box,"breads_per_batch":breads_per_batch,"batches":batches,"region":(delivery.region if delivery else None) or "A Classificar"})
+    return out
+
+
+def _bread_summary(rows: list[dict]) -> dict:
+    groups={"Pão Tradicional":{},"Pão Torrado":{},"Pão Tipo Folha":{}}
+    total_units=0.0; total_batches=0; invoice_ids=set()
+    for x in rows:
+        key=(x["code"],x["product"]); g=groups[x["group"]]
+        if key not in g: g[key]={**x,"units":0.0,"qty_informed":0.0,"invoice_ids":set(),"batches":None if x["group"]=="Pão Torrado" else 0}
+        d=g[key]; d["units"]+=x["units"]; d["qty_informed"]+=x["qty_informed"]; d["invoice_ids"].add(x["invoice"].id); invoice_ids.add(x["invoice"].id); total_units+=x["units"]
+    final={}; group_totals={}; group_batches={}
+    for name,g in groups.items():
+        vals=[]; gu=0.0; gb=0
+        for d in g.values():
+            if name!="Pão Torrado": d["batches"]=math.ceil(d["units"]/d["breads_per_batch"]) if d["breads_per_batch"]>0 else 0; gb+=d["batches"] or 0
+            d["qtd_nfs"]=len(d.pop("invoice_ids")); gu+=d["units"]; vals.append(d)
+        final[name]=sorted(vals,key=lambda z:z["product"]); group_totals[name]=gu; group_batches[name]=gb; total_batches+=gb
+    return {"groups":final,"group_totals":group_totals,"group_batches":group_batches,"total_units":total_units,"total_batches":total_batches,"total_nfs":len(invoice_ids)}
+
+
+@app.get("/producao-paes", response_class=HTMLResponse)
+def producao_paes_integrada(request: Request, data: str = ""):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); target=(data or _bread_latest_date(db,cid)).strip(); rows=_bread_production_rows(db,cid,target); summary=_bread_summary(rows)
+    return render(request,"producao_paes.html",company=company,data_previsao=target,**summary)
+
+
+@app.get("/producao-paes/por-regiao", response_class=HTMLResponse)
+def producao_paes_regiao_integrada(request: Request, data: str = ""):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); target=(data or _bread_latest_date(db,cid)).strip(); rows=_bread_production_rows(db,cid,target)
+    regions={}; total_units=0.0; total_batches=0
+    for x in rows:
+        r=regions.setdefault(x["region"],{"items":{},"units":0.0,"batches":0,"invoice_ids":set()}); key=(x["code"],x["product"])
+        if key not in r["items"]: r["items"][key]={**x,"units":0.0,"qty_informed":0.0,"invoice_ids":set(),"batches":None if x["group"]=="Pão Torrado" else 0}
+        d=r["items"][key]; d["units"]+=x["units"];d["qty_informed"]+=x["qty_informed"];d["invoice_ids"].add(x["invoice"].id);r["invoice_ids"].add(x["invoice"].id);r["units"]+=x["units"];total_units+=x["units"]
+    for r in regions.values():
+        vals=[]
+        for d in r["items"].values():
+            if d["group"]!="Pão Torrado":d["batches"]=math.ceil(d["units"]/d["breads_per_batch"]) if d["breads_per_batch"]>0 else 0;r["batches"]+=d["batches"] or 0;total_batches+=d["batches"] or 0
+            d["qtd_nfs"]=len(d.pop("invoice_ids"));vals.append(d)
+        r["items"]=sorted(vals,key=lambda z:z["product"]);r["qtd_nfs"]=len(r.pop("invoice_ids"))
+    return render(request,"producao_paes_regiao.html",company=company,data_previsao=target,regions=dict(sorted(regions.items())),total_units=total_units,total_batches=total_batches)
+
+
+@app.get("/producao-paes/parametros", response_class=HTMLResponse)
+def parametros_paes(request: Request):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request)
+        params=db.scalars(select(BreadProductionParameter).where(BreadProductionParameter.company_id==cid).order_by(BreadProductionParameter.product_name)).all()
+        candidates=db.execute(select(SalesInvoiceItem.product_code,SalesInvoiceItem.product_id,SalesInvoiceItem.description).join(SalesInvoice,SalesInvoiceItem.sales_invoice_id==SalesInvoice.id).where(SalesInvoice.company_id==cid).distinct().order_by(SalesInvoiceItem.description).limit(10000)).all()
+        products=[];seen=set()
+        for code,pid,desc in candidates:
+            if _is_bread_product(desc):
+                key=(str(code or pid or ""),str(desc or ""))
+                if key not in seen: seen.add(key);products.append(key)
+    return render(request,"parametros_paes.html",company=company,params=params,products=products)
+
+
+@app.post("/producao-paes/parametros")
+def salvar_parametro_paes(request: Request, product_code: str=Form(""), product_name: str=Form(...), breads_per_batch: float=Form(0), breads_per_box: float=Form(0)):
+    if not product_name.strip() or breads_per_batch<0 or breads_per_box<0:return JSONResponse({"error":"valores inválidos"},status_code=400)
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); code=product_code.strip(); name=product_name.strip(); row=db.scalar(select(BreadProductionParameter).where(BreadProductionParameter.company_id==cid,BreadProductionParameter.product_code==code,BreadProductionParameter.product_name==name).limit(1))
+        if not row: row=BreadProductionParameter(company_id=cid,product_code=code or None,product_name=name);db.add(row)
+        row.breads_per_batch=max(0,breads_per_batch);row.breads_per_box=max(0,breads_per_box);db.commit()
+    return RedirectResponse("/producao-paes/parametros",status_code=303)
+
+
+@app.get("/frota", response_class=HTMLResponse)
+def frota(request: Request):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); _ensure_rotation_defaults(db,cid)
+        vehicles=db.scalars(select(Vehicle).where(Vehicle.company_id==cid).order_by(Vehicle.active.desc(),Vehicle.status,Vehicle.plate)).all()
+        resp_map={r.id:r for r in db.scalars(select(Responsible).where(Responsible.company_id==cid)).all()}
+        cards=[]
+        for v in vehicles:
+            cards.append({"vehicle":v,"responsible":resp_map.get(v.responsible_id),"rotation":_rotation_info(db,cid,v),"maintenance":_maintenance_summary(db,cid,v)})
+        stats={"total":len(vehicles),"available":sum(1 for v in vehicles if v.active and v.status=="Disponível"),"maintenance":sum(1 for v in vehicles if v.status=="Em manutenção"),"rotation":sum(1 for c in cards if c["rotation"]["active"]),"alerts":sum(1 for c in cards if c["maintenance"]["level"] in {"near","overdue"})}
+    return render(request,"frota.html",company=company,cards=cards,stats=stats)
+
+
+@app.get("/frota/veiculos/novo", response_class=HTMLResponse)
+def novo_veiculo_page(request: Request):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request)
+        drivers=db.scalars(select(Responsible).where(Responsible.company_id==cid,Responsible.active.is_(True),Responsible.kind.in_(["Motorista Interno","Motorista Externo"])).order_by(Responsible.name)).all()
+    return render(request,"veiculo_form.html",company=company,vehicle=None,drivers=drivers)
+
+
+@app.post("/frota/veiculos/novo")
+def novo_veiculo(request: Request, plate: str=Form(...), model: str=Form(...), brand: str=Form(""), year: str=Form(""), vehicle_type: str=Form("Utilitário"), capacity_volumes: int=Form(0), current_km: int=Form(0), responsible_id: int=Form(0), status: str=Form("Disponível"), rotation_exempt: str=Form("0"), notes: str=Form("")):
+    clean=_plate_normalized(plate)
+    if not clean or not model.strip(): return JSONResponse({"error":"Informe placa e modelo"},status_code=400)
+    with SessionLocal() as db:
+        cid,_=company_context(db,request)
+        if db.scalar(select(Vehicle.id).where(Vehicle.company_id==cid,Vehicle.plate==clean).limit(1)):
+            return RedirectResponse("/frota/veiculos/novo?erro=placa",status_code=303)
+        db.add(Vehicle(company_id=cid,plate=clean,brand=brand.strip() or None,model=model.strip(),year=int(year) if str(year).strip().isdigit() else None,vehicle_type=vehicle_type,capacity_volumes=max(0,capacity_volumes),current_km=max(0,current_km),responsible_id=responsible_id or None,status=status,rotation_exempt=rotation_exempt=="1",notes=notes.strip() or None)); db.commit()
+    return RedirectResponse("/frota",status_code=303)
+
+
+@app.get("/frota/veiculos/{vehicle_id}/editar", response_class=HTMLResponse)
+def editar_veiculo_page(request: Request, vehicle_id: int):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); vehicle=db.get(Vehicle,vehicle_id)
+        if not vehicle or vehicle.company_id!=cid: return HTMLResponse("Veículo não encontrado",status_code=404)
+        drivers=db.scalars(select(Responsible).where(Responsible.company_id==cid,Responsible.active.is_(True),Responsible.kind.in_(["Motorista Interno","Motorista Externo"])).order_by(Responsible.name)).all()
+    return render(request,"veiculo_form.html",company=company,vehicle=vehicle,drivers=drivers)
+
+
+@app.post("/frota/veiculos/{vehicle_id}/editar")
+def editar_veiculo(request: Request, vehicle_id: int, plate: str=Form(...), model: str=Form(...), brand: str=Form(""), year: str=Form(""), vehicle_type: str=Form("Utilitário"), capacity_volumes: int=Form(0), current_km: int=Form(0), responsible_id: int=Form(0), status: str=Form("Disponível"), active: str=Form("1"), rotation_exempt: str=Form("0"), notes: str=Form("")):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); vehicle=db.get(Vehicle,vehicle_id)
+        if not vehicle or vehicle.company_id!=cid: return JSONResponse({"error":"não encontrado"},status_code=404)
+        vehicle.plate=_plate_normalized(plate); vehicle.brand=brand.strip() or None; vehicle.model=model.strip(); vehicle.year=int(year) if str(year).strip().isdigit() else None; vehicle.vehicle_type=vehicle_type; vehicle.capacity_volumes=max(0,capacity_volumes); vehicle.current_km=max(0,current_km); vehicle.responsible_id=responsible_id or None; vehicle.status=status; vehicle.active=active=="1"; vehicle.rotation_exempt=rotation_exempt=="1"; vehicle.notes=notes.strip() or None; db.commit()
+    return RedirectResponse("/frota",status_code=303)
+
+
+@app.post("/frota/veiculos/{vehicle_id}/km")
+def atualizar_km_veiculo(request: Request, vehicle_id: int, current_km: int=Form(...)):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); vehicle=db.get(Vehicle,vehicle_id)
+        if not vehicle or vehicle.company_id!=cid: return JSONResponse({"error":"não encontrado"},status_code=404)
+        vehicle.current_km=max(0,current_km); db.commit()
+    return RedirectResponse("/frota",status_code=303)
+
+
+@app.get("/frota/veiculos/{vehicle_id}/manutencoes", response_class=HTMLResponse)
+def manutencoes_veiculo(request: Request, vehicle_id: int):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); vehicle=db.get(Vehicle,vehicle_id)
+        if not vehicle or vehicle.company_id!=cid: return HTMLResponse("Veículo não encontrado",status_code=404)
+        responsible=db.get(Responsible,vehicle.responsible_id) if vehicle.responsible_id else None
+        rows=db.scalars(select(VehicleMaintenance).where(VehicleMaintenance.company_id==cid,VehicleMaintenance.vehicle_id==vehicle_id).order_by(VehicleMaintenance.id.desc())).all()
+        today=date.today()
+        annotated=[]
+        for m in rows:
+            nd=_parse_date_only(m.next_date); overdue=m.status!="Concluída" and ((nd and nd<today) or (m.next_km and vehicle.current_km>=m.next_km))
+            annotated.append({"row":m,"overdue":bool(overdue)})
+    return render(request,"manutencoes_veiculo.html",company=company,vehicle=vehicle,responsible=responsible,rows=annotated)
+
+
+@app.post("/frota/veiculos/{vehicle_id}/manutencoes")
+def criar_manutencao_veiculo(request: Request, vehicle_id: int, maintenance_type: str=Form("Preventiva"), description: str=Form(...), action: str=Form("programar"), last_date: str=Form(""), last_km: str=Form(""), completed_date: str=Form(""), completed_km: str=Form(""), interval_days: int=Form(0), interval_km: int=Form(0), next_date: str=Form(""), next_km: str=Form(""), cost: float=Form(0), supplier: str=Form(""), document_number: str=Form(""), notes: str=Form(""), receipt: UploadFile|None=File(None)):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); vehicle=db.get(Vehicle,vehicle_id)
+        if not vehicle or vehicle.company_id!=cid: return JSONResponse({"error":"não encontrado"},status_code=404)
+        done=action=="realizada"; base_date=(completed_date or last_date or (date.today().isoformat() if done else "")).strip(); base_km=int(completed_km or last_km or vehicle.current_km or 0) if str(completed_km or last_km or vehicle.current_km or 0).strip() else 0
+        nd=next_date.strip() or None; nk=int(next_km) if str(next_km).strip().isdigit() else None
+        d0=_parse_date_only(base_date)
+        if not nd and d0 and interval_days: nd=(d0+timedelta(days=interval_days)).isoformat()
+        if not nk and interval_km: nk=base_km+interval_km
+        path=_save_upload(receipt,UPLOADS_DIR/"manutencoes"/str(vehicle_id),{".jpg",".jpeg",".png",".webp",".pdf"},"nf")
+        row=VehicleMaintenance(company_id=cid,vehicle_id=vehicle_id,maintenance_type=maintenance_type,description=description.strip(),last_date=base_date or None,last_km=base_km or None,interval_days=max(0,interval_days),interval_km=max(0,interval_km),next_date=nd,next_km=nk,status="Concluída" if done else "Programada",cost=max(0,cost or 0),supplier=supplier.strip() or None,document_number=document_number.strip() or None,receipt_path=path,notes=notes.strip() or None,completed_at=datetime.utcnow() if done else None)
+        db.add(row)
+        if done and base_km>vehicle.current_km: vehicle.current_km=base_km
+        if done and (nd or nk): db.add(VehicleMaintenance(company_id=cid,vehicle_id=vehicle_id,maintenance_type=maintenance_type,description=description.strip(),last_date=base_date or None,last_km=base_km or None,interval_days=max(0,interval_days),interval_km=max(0,interval_km),next_date=nd,next_km=nk,status="Programada",notes="Gerada automaticamente após manutenção realizada"))
+        db.commit()
+    return RedirectResponse(f"/frota/veiculos/{vehicle_id}/manutencoes",status_code=303)
+
+
+@app.post("/frota/manutencoes/{maintenance_id}/concluir")
+def concluir_manutencao(request: Request, maintenance_id: int, completed_date: str=Form(""), completed_km: int=Form(0), cost: float=Form(0), supplier: str=Form(""), document_number: str=Form(""), notes: str=Form(""), receipt: UploadFile|None=File(None)):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); row=db.get(VehicleMaintenance,maintenance_id)
+        if not row or row.company_id!=cid: return JSONResponse({"error":"não encontrado"},status_code=404)
+        vehicle=db.get(Vehicle,row.vehicle_id); done_date=completed_date.strip() or date.today().isoformat(); km=completed_km or (vehicle.current_km if vehicle else 0)
+        row.status="Concluída"; row.last_date=done_date; row.last_km=km; row.completed_at=datetime.utcnow(); row.cost=max(0,cost or row.cost or 0); row.supplier=supplier.strip() or row.supplier; row.document_number=document_number.strip() or row.document_number; row.notes=notes.strip() or row.notes
+        newpath=_save_upload(receipt,UPLOADS_DIR/"manutencoes"/str(row.vehicle_id),{".jpg",".jpeg",".png",".webp",".pdf"},"nf")
+        if newpath: row.receipt_path=newpath
+        d0=_parse_date_only(done_date); nd=(d0+timedelta(days=row.interval_days)).isoformat() if d0 and row.interval_days else row.next_date; nk=km+row.interval_km if row.interval_km else row.next_km
+        if vehicle and km>vehicle.current_km: vehicle.current_km=km
+        if nd or nk: db.add(VehicleMaintenance(company_id=cid,vehicle_id=row.vehicle_id,maintenance_type=row.maintenance_type,description=row.description,last_date=done_date,last_km=km,interval_days=row.interval_days,interval_km=row.interval_km,next_date=nd,next_km=nk,status="Programada",notes="Gerada automaticamente após conclusão"))
+        db.commit(); vid=row.vehicle_id
+    return RedirectResponse(f"/frota/veiculos/{vid}/manutencoes",status_code=303)
+
+
+@app.get("/responsaveis/{responsible_id}/documentos", response_class=HTMLResponse)
+def documentos_motorista(request: Request, responsible_id: int):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); responsible=db.get(Responsible,responsible_id)
+        if not responsible or responsible.company_id!=cid: return HTMLResponse("Responsável não encontrado",status_code=404)
+        doc=db.scalar(select(DriverDocument).where(DriverDocument.company_id==cid,DriverDocument.responsible_id==responsible_id).limit(1)); status=_driver_document_status(db,cid,responsible_id)
+    return render(request,"documentos_motorista.html",company=company,responsible=responsible,doc=doc,status=status)
+
+
+@app.post("/responsaveis/{responsible_id}/documentos")
+def salvar_documentos_motorista(request: Request, responsible_id: int, cnh_number: str=Form(""), cnh_category: str=Form(""), cnh_expiry: str=Form(""), toxicology_collection_date: str=Form(""), toxicology_expiry: str=Form(""), medical_exam_expiry: str=Form(""), psychological_exam_expiry: str=Form(""), mopp_expiry: str=Form(""), notes: str=Form("")):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); responsible=db.get(Responsible,responsible_id)
+        if not responsible or responsible.company_id!=cid: return JSONResponse({"error":"não encontrado"},status_code=404)
+        doc=db.scalar(select(DriverDocument).where(DriverDocument.company_id==cid,DriverDocument.responsible_id==responsible_id).limit(1))
+        if not doc: doc=DriverDocument(company_id=cid,responsible_id=responsible_id); db.add(doc)
+        doc.cnh_number=cnh_number.strip() or None; doc.cnh_category=cnh_category.strip() or None; doc.cnh_expiry=cnh_expiry or None; doc.toxicology_collection_date=toxicology_collection_date or None; doc.toxicology_expiry=toxicology_expiry or None; doc.medical_exam_expiry=medical_exam_expiry or None; doc.psychological_exam_expiry=psychological_exam_expiry or None; doc.mopp_expiry=mopp_expiry or None; doc.notes=notes.strip() or None; db.commit()
+    return RedirectResponse(f"/responsaveis/{responsible_id}/documentos",status_code=303)
+
+
+@app.post("/responsaveis/{responsible_id}/vincular-usuario")
+def vincular_usuario_motorista(request: Request, responsible_id: int, user_id: int=Form(0)):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); resp=db.get(Responsible,responsible_id)
+        if not resp or resp.company_id!=cid: return JSONResponse({"error":"não encontrado"},status_code=404)
+        if user_id:
+            old=db.scalar(select(DriverUserLink).where(DriverUserLink.company_id==cid,DriverUserLink.user_id==user_id).limit(1))
+            if old: old.responsible_id=responsible_id; old.active=True
+            else: db.add(DriverUserLink(company_id=cid,user_id=user_id,responsible_id=responsible_id,active=True))
+        else:
+            links=db.scalars(select(DriverUserLink).where(DriverUserLink.company_id==cid,DriverUserLink.responsible_id==responsible_id)).all()
+            for link in links: db.delete(link)
+        db.commit()
+    return RedirectResponse("/responsaveis",status_code=303)
+
+
+@app.get("/rodizio-logistica", response_class=HTMLResponse)
+def rodizio_logistica(request: Request):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); _ensure_rotation_defaults(db,cid); db.commit()
+        rules={r.plate_end:r.weekday for r in db.scalars(select(RotationRule).where(RotationRule.company_id==cid)).all()}
+        cfg={k:_log_setting(db,cid,k,v) for k,v in {"rodizio_sp_ativo":"1","rodizio_manha_inicio":"07:00","rodizio_manha_fim":"10:00","rodizio_tarde_inicio":"17:00","rodizio_tarde_fim":"20:00","manutencao_alerta_dias":"30","manutencao_alerta_km":"1000","documentos_alerta_dias":"30","bloquear_documento_vencido":"0"}.items()}
+    return render(request,"rodizio_logistica.html",company=company,rules=rules,cfg=cfg)
+
+
+@app.post("/rodizio-logistica")
+def salvar_rodizio_logistica(request: Request, rodizio_sp_ativo: str=Form("1"), rodizio_manha_inicio: str=Form("07:00"), rodizio_manha_fim: str=Form("10:00"), rodizio_tarde_inicio: str=Form("17:00"), rodizio_tarde_fim: str=Form("20:00"), manutencao_alerta_dias: int=Form(30), manutencao_alerta_km: int=Form(1000), documentos_alerta_dias: int=Form(30), bloquear_documento_vencido: str=Form("0"), final_0: int=Form(4), final_1: int=Form(0), final_2: int=Form(0), final_3: int=Form(1), final_4: int=Form(1), final_5: int=Form(2), final_6: int=Form(2), final_7: int=Form(3), final_8: int=Form(3), final_9: int=Form(4)):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request)
+        for k,v in {"rodizio_sp_ativo":rodizio_sp_ativo,"rodizio_manha_inicio":rodizio_manha_inicio,"rodizio_manha_fim":rodizio_manha_fim,"rodizio_tarde_inicio":rodizio_tarde_inicio,"rodizio_tarde_fim":rodizio_tarde_fim,"manutencao_alerta_dias":str(manutencao_alerta_dias),"manutencao_alerta_km":str(manutencao_alerta_km),"documentos_alerta_dias":str(documentos_alerta_dias),"bloquear_documento_vencido":bloquear_documento_vencido}.items(): _set_log_setting(db,cid,k,v)
+        vals={"0":final_0,"1":final_1,"2":final_2,"3":final_3,"4":final_4,"5":final_5,"6":final_6,"7":final_7,"8":final_8,"9":final_9}
+        for final,weekday in vals.items():
+            row=db.scalar(select(RotationRule).where(RotationRule.company_id==cid,RotationRule.plate_end==final).limit(1))
+            if row: row.weekday=weekday
+            else: db.add(RotationRule(company_id=cid,plate_end=final,weekday=weekday))
+        db.commit()
+    return RedirectResponse("/rodizio-logistica",status_code=303)
+
+
+@app.get("/ponto-partida-logistica", response_class=HTMLResponse)
+def ponto_partida_logistica(request: Request):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); point=db.scalar(select(LogisticsStartPoint).where(LogisticsStartPoint.company_id==cid).limit(1))
+    return render(request,"ponto_partida_logistica.html",company=company,point=point)
+
+
+@app.post("/ponto-partida-logistica")
+def salvar_ponto_partida(request: Request, name: str=Form(""), address: str=Form(""), city: str=Form(""), state: str=Form(""), zip_code: str=Form(""), latitude: str=Form(""), longitude: str=Form("")):
+    def f(v):
+        try:return float(str(v).replace(",",".")) if str(v).strip() else None
+        except:return None
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); point=db.scalar(select(LogisticsStartPoint).where(LogisticsStartPoint.company_id==cid).limit(1))
+        if not point: point=LogisticsStartPoint(company_id=cid); db.add(point)
+        point.name=name.strip() or None; point.address=address.strip() or None; point.city=city.strip() or None; point.state=state.strip().upper() or None; point.zip_code=zip_code.strip() or None; point.latitude=f(latitude); point.longitude=f(longitude); db.commit()
+    return RedirectResponse("/ponto-partida-logistica",status_code=303)
+
+
+def _route_address(invoice: SalesInvoice, partner: Partner|None) -> str:
+    return endereco_entrega_efetivo(invoice,partner).get("query","")
+
+
+def _route_opt_local_order(stops_data: list[dict], route_date: date) -> list[int]:
+    weekday_fields=["mon","tue","wed","thu","fri","sat","sun"]
+    def score(item):
+        rule=item.get("rule"); penalty={"Crítica":-300000,"Alta":-200000,"Normal":0,"Baixa":100000}.get((rule.priority if rule else "Normal") or "Normal",0)
+        if rule and not bool(getattr(rule,weekday_fields[route_date.weekday()],True)): penalty+=1000000
+        window=(rule.window_start if rule else "") or "99:99"
+        return (penalty,window,item["current_order"])
+    return [x["delivery"].id for x in sorted(stops_data,key=score)]
+
+
+def _google_route_matrix_addresses(origins: list[str], destinations: list[str]) -> dict:
+    key=(os.getenv("GOOGLE_ROUTES_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY") or "").strip()
+    if not key: return {}
+    try:
+        import httpx
+        payload={"origins":[{"waypoint":{"address":x}} for x in origins],"destinations":[{"waypoint":{"address":x}} for x in destinations],"travelMode":"DRIVE","routingPreference":"TRAFFIC_UNAWARE"}
+        headers={"Content-Type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"originIndex,destinationIndex,condition,distanceMeters,duration"}
+        r=httpx.post("https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix",json=payload,headers=headers,timeout=60)
+        if r.status_code>=400:return {}
+        try:data=r.json()
+        except Exception:return {}
+        if isinstance(data,dict):data=data.get("elements") or data.get("routeMatrixElements") or [data]
+        out={}
+        for el in data or []:
+            dur=str(el.get("duration") or "0s").rstrip("s")
+            try:dur_s=int(float(dur))
+            except:dur_s=0
+            out[(int(el.get("originIndex",0)),int(el.get("destinationIndex",0))) ]={"distance":int(el.get("distanceMeters") or 0),"duration":dur_s}
+        return out
+    except Exception:
+        return {}
+
+
+def _route_opt_with_distance(stops_data: list[dict], origin_address: str, route_date: date) -> tuple[list[int],dict]:
+    if not origin_address or not stops_data:return _route_opt_local_order(stops_data,route_date),{}
+    addresses=[x["address"] for x in stops_data]
+    if any(not a for a in addresses):return _route_opt_local_order(stops_data,route_date),{}
+    matrix=_google_route_matrix_addresses([origin_address]+addresses,addresses)
+    if not matrix:return _route_opt_local_order(stops_data,route_date),{}
+    remaining=set(range(len(stops_data))); order=[]; prev_origin=0; totals={}; total_d=0; total_t=0
+    weekday_fields=["mon","tue","wed","thu","fri","sat","sun"]
+    while remaining:
+        best=None;best_score=None
+        for idx in remaining:
+            leg=matrix.get((prev_origin,idx),{}); dur=int(leg.get("duration") or 10**8); rule=stops_data[idx].get("rule")
+            penalty={"Crítica":-3600,"Alta":-1800,"Normal":0,"Baixa":900}.get((rule.priority if rule else "Normal") or "Normal",0)
+            if rule and not bool(getattr(rule,weekday_fields[route_date.weekday()],True)):penalty+=10**7
+            score=dur+penalty
+            if best_score is None or score<best_score:best_score=score;best=idx
+        order.append(stops_data[best]["delivery"].id); remaining.remove(best); leg=matrix.get((prev_origin,best),{}); total_d+=int(leg.get("distance") or 0); total_t+=int(leg.get("duration") or 0); totals[stops_data[best]["delivery"].id]={"distance":int(leg.get("distance") or 0),"duration":int(leg.get("duration") or 0)}; prev_origin=best+1
+    return order,{"legs":totals,"distance":total_d,"duration":total_t}
+
+
+@app.get("/otimizacao-rota/{route_id}", response_class=HTMLResponse)
+def otimizacao_rota(request: Request, route_id: int):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); route=db.get(Route,route_id)
+        if not route or route.company_id!=cid:return HTMLResponse("Roteiro não encontrado",status_code=404)
+        responsible=db.get(Responsible,route.responsible_id); point=db.scalar(select(LogisticsStartPoint).where(LogisticsStartPoint.company_id==cid).limit(1))
+        rows=db.execute(select(RouteStop,Delivery,SalesInvoice,Partner).join(Delivery,RouteStop.delivery_id==Delivery.id).join(SalesInvoice,Delivery.sales_invoice_id==SalesInvoice.id).outerjoin(Partner,SalesInvoice.customer_id==Partner.id).where(RouteStop.route_id==route_id).order_by(RouteStop.stop_order)).all()
+        opt=db.scalar(select(RouteOptimization).where(RouteOptimization.company_id==cid,RouteOptimization.route_id==route_id).order_by(RouteOptimization.id.desc()).limit(1))
+        suggested=[]
+        if opt: suggested=db.execute(select(RouteOptimizationStop,Delivery,SalesInvoice,Partner).join(Delivery,RouteOptimizationStop.delivery_id==Delivery.id).join(SalesInvoice,Delivery.sales_invoice_id==SalesInvoice.id).outerjoin(Partner,SalesInvoice.customer_id==Partner.id).where(RouteOptimizationStop.optimization_id==opt.id).order_by(RouteOptimizationStop.suggested_order)).all()
+    return render(request,"otimizacao_rota.html",company=company,route=route,responsible=responsible,point=point,rows=rows,opt=opt,suggested=suggested,routes_configured=bool((os.getenv("GOOGLE_ROUTES_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY") or "").strip()))
+
+
+@app.post("/otimizacao-rota/{route_id}/gerar")
+def gerar_otimizacao_rota(request: Request, route_id: int):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); route=db.get(Route,route_id)
+        if not route or route.company_id!=cid:return JSONResponse({"error":"não encontrado"},status_code=404)
+        rows=db.execute(select(RouteStop,Delivery,SalesInvoice,Partner).join(Delivery,RouteStop.delivery_id==Delivery.id).join(SalesInvoice,Delivery.sales_invoice_id==SalesInvoice.id).outerjoin(Partner,SalesInvoice.customer_id==Partner.id).where(RouteStop.route_id==route_id).order_by(RouteStop.stop_order)).all()
+        data=[]
+        for stop,d,inv,p in rows:
+            rule=None
+            if p and p.cnpj_cpf:rule=db.scalar(select(DeliveryRule).where(DeliveryRule.company_id==cid,DeliveryRule.customer_cnpj==p.cnpj_cpf,DeliveryRule.active.is_(True)).order_by(DeliveryRule.id.desc()).limit(1))
+            data.append({"stop":stop,"delivery":d,"invoice":inv,"partner":p,"address":_route_address(inv,p),"rule":rule,"current_order":stop.stop_order})
+        point=db.scalar(select(LogisticsStartPoint).where(LogisticsStartPoint.company_id==cid).limit(1)); origin=", ".join(x for x in [point.address if point else None,point.city if point else None,point.state if point else None,point.zip_code if point else None] if x)
+        route_day=_parse_date_only(route.route_date) or date.today(); order,metrics=_route_opt_with_distance(data,origin,route_day)
+        provider="Google Routes + regras locais" if metrics else "Regras locais (sem matriz de distância)"
+        opt=RouteOptimization(company_id=cid,route_id=route_id,origin_type="empresa",origin_description=(point.name if point else "Empresa"),provider=provider,status="Sugestão",distance_optimized_m=int(metrics.get("distance",0)),duration_optimized_s=int(metrics.get("duration",0))); db.add(opt); db.flush()
+        by_delivery={x["delivery"].id:x for x in data}
+        for pos,did in enumerate(order,1):
+            x=by_delivery[did]; leg=(metrics.get("legs",{}) or {}).get(did,{})
+            rule=x.get("rule"); summary=""
+            if rule:summary=" · ".join(y for y in [rule.priority if rule.priority!="Normal" else "",f"{rule.window_start or '--:--'}–{rule.window_end or '--:--'}" if rule.window_start or rule.window_end else "",f"parada {rule.stop_minutes or 10} min"] if y)
+            db.add(RouteOptimizationStop(optimization_id=opt.id,delivery_id=did,suggested_order=pos,distance_previous_m=int(leg.get("distance",0)),duration_previous_s=int(leg.get("duration",0)),rule_summary=summary or None))
+        db.commit()
+    return RedirectResponse(f"/otimizacao-rota/{route_id}",status_code=303)
+
+
+@app.post("/otimizacao-rota/{route_id}/aplicar")
+def aplicar_otimizacao_rota(request: Request, route_id: int):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); route=db.get(Route,route_id)
+        if not route or route.company_id!=cid:return JSONResponse({"error":"não encontrado"},status_code=404)
+        opt=db.scalar(select(RouteOptimization).where(RouteOptimization.company_id==cid,RouteOptimization.route_id==route_id,RouteOptimization.status=="Sugestão").order_by(RouteOptimization.id.desc()).limit(1))
+        if not opt:return RedirectResponse(f"/otimizacao-rota/{route_id}",status_code=303)
+        suggestions=db.scalars(select(RouteOptimizationStop).where(RouteOptimizationStop.optimization_id==opt.id).order_by(RouteOptimizationStop.suggested_order)).all()
+        for sug in suggestions:
+            stop=db.scalar(select(RouteStop).where(RouteStop.route_id==route_id,RouteStop.delivery_id==sug.delivery_id).limit(1))
+            if stop:stop.stop_order=sug.suggested_order
+        opt.status="Aplicada";opt.applied_at=datetime.utcnow();db.commit()
+    return RedirectResponse(f"/roteiros/{route_id}?msg=otimizado",status_code=303)
+
+
+@app.get("/motorista", response_class=HTMLResponse)
+def portal_motorista(request: Request):
+    with SessionLocal() as db:
+        cid,company=company_context(db,request); ac=access_context(db,request); responsible=_driver_responsible(db,cid,ac.user.id if ac.user else None)
+        if not responsible:return render(request,"portal_motorista.html",company=company,responsible=None,deliveries=[],totals={},notices=[],error="Seu usuário ainda não está vinculado a um motorista. Solicite o vínculo ao administrador.")
+        rows=db.execute(select(RouteStop,Route,Delivery,SalesInvoice,Partner).join(Route,RouteStop.route_id==Route.id).join(Delivery,RouteStop.delivery_id==Delivery.id).join(SalesInvoice,Delivery.sales_invoice_id==SalesInvoice.id).outerjoin(Partner,SalesInvoice.customer_id==Partner.id).where(Route.company_id==cid,Route.responsible_id==responsible.id,Route.status.in_(["PLANEJADO","EM ROTA"])).order_by(Route.route_date,RouteStop.stop_order)).all()
+        out=[]
+        for stop,route,d,inv,p in rows:
+            state=_driver_state(db,cid,d.id,responsible.id); out.append({"stop":stop,"route":route,"delivery":d,"invoice":inv,"partner":p,"state":state,"address":endereco_entrega_efetivo(inv,p)})
+        notices=db.scalars(select(DeliveryNotice).where(DeliveryNotice.company_id==cid,DeliveryNotice.responsible_id==responsible.id,DeliveryNotice.active.is_(True)).order_by(DeliveryNotice.id.desc())).all(); db.commit()
+        totals={"total":len(out),"pending":sum(1 for x in out if x["delivery"].status in {"PENDENTE","ROTEIRIZADA","REPROGRAMADA"}),"route":sum(1 for x in out if x["delivery"].status=="EM ROTA"),"delivered":sum(1 for x in out if x["delivery"].status=="ENTREGUE"),"occurrences":sum(1 for x in out if x["delivery"].status=="OCORRENCIA")}
+    return render(request,"portal_motorista.html",company=company,responsible=responsible,deliveries=out,totals=totals,notices=notices,error="")
+
+
+@app.post("/motorista/entrega/{delivery_id}/iniciar")
+def motorista_iniciar_entrega(request: Request, delivery_id: int, client_time: str=Form(""), timezone_offset_min: str=Form("")):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); ac=access_context(db,request); resp=_driver_responsible(db,cid,ac.user.id if ac.user else None)
+        if not resp or not _driver_delivery_allowed(db,cid,resp.id,delivery_id):return JSONResponse({"error":"entrega não vinculada"},status_code=403)
+        d=db.get(Delivery,delivery_id); state=_driver_state(db,cid,delivery_id,resp.id); state.status="EM ROTA";state.client_started_at=client_time or state.client_started_at;state.server_started_at=state.server_started_at or datetime.utcnow();state.timezone_offset_min=int(timezone_offset_min) if str(timezone_offset_min).lstrip('-').isdigit() else None;_set_delivery_status(db,cid,d,"EM ROTA","Iniciada pelo portal do motorista","MOTORISTA_INICIO")
+        route=db.scalar(select(Route).join(RouteStop,RouteStop.route_id==Route.id).where(Route.company_id==cid,Route.responsible_id==resp.id,RouteStop.delivery_id==delivery_id,Route.status=="PLANEJADO").order_by(Route.id.desc()).limit(1))
+        if route: route.status="EM ROTA"; route.started_at=route.started_at or datetime.utcnow()
+        db.commit()
+    return RedirectResponse("/motorista",status_code=303)
+
+
+@app.post("/motorista/entrega/{delivery_id}/concluir")
+def motorista_concluir_entrega(request: Request, delivery_id: int, client_time: str=Form(""), timezone_offset_min: str=Form(""), note: str=Form("")):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request); ac=access_context(db,request); resp=_driver_responsible(db,cid,ac.user.id if ac.user else None)
+        if not resp or not _driver_delivery_allowed(db,cid,resp.id,delivery_id):return JSONResponse({"error":"entrega não vinculada"},status_code=403)
+        d=db.get(Delivery,delivery_id); state=_driver_state(db,cid,delivery_id,resp.id);state.status="ENTREGUE";state.client_delivered_at=client_time or None;state.server_delivered_at=datetime.utcnow();state.timezone_offset_min=int(timezone_offset_min) if str(timezone_offset_min).lstrip('-').isdigit() else None;state.delivery_note=note.strip() or None;_set_delivery_status(db,cid,d,"ENTREGUE",note or "Concluída pelo portal do motorista","MOTORISTA_ENTREGA");db.commit()
+    return RedirectResponse("/motorista",status_code=303)
+
+
+@app.post("/motorista/entrega/{delivery_id}/ocorrencia")
+def motorista_ocorrencia(request: Request, delivery_id: int, occurrence_type: str=Form(...), note: str=Form(""), photos: list[UploadFile]=File([])):
+    allowed={"Cliente ausente","Recusado","Endereço não localizado","Divergência de volumes","Produto avariado","Fora do horário","Reentrega","Outros"}
+    if occurrence_type not in allowed:return JSONResponse({"error":"tipo inválido"},status_code=400)
+    with SessionLocal() as db:
+        cid,_=company_context(db,request);ac=access_context(db,request);resp=_driver_responsible(db,cid,ac.user.id if ac.user else None)
+        if not resp or not _driver_delivery_allowed(db,cid,resp.id,delivery_id):return JSONResponse({"error":"entrega não vinculada"},status_code=403)
+        d=db.get(Delivery,delivery_id);occ=DeliveryOccurrence(company_id=cid,delivery_id=delivery_id,responsible_id=resp.id,occurrence_type=occurrence_type,note=note.strip() or None);db.add(occ);db.flush();state=_driver_state(db,cid,delivery_id,resp.id);state.status="OCORRENCIA";_set_delivery_status(db,cid,d,"OCORRENCIA",note or occurrence_type,"MOTORISTA_OCORRENCIA")
+        for idx,photo in enumerate((photos or [])[:8],1):
+            try:path=_save_upload(photo,UPLOADS_DIR/"ocorrencias"/str(occ.id),{".jpg",".jpeg",".png",".webp"},f"foto_{idx}")
+            except ValueError:continue
+            if path:db.add(DeliveryOccurrencePhoto(company_id=cid,occurrence_id=occ.id,file_path=path,original_name=photo.filename))
+        db.commit()
+    return RedirectResponse("/motorista",status_code=303)
+
+
+@app.post("/motorista/localizacao")
+async def motorista_localizacao(request: Request):
+    payload=await request.json()
+    try:lat=float(payload.get("latitude"));lng=float(payload.get("longitude"));acc=float(payload.get("accuracy_m")) if payload.get("accuracy_m") not in (None,"") else None
+    except Exception:return JSONResponse({"ok":False,"error":"localização inválida"},status_code=400)
+    with SessionLocal() as db:
+        cid,_=company_context(db,request);ac=access_context(db,request);resp=_driver_responsible(db,cid,ac.user.id if ac.user else None)
+        if not resp:return JSONResponse({"ok":False,"error":"motorista não vinculado"},status_code=403)
+        db.add(DriverLocation(company_id=cid,responsible_id=resp.id,latitude=lat,longitude=lng,accuracy_m=acc,captured_at_client=str(payload.get("captured_at_client") or "") or None));db.commit()
+    return {"ok":True}
+
+
+@app.post("/motorista/avisos/{notice_id}/lido")
+def motorista_aviso_lido(request: Request, notice_id: int):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request);ac=access_context(db,request);resp=_driver_responsible(db,cid,ac.user.id if ac.user else None);notice=db.get(DeliveryNotice,notice_id)
+        if not resp or not notice or notice.company_id!=cid or notice.responsible_id!=resp.id:return JSONResponse({"error":"não encontrado"},status_code=404)
+        notice.read_at=datetime.utcnow();db.commit()
+    return RedirectResponse("/motorista",status_code=303)
+
+
+@app.post("/painel-entregas/aviso/{delivery_id}")
+def criar_aviso_entrega(request: Request, delivery_id: int, message: str=Form(...), priority: str=Form("Normal")):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request);ac=access_context(db,request);d=db.get(Delivery,delivery_id)
+        if not d or d.company_id!=cid:return JSONResponse({"error":"não encontrado"},status_code=404)
+        a=db.scalar(select(DeliveryAssignment).where(DeliveryAssignment.company_id==cid,DeliveryAssignment.delivery_id==delivery_id).limit(1));rid=a.responsible_id if a else None
+        if not rid:
+            route=db.scalar(select(Route).join(RouteStop,RouteStop.route_id==Route.id).where(Route.company_id==cid,RouteStop.delivery_id==delivery_id,Route.status.in_(["PLANEJADO","EM ROTA"])).order_by(Route.id.desc()).limit(1));rid=route.responsible_id if route else None
+        if not rid:return RedirectResponse(f"/entregas/{delivery_id}?msg=sem-responsavel",status_code=303)
+        db.add(DeliveryNotice(company_id=cid,delivery_id=delivery_id,responsible_id=rid,message=message.strip(),priority=priority if priority in {"Normal","Importante","Urgente"} else "Normal",created_by_user_id=ac.user.id if ac.user else None));db.commit()
+    return RedirectResponse(f"/entregas/{delivery_id}?msg=aviso",status_code=303)
+
+
+@app.post("/painel-entregas/aviso/{notice_id}/encerrar")
+def encerrar_aviso_entrega(request: Request, notice_id: int):
+    with SessionLocal() as db:
+        cid,_=company_context(db,request);notice=db.get(DeliveryNotice,notice_id)
+        if not notice or notice.company_id!=cid:return JSONResponse({"error":"não encontrado"},status_code=404)
+        notice.active=False;notice.closed_at=datetime.utcnow();db.commit();delivery_id=notice.delivery_id
+    return RedirectResponse(f"/entregas/{delivery_id}",status_code=303)
+
+
 @app.get("/diagnostico", response_class=HTMLResponse)
 def diagnostico(request: Request):
     with SessionLocal() as db:
@@ -5345,6 +6376,9 @@ PERMISSION_GROUPS = [
         ("responsaveis.manage", "Gerenciar responsáveis", "Cadastrar/alterar responsáveis."),
         ("regras.manage", "Gerenciar regras de entrega", "Alterar regras automáticas de entrega."),
         ("parametros.manage", "Gerenciar parâmetros logísticos", "Alterar parâmetros gerais da logística."),
+        ("frota.view", "Consultar frota", "Visualizar veículos, rodízio, manutenção e documentos dos motoristas."),
+        ("frota.manage", "Gerenciar frota", "Cadastrar veículos, manutenções, rodízio e documentos dos motoristas."),
+        ("motorista.portal", "Portal do motorista", "Acessar somente as próprias entregas, registrar início, conclusão, ocorrência, fotos e localização."),
     ]),
     ("Sistema", [
         ("sync.manage", "Sincronização e integrações", "Executar sincronizações e configurar integrações."),
@@ -5368,6 +6402,7 @@ PERMISSION_DEPENDENCIES = {
     "responsaveis.manage": {"responsaveis.view", "logistica.view"},
     "regras.manage": {"logistica.view"},
     "parametros.manage": {"logistica.view"},
+    "frota.manage": {"frota.view", "logistica.view"},
     "importar.manage": {"logistica.view"},
 }
 

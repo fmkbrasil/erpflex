@@ -15,7 +15,7 @@
       {% if can_perm('roteirizar.view') %}<a class="logistics-link" href="/roteirizar"><b>Roteirizar</b><span>Classificar NFs, definir responsável, região e caixa.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('roteiros.view') %}<a class="logistics-link" href="/roteiros"><b>Roteiros</b><span>Criar, ordenar, imprimir e acompanhar os roteiros.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('painel_entregas.view') %}<a class="logistics-link" href="/painel-entregas"><b>Painel de Entregas</b><span>Acompanhar andamento e situação das entregas.</span><em>Abrir ›</em></a>{% endif %}
-      {% if can_perm('baixa.manage') %}<a class="logistics-link" href="/baixa-entregas"><b>Baixa de Entregas</b><span>Registrar entregue, não entregue, ocorrência ou reprogramação.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('baixa.manage') %}<a class="logistics-link" href="/baixa-entregas"><b>Baixa de Entregas</b><span>Registrar entregue, não entregue, ocorrência ou reprogramação.</span><em>Abrir ›</em></a>{% endif %}{% if can_perm('motorista.portal') %}<a class="logistics-link" href="/motorista"><b>Portal do Motorista</b><span>Roteiro mobile, navegação, entrega, ocorrência e fotos.</span><em>Abrir ›</em></a>{% endif %}
     </div>
   </section>
 
@@ -25,7 +25,7 @@
       {% if can_perm('painel_gerencial.view') %}<a class="logistics-link" href="/painel-gerencial"><b>Painel Gerencial</b><span>Indicadores por região, responsável, volumes e faturamento.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('relatorios.view') %}<a class="logistics-link" href="/relatorios-gerenciais"><b>Relatórios Gerenciais</b><span>Análises históricas com impressão e exportação Excel.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('ocorrencias.view') %}<a class="logistics-link" href="/ocorrencias"><b>Ocorrências</b><span>Acompanhar problemas de entrega e respectivas resoluções.</span><em>Abrir ›</em></a>{% endif %}
-      {% if can_perm('roteiros.view') %}<a class="logistics-link" href="/custos-roteiro"><b>Custos / KM</b><span>Frete, quilometragem e custo dos roteiros.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('roteiros.view') %}<a class="logistics-link" href="/custos-roteiro"><b>Custos / KM</b><span>Frete, quilometragem e custo dos roteiros.</span><em>Abrir ›</em></a>{% endif %}{% if can_perm('logistica.view') %}<a class="logistics-link" href="/producao-paes"><b>Produção de Pães</b><span>Previsão de pães e massas, geral e por região.</span><em>Abrir ›</em></a>{% endif %}{% if can_perm('frota.view') %}<a class="logistics-link" href="/frota"><b>Frota</b><span>Veículos, KM, motoristas, manutenção e alertas de rodízio.</span><em>Abrir ›</em></a>{% endif %}
     </div>
   </section>
 
@@ -35,7 +35,7 @@
       {% if can_perm('logistica.view') %}<a class="logistics-link" href="/logistica"><b>Entregas / Ajustes</b><span>Consultar e ajustar os dados logísticos de uma entrega.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('responsaveis.view') %}<a class="logistics-link" href="/responsaveis"><b>Responsáveis</b><span>Motoristas internos, terceiros, transportadoras e coleta.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('logistica.view') %}<a class="logistics-link" href="/regras-entrega"><b>Regras de Entrega</b><span>Memorizar região, responsável e caixa por cliente/CNPJ.</span><em>Abrir ›</em></a>{% endif %}
-      {% if can_perm('logistica.view') %}<a class="logistics-link" href="/parametros-logistica"><b>Parâmetros</b><span>Regiões e tipos de caixa utilizados na roteirização.</span><em>Abrir ›</em></a>{% endif %}
+      {% if can_perm('logistica.view') %}<a class="logistics-link" href="/parametros-logistica"><b>Parâmetros</b><span>Regiões e tipos de caixa utilizados na roteirização.</span><em>Abrir ›</em></a>{% endif %}{% if can_perm('frota.manage') %}<a class="logistics-link" href="/rodizio-logistica"><b>Rodízio e Alertas</b><span>Finais de placa, manutenção e documentos dos motoristas.</span><em>Abrir ›</em></a>{% endif %}{% if can_perm('parametros.manage') %}<a class="logistics-link" href="/ponto-partida-logistica"><b>Ponto de Partida</b><span>Origem utilizada para otimização dos roteiros.</span><em>Abrir ›</em></a>{% endif %}
       {% if can_perm('importar.manage') %}<a class="logistics-link" href="/importar-logistica"><b>Importar / Contingência</b><span>Importação manual XLSX/CSV quando necessária.</span><em>Abrir ›</em></a>{% endif %}
     </div>
   </section>
