@@ -849,3 +849,15 @@ A otimização externa aceita `GOOGLE_ROUTES_API_KEY` (ou `GOOGLE_MAPS_API_KEY`)
 - Defaults booleanos de `delivery_rules` usam `TRUE/FALSE` em vez de `1/0`.
 - Mantém compatibilidade com SQLite.
 - Nenhuma alteração funcional adicional no roteirizador integrado.
+
+
+## V1.3.87 — Endereço logístico conforme Roteirizador V46.5
+- Prioriza os campos do próprio faturamento: Endereço de Entrega, Número, Complemento, Bairro, Município, UF e CEP.
+- Só consulta blocos aninhados de endereço da API quando os campos logísticos da venda não existem.
+- Cadastro do cliente vira contingência: entrega e, depois, principal.
+- Não mistura componentes de fontes diferentes.
+- Registros em `Outras Regiões` podem ser recalculados na sincronização/reclassificação, como ocorria a cada nova carga no roteirizador original.
+
+
+## V1.3.88 — Baixas financeiras
+Corrige a conciliação de títulos baixados no ERPFlex com o BI, usando valor pago, saldo/resíduo e data de baixa válida, com consulta seletiva ao detalhe do título quando necessário. Datas sentinela 00/00/0000 são ignoradas.
