@@ -841,3 +841,11 @@ Corrige a resolução de IDs de banco/carteira no financeiro e no BI, usando o c
 O módulo **Logística** incorpora as principais funções operacionais do Roteirizador de Entregas V46.5 usando a mesma base de NF-e/clientes da Plataforma. Inclui Frota, manutenção, documentos do motorista, portal mobile, avisos/ocorrências com fotos, localização voluntária, rodízio, ponto de partida, otimização, regras de janela/dias, envio de roteiro por e-mail e Produção de Pães.
 
 A otimização externa aceita `GOOGLE_ROUTES_API_KEY` (ou `GOOGLE_MAPS_API_KEY`). Sem chave, o sistema continua disponível e gera uma sugestão local considerando prioridade, janela e regras cadastradas.
+
+
+## V1.3.86 — Correção de migração PostgreSQL / Railway
+
+- Corrige a migração 19→20 no PostgreSQL.
+- Defaults booleanos de `delivery_rules` usam `TRUE/FALSE` em vez de `1/0`.
+- Mantém compatibilidade com SQLite.
+- Nenhuma alteração funcional adicional no roteirizador integrado.
