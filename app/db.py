@@ -1219,13 +1219,17 @@ def _apply_schema_migrations(previous_version: int, backup_path: Path | None) ->
     if "delivery_rules" in inspect(engine).get_table_names():
         delivery_rule_existing = {c["name"] for c in inspect(engine).get_columns("delivery_rules")}
         rule_additions = {
-            "window_mandatory": "BOOLEAN DEFAULT 0",
-            "mon": "BOOLEAN DEFAULT 1", "tue": "BOOLEAN DEFAULT 1", "wed": "BOOLEAN DEFAULT 1",
-            "thu": "BOOLEAN DEFAULT 1", "fri": "BOOLEAN DEFAULT 1", "sat": "BOOLEAN DEFAULT 0", "sun": "BOOLEAN DEFAULT 0",
+            "window_mandatory": "BOOLEAN DEFAULT FALSE",
+            "mon": "BOOLEAN DEFAULT TRUE", "tue": "BOOLEAN DEFAULT TRUE", "wed": "BOOLEAN DEFAULT TRUE",
+            "thu": "BOOLEAN DEFAULT TRUE", "fri": "BOOLEAN DEFAULT TRUE", "sat": "BOOLEAN DEFAULT FALSE", "sun": "BOOLEAN DEFAULT FALSE",
         }
         with engine.begin() as conn:
             for name, sql_type in rule_additions.items():
-                if name not in delivery_rule_existing:
+                # Web e Worker do Railway podem iniciar ao mesmo tempo usando o mesmo PostgreSQL.
+                # No PostgreSQL, IF NOT EXISTS evita corrida de migração entre os dois processos.
+                if engine.dialect.name == "postgresql":
+                    conn.execute(sql_text(f"ALTER TABLE delivery_rules ADD COLUMN IF NOT EXISTS {name} {sql_type}"))
+                elif name not in delivery_rule_existing:
                     conn.execute(sql_text(f"ALTER TABLE delivery_rules ADD COLUMN {name} {sql_type}"))
 
     # V15 preserva o acesso ao BI de perfis legados que antes dependiam de dashboard.view.

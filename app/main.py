@@ -65,7 +65,7 @@ def _is_mobile_request(request: Request) -> bool:
         return True
     return bool(MOBILE_USER_AGENT_RE.search(request.headers.get("user-agent") or ""))
 
-app = FastAPI(title=APP_NAME, version="1.3.85")
+app = FastAPI(title=APP_NAME, version="1.3.86")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 UPLOADS_DIR = DATA_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -247,7 +247,7 @@ def company_context(db, request: Request):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.85", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
+    return {"ok": True, "version": "1.3.86", "schema": database_status().get("schema_version"), "erpflex_engine": (os.getenv("ERPFLEX_ENGINE") or "go_v78")}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -5669,7 +5669,7 @@ def cadastro_detalhe(request: Request, tipo: str, record_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Roteirizador V46.5 integrado à Plataforma Gestão Integrada (V1.3.85)
+# Roteirizador V46.5 integrado à Plataforma Gestão Integrada (V1.3.86)
 # ---------------------------------------------------------------------------
 
 def _plate_normalized(value: str | None) -> str:
